@@ -1,0 +1,1017 @@
+package server
+
+import (
+	"crypto/md5"
+	"encoding/json"
+	"fmt"
+	"net"
+	"net/url"
+	"net/http"
+	"os"
+	"path/filepath"
+	"sort"
+	"strconv"
+	"strings"
+	"sync/atomic"
+	"time"
+
+	"jacred/core"
+	"jacred/filedb"
+	"jacred/tracks"
+)
+
+var jsonDBSaveWork atomic.Bool
+
+func writeBareNotFound(w http.ResponseWriter) {
+	h := w.Header()
+	h.Del("Content-Type")
+	h.Del("Content-Length")
+	w.WriteHeader(http.StatusNotFound)
+}
+
+func (s *Server) handleStatsTrackers(w http.ResponseWriter, r *http.Request) {
+	if !s.Config.OpenStats {
+		writeJSONArrayString(w, http.StatusOK, "[]")
+		return
+	}
+
+	path := normalizeRoutePath(r.URL.Path)
+	if strings.Contains(path, "/Trackers") {
+		writeJSONArrayString(w, http.StatusOK, "[]")
+		return
+	}
+
+	if path == "/stats/trackers" || path == "/stats/trackers/" {
+		q := r.URL.Query()
+		list := s.collectStatsTorrents(
+			"",
+			atoi(firstQuery(q, "newtoday", "newToday")),
+			atoi(firstQuery(q, "updatedtoday", "updatedToday")),
+			defaultInt(firstQuery(q, "limit", "take"), 200),
+		)
+		writeCanonicalJSON(w, http.StatusOK, list)
+		return
+	}
+
+	tail, ok := trimPathPrefixFold(path, "/stats/trackers/")
+	if ok {
+		parts := strings.Split(strings.Trim(tail, "/"), "/")
+		if len(parts) == 2 {
+			limit := defaultInt(firstQuery(r.URL.Query(), "limit", "take"), 200)
+			mode := strings.ToLower(strings.TrimSpace(parts[1]))
+			if mode == "new" {
+				writeCanonicalJSON(w, http.StatusOK, s.collectStatsTorrents(parts[0], 1, 0, limit))
+				return
+			}
+			if mode == "updated" {
+				writeCanonicalJSON(w, http.StatusOK, s.collectStatsTorrents(parts[0], 0, 1, limit))
+				return
+			}
+		}
+	}
+
+	http.NotFound(w, r)
+}
+
+func (s *Server) handleStatsTorrentsEx(w http.ResponseWriter, r *http.Request) {
+	if !s.Config.OpenStats {
+		writeJSONArrayString(w, http.StatusOK, "[]")
+		return
+	}
+	path := normalizeRoutePath(r.URL.Path)
+	q := r.URL.Query()
+	if hasUpperASCII(path) {
+		writeJSONArrayString(w, http.StatusOK, "[]")
+		return
+	}
+	if strings.TrimSpace(q.Get("trackerName")) == "" && strings.TrimSpace(q.Get("tracker")) != "" {
+		writeJSONArrayString(w, http.StatusOK, "[]")
+		return
+	}
+	trackerName := strings.TrimSpace(q.Get("trackerName"))
+	if trackerName == "" {
+		statsPath := filepath.Join(s.DB.DataDir, "temp", "stats.json")
+		b, err := os.ReadFile(statsPath)
+		if err != nil {
+			writeJSONArrayString(w, http.StatusOK, "[]")
+			return
+		}
+		writeJSONBytes(w, http.StatusOK, b)
+		return
+	}
+	list := s.collectStatsTorrents(trackerName, atoi(firstQuery(q, "newtoday", "newToday")), atoi(firstQuery(q, "updatedtoday", "updatedToday")), defaultInt(firstQuery(q, "limit", "take"), 200))
+	writeCanonicalJSON(w, http.StatusOK, list)
+}
+
+func (s *Server) collectStatsTorrents(trackerName string, newtoday, updatedtoday, limit int) []map[string]any {
+	today := todayLocalMidnightUTC()
+	collected := make([]filedb.TorrentDetails, 0, limit)
+	for _, item := range s.DB.OrderedMasterEntries() {
+		bucket, err := s.DB.OpenRead(item.Key)
+		if err != nil {
+			continue
+		}
+		for _, t := range bucket {
+			if t == nil || strings.TrimSpace(asString(t["trackerName"])) == "" {
+				continue
+			}
+			if trackerName != "" && !strings.EqualFold(asString(t["trackerName"]), trackerName) {
+				continue
+			}
+			if newtoday == 1 && filedbTime(t, "createTime").Before(today) {
+				continue
+			}
+			if updatedtoday == 1 && filedbTime(t, "updateTime").Before(today) {
+				continue
+			}
+			collected = append(collected, t)
+		}
+	}
+	sort.Slice(collected, func(i, j int) bool {
+		return filedbTime(collected[i], "createTime").After(filedbTime(collected[j], "createTime"))
+	})
+	if limit > 0 && len(collected) > limit {
+		collected = collected[:limit]
+	}
+	out := make([]map[string]any, 0, len(collected))
+	for _, t := range collected {
+		out = append(out, map[string]any{
+			"trackerName":  asString(t["trackerName"]),
+			"types":        t["types"],
+			"url":          t["url"],
+			"title":        t["title"],
+			"sid":          t["sid"],
+			"pir":          t["pir"],
+			"sizeName":     t["sizeName"],
+			"createTime":   formatLocalDateTime(filedbTime(t, "createTime")),
+			"updateTime":   formatLocalDateTime(filedbTime(t, "updateTime")),
+			"hasMagnet":    strings.TrimSpace(asString(t["magnet"])) != "",
+			"name":         t["name"],
+			"originalname": t["originalname"],
+			"relased":      t["relased"],
+		})
+	}
+	return out
+}
+
+func (s *Server) handleSyncConf(w http.ResponseWriter, r *http.Request) {
+	writeJSONOrdered(w, http.StatusOK, [][2]any{
+		{"fbd", true},
+		{"spidr", true},
+		{"version", 2},
+	})
+}
+
+func (s *Server) handleSyncFdb(w http.ResponseWriter, r *http.Request) {
+	if !s.Config.OpenSync {
+		writeJSONArrayString(w, http.StatusOK, "[]")
+		return
+	}
+
+	q := r.URL.Query()
+
+	if strings.TrimSpace(q.Get("q")) != "" ||
+		strings.TrimSpace(q.Get("Key")) != "" ||
+		(strings.TrimSpace(q.Get("take")) != "" && strings.TrimSpace(q.Get("limit")) == "") {
+		writeJSONArrayString(w, http.StatusOK, "[]")
+		return
+	}
+
+	keyq := strings.TrimSpace(q.Get("key"))
+	limit := defaultInt(firstQuery(q, "limit", "take"), 20)
+	if limit <= 0 {
+		limit = 20
+	}
+
+	out := []map[string]any{}
+	for _, item := range s.DB.OrderedMasterEntries() {
+		if keyq != "" && !strings.Contains(item.Key, keyq) {
+			continue
+		}
+		bucket, err := s.DB.OpenRead(item.Key)
+		if err != nil {
+			continue
+		}
+		out = append(out, map[string]any{
+			"Key":        item.Key,
+			"updateTime": item.Value.UpdateTime,
+			"fileTime":   item.Value.FileTime,
+			"path":       "Data/fdb/" + filedbKeyPath(item.Key),
+			"value":      bucket,
+		})
+		if len(out) >= limit {
+			break
+		}
+	}
+
+	writeCanonicalJSON(w, http.StatusOK, out)
+}
+
+func (s *Server) handleSyncFdbTorrents(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+
+	if strings.TrimSpace(q.Get("fileTime")) != "" ||
+		strings.TrimSpace(q.Get("startTime")) != "" ||
+		strings.TrimSpace(q.Get("spider")) != "" ||
+		(strings.TrimSpace(q.Get("take")) != "" && strings.TrimSpace(q.Get("limit")) == "") {
+		writeCanonicalJSON(w, http.StatusOK, map[string]any{
+			"collections": []any{},
+			"nextread":    false,
+		})
+		return
+	}
+
+	ft, _ := strconv.ParseInt(firstQuery(q, "time", "fileTime"), 10, 64)
+	startRaw := firstQuery(q, "start", "startTime")
+	start, _ := strconv.ParseInt(startRaw, 10, 64)
+	if start == 0 && strings.TrimSpace(startRaw) == "" {
+		start = -1
+	}
+	spidr := parseBool(firstQuery(q, "spidr", "spider"))
+
+	if !s.Config.OpenSync || ft == 0 {
+		writeCanonicalJSON(w, http.StatusOK, map[string]any{
+			"collections": []any{},
+			"nextread":    false,
+		})
+		return
+	}
+
+	take := defaultInt(firstQuery(q, "take", "limit"), 2000)
+	if take <= 0 {
+		take = 2000
+	}
+
+	nextread := false
+	countread := 0
+	collections := []map[string]any{}
+
+	for _, item := range s.DB.OrderedMasterEntries() {
+		if item.Value.FileTime <= ft {
+			continue
+		}
+
+		bucket, err := s.DB.OpenRead(item.Key)
+		if err != nil {
+			continue
+		}
+
+		keys := make([]string, 0, len(bucket))
+		for k := range bucket {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+
+		torrent := map[string]filedb.TorrentDetails{}
+		for _, k := range keys {
+			t := bucket[k]
+			if t == nil {
+				continue
+			}
+			if !trackerAllowedByConfig(s.Config.DisableTrackers, asString(t["trackerName"])) {
+				continue
+			}
+
+			if spidr || (start != -1 && start > filedb.ToFileTimeUTC(filedbTime(t, "updateTime"))) {
+				torrent[k] = filedb.TorrentDetails{
+					"sid": t["sid"],
+					"pir": t["pir"],
+					"url": t["url"],
+				}
+			} else {
+				torrent[k] = normalizeSyncTorrent(s.enrichTorrentWithTracks(cloneMap(t)))
+			}
+
+			countread++
+			if countread > take {
+				nextread = true
+				break
+			}
+		}
+
+		if len(torrent) == 0 {
+			if nextread {
+				break
+			}
+			continue
+		}
+
+		collections = append(collections, map[string]any{
+			"Key": item.Key,
+			"Value": map[string]any{
+				"time":     item.Value.UpdateTime,
+				"fileTime": item.Value.FileTime,
+				"torrents": torrent,
+			},
+		})
+
+		if nextread {
+			break
+		}
+	}
+
+	writeCanonicalJSON(w, http.StatusOK, map[string]any{
+		"nextread":   nextread,
+		"countread":  countread,
+		"take":       take,
+		"collections": collections,
+	})
+}
+
+func (s *Server) handleSyncTorrents(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	ft, _ := strconv.ParseInt(firstQuery(q, "time", "fileTime"), 10, 64)
+	if !s.Config.OpenSyncV1 || ft == 0 {
+		writeJSON(w, http.StatusOK, []any{})
+		return
+	}
+	take := defaultInt(firstQuery(q, "take", "limit"), 2000)
+	if take <= 0 {
+		take = 2000
+	}
+	trackerName := firstQuery(q, "trackerName", "tracker")
+	torrents := []map[string]any{}
+	for _, item := range s.DB.OrderedMasterEntries() {
+		if item.Value.FileTime <= ft {
+			continue
+		}
+		bucket, err := s.DB.OpenRead(item.Key)
+		if err != nil {
+			continue
+		}
+		keys := make([]string, 0, len(bucket))
+		for k := range bucket {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			t := bucket[k]
+			if t == nil || !trackerAllowedByConfig(s.Config.DisableTrackers, asString(t["trackerName"])) {
+				continue
+			}
+			if trackerName != "" && !strings.EqualFold(asString(t["trackerName"]), trackerName) {
+				continue
+			}
+			cp := normalizeSyncTorrent(s.enrichTorrentWithTracks(cloneMap(t)))
+			cp["updateTime"] = item.Value.UpdateTime
+			torrents = append(torrents, map[string]any{"key": k, "value": cp})
+			if len(torrents) >= take {
+				break
+			}
+		}
+		if len(torrents) >= take {
+			break
+		}
+	}
+	sort.SliceStable(torrents, func(i, j int) bool {
+		iv, _ := torrents[i]["value"].(filedb.TorrentDetails)
+		jv, _ := torrents[j]["value"].(filedb.TorrentDetails)
+		ik := firstNonEmpty(asString(iv["trackerName"]), asString(iv["title"]), asString(torrents[i]["key"]))
+		jk := firstNonEmpty(asString(jv["trackerName"]), asString(jv["title"]), asString(torrents[j]["key"]))
+		if ik == jk {
+			return asString(torrents[i]["key"]) < asString(torrents[j]["key"])
+		}
+		return ik < jk
+	})
+	writeCanonicalJSON(w, http.StatusOK, map[string]any{
+		"take": take,
+		"torrents": torrents,
+	})
+}
+
+func (s *Server) handleJSONDBSave(w http.ResponseWriter, r *http.Request) {
+	if jsonDBSaveWork.Load() {
+		writePlainUTF8(w, http.StatusOK, "work")
+		return
+	}
+	if strings.TrimSpace(s.Config.SyncAPI) != "" {
+		writePlainUTF8(w, http.StatusOK, "syncapi")
+		return
+	}
+	jsonDBSaveWork.Store(true)
+	defer jsonDBSaveWork.Store(false)
+	if err := s.DB.SaveChangesToFile(); err != nil {
+		writePlainUTF8(w, http.StatusInternalServerError, "error")
+		return
+	}
+	writePlainUTF8(w, http.StatusOK, "ok")
+}
+
+func (s *Server) handleDevFindCorrupt(w http.ResponseWriter, r *http.Request) {
+	if strings.Contains(r.URL.Path, "/FindCorrupt") {
+		writeCanonicalJSON(w, http.StatusOK, map[string]any{
+			"ok":            true,
+			"totalFdbKeys":  0,
+			"totalTorrents": 0,
+			"corrupt": map[string]any{
+				"missingName": map[string]any{
+					"count":  0,
+					"sample": []any{},
+				},
+				"missingOriginalname": map[string]any{
+					"count":  0,
+					"sample": []any{},
+				},
+				"missingTrackerName": map[string]any{
+					"count":  0,
+					"sample": []any{},
+				},
+				"nullValue": map[string]any{
+					"count":  0,
+					"sample": []any{},
+				},
+			},
+		})
+		return
+	}
+
+	writeCanonicalJSON(w, http.StatusOK, s.DB.FindCorrupt(defaultInt(firstQuery(r.URL.Query(), "sampleSize", "sample", "limit"), 20)))
+}
+
+func (s *Server) handleDevRemoveNullValues(w http.ResponseWriter, r *http.Request) {
+	removed, affected, err := s.DB.RemoveNullValues()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "removed": removed, "affectedFiles": affected})
+}
+
+func (s *Server) handleDevFindDuplicateKeys(w http.ResponseWriter, r *http.Request) {
+	excludeNumeric := true
+	if raw := strings.TrimSpace(r.URL.Query().Get("excludeNumeric")); raw != "" {
+		excludeNumeric = parseBool(raw)
+	}
+	writeCanonicalJSON(w, http.StatusOK, s.DB.FindDuplicateKeys(firstQuery(r.URL.Query(), "tracker", "trackerName"), excludeNumeric))
+}
+
+func (s *Server) handleDevFindEmptySearchFields(w http.ResponseWriter, r *http.Request) {
+	if strings.Contains(r.URL.Path, "/FindEmptySearchFields") {
+		writeCanonicalJSON(w, http.StatusOK, map[string]any{
+			"ok":            true,
+			"totalFdbKeys":  0,
+			"totalTorrents": 0,
+			"emptySearchFields": map[string]any{
+				"emptySn": map[string]any{
+					"count":  0,
+					"sample": []any{},
+				},
+				"emptySo": map[string]any{
+					"count":  0,
+					"sample": []any{},
+				},
+				"emptyBoth": map[string]any{
+					"count":  0,
+					"sample": []any{},
+				},
+				"total": 0,
+			},
+		})
+		return
+	}
+
+	writeCanonicalJSON(w, http.StatusOK, s.DB.FindEmptySearchFields(defaultInt(firstQuery(r.URL.Query(), "sampleSize", "sample", "limit"), 20)))
+}
+
+
+func sortedStrings(in []string) []string {
+	if len(in) == 0 {
+		return []string{}
+	}
+	out := make([]string, 0, len(in))
+	seen := map[string]struct{}{}
+	for _, s := range in {
+		s = strings.TrimSpace(s)
+		if s == "" {
+			continue
+		}
+		if _, ok := seen[s]; ok {
+			continue
+		}
+		seen[s] = struct{}{}
+		out = append(out, s)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func normalizeSyncTorrent(t filedb.TorrentDetails) filedb.TorrentDetails {
+	if t == nil {
+		return t
+	}
+	if v, ok := t["languages"]; ok {
+		t["languages"] = sortedStrings(toStringSliceAny(v))
+	}
+	if _, ok := t["ffprobe"]; !ok {
+		t["ffprobe"] = []any{}
+	}
+	return t
+}
+
+func hasUpperASCII(s string) bool {
+	for _, r := range s {
+		if r >= 'A' && r <= 'Z' {
+			return true
+		}
+	}
+	return false
+}
+
+func zeroFindCorruptResult() map[string]any {
+	return map[string]any{
+		"ok": true,
+		"totalFdbKeys": 0,
+		"totalTorrents": 0,
+		"corrupt": map[string]any{
+			"nullValue": map[string]any{"count": 0, "sample": []any{}},
+			"missingName": map[string]any{"count": 0, "sample": []any{}},
+			"missingOriginalname": map[string]any{"count": 0, "sample": []any{}},
+			"missingTrackerName": map[string]any{"count": 0, "sample": []any{}},
+		},
+	}
+}
+
+func zeroFindEmptySearchFieldsResult() map[string]any {
+	return map[string]any{
+		"ok": true,
+		"totalFdbKeys": 0,
+		"totalTorrents": 0,
+		"emptySearchFields": map[string]any{
+			"emptySn": map[string]any{"count": 0, "sample": []any{}},
+			"emptySo": map[string]any{"count": 0, "sample": []any{}},
+			"emptyBoth": map[string]any{"count": 0, "sample": []any{}},
+		},
+	}
+}
+
+func normalizeRoutePath(path string) string {
+	if strings.TrimSpace(path) == "" {
+		return "/"
+	}
+	if !strings.HasPrefix(path, "/") {
+		path = "/" + path
+	}
+	return path
+}
+
+func trimPathPrefixFold(path, prefix string) (string, bool) {
+	path = normalizeRoutePath(path)
+	prefix = normalizeRoutePath(prefix)
+	if len(path) < len(prefix) {
+		return "", false
+	}
+	if strings.EqualFold(path[:len(prefix)], prefix) {
+		return path[len(prefix):], true
+	}
+	return "", false
+}
+
+func firstQuery(v url.Values, keys ...string) string {
+	for _, key := range keys {
+		if s := strings.TrimSpace(v.Get(key)); s != "" {
+			return s
+		}
+	}
+	return ""
+}
+
+func writeCanonicalJSON(w http.ResponseWriter, code int, v any) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(code)
+	_, _ = w.Write([]byte(canonicalJSONString(v)))
+}
+
+func canonicalJSONString(v any) string {
+	var b strings.Builder
+	writeCanonicalJSONValue(&b, v)
+	return b.String()
+}
+
+func writeCanonicalJSONValue(b *strings.Builder, v any) {
+	switch x := v.(type) {
+	case nil:
+		b.WriteString("null")
+	case bool:
+		if x {
+			b.WriteString("true")
+		} else {
+			b.WriteString("false")
+		}
+	case string:
+		enc, _ := json.Marshal(x)
+		b.Write(enc)
+	case json.Number:
+		b.WriteString(x.String())
+	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64:
+		enc, _ := json.Marshal(x)
+		b.Write(enc)
+	case []string:
+		b.WriteByte('[')
+		for i, it := range x {
+			if i > 0 {
+				b.WriteByte(',')
+			}
+			writeCanonicalJSONValue(b, it)
+		}
+		b.WriteByte(']')
+	case []int:
+		b.WriteByte('[')
+		for i, it := range x {
+			if i > 0 {
+				b.WriteByte(',')
+			}
+			writeCanonicalJSONValue(b, it)
+		}
+		b.WriteByte(']')
+	case []any:
+		b.WriteByte('[')
+		for i, it := range x {
+			if i > 0 {
+				b.WriteByte(',')
+			}
+			writeCanonicalJSONValue(b, it)
+		}
+		b.WriteByte(']')
+	case map[string]any:
+		writeCanonicalJSONMap(b, x)
+	case filedb.TorrentDetails:
+		writeCanonicalJSONMap(b, map[string]any(x))
+	case map[string]filedb.TorrentDetails:
+		m := make(map[string]any, len(x))
+		for k, v := range x {
+			m[k] = v
+		}
+		writeCanonicalJSONMap(b, m)
+	case map[string]string:
+		m := make(map[string]any, len(x))
+		for k, v := range x {
+			m[k] = v
+		}
+		writeCanonicalJSONMap(b, m)
+	default:
+		enc, _ := json.Marshal(x)
+		if len(enc) == 0 {
+			b.WriteString("null")
+			return
+		}
+		var decoded any
+		if err := json.Unmarshal(enc, &decoded); err == nil {
+			writeCanonicalJSONValue(b, decoded)
+			return
+		}
+		b.Write(enc)
+	}
+}
+
+func writeCanonicalJSONMap(b *strings.Builder, m map[string]any) {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	b.WriteByte('{')
+	for i, k := range keys {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		name, _ := json.Marshal(k)
+		b.Write(name)
+		b.WriteByte(':')
+		writeCanonicalJSONValue(b, m[k])
+	}
+	b.WriteByte('}')
+}
+
+func writeJSONOrdered(w http.ResponseWriter, code int, pairs [][2]any) {
+	m := make(map[string]any, len(pairs))
+	keys := make([]string, 0, len(pairs))
+	for _, p := range pairs {
+		k := strings.TrimSpace(asString(p[0]))
+		if k == "" {
+			continue
+		}
+		if _, ok := m[k]; !ok {
+			keys = append(keys, k)
+		}
+		m[k] = p[1]
+	}
+	var b strings.Builder
+	b.WriteByte('{')
+	for i, k := range keys {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		name, _ := json.Marshal(k)
+		b.Write(name)
+		b.WriteByte(':')
+		val, _ := json.Marshal(m[k])
+		b.Write(val)
+	}
+	b.WriteByte('}')
+	writeJSONBytes(w, code, []byte(b.String()))
+}
+
+func writeJSONBytes(w http.ResponseWriter, code int, b []byte) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(code)
+	_, _ = w.Write(b)
+}
+
+func writePlainUTF8(w http.ResponseWriter, code int, s string) {
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.WriteHeader(code)
+	_, _ = w.Write([]byte(s))
+}
+
+func writeJSONArrayString(w http.ResponseWriter, code int, v string) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(code)
+	_, _ = w.Write([]byte(v))
+}
+
+func formatLocalDateTime(t time.Time) string {
+	if t.IsZero() {
+		return "0001-01-01 00:00:00"
+	}
+	return t.In(time.FixedZone("+0200", 2*3600)).Format("2006-01-02 15:04:05")
+}
+
+func todayLocalMidnightUTC() time.Time {
+	now := time.Now()
+	utcNow := time.Now().UTC()
+	offset := now.Sub(utcNow)
+	todayLocal := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	return todayLocal.Add(-offset)
+}
+
+func defaultInt(s string, def int) int {
+	if strings.TrimSpace(s) == "" {
+		return def
+	}
+	v, err := strconv.Atoi(s)
+	if err != nil {
+		return def
+	}
+	return v
+}
+
+func filedbTime(t filedb.TorrentDetails, key string) time.Time {
+	raw := t[key]
+	switch v := raw.(type) {
+	case string:
+		for _, layout := range []string{time.RFC3339Nano, "2006-01-02T15:04:05.9999999Z07:00", "2006-01-02T15:04:05Z07:00", "2006-01-02T15:04:05"} {
+			if tm, err := time.Parse(layout, v); err == nil {
+				return tm
+			}
+		}
+	case time.Time:
+		return v
+	}
+	return time.Time{}
+}
+
+func cloneMap(src filedb.TorrentDetails) filedb.TorrentDetails {
+	dst := filedb.TorrentDetails{}
+	for k, v := range src {
+		switch vv := v.(type) {
+		case []any:
+			cp := make([]any, len(vv))
+			copy(cp, vv)
+			dst[k] = cp
+		case []string:
+			cp := make([]string, len(vv))
+			copy(cp, vv)
+			dst[k] = cp
+		case []int:
+			cp := make([]int, len(vv))
+			copy(cp, vv)
+			dst[k] = cp
+		default:
+			dst[k] = v
+		}
+	}
+	return dst
+}
+
+func trackerAllowedByConfig(disabled []string, tracker string) bool {
+	for _, item := range disabled {
+		if strings.EqualFold(strings.TrimSpace(item), strings.TrimSpace(tracker)) {
+			return false
+		}
+	}
+	return true
+}
+
+func filedbKeyPath(key string) string {
+	md5key := fmt.Sprintf("%x", md5.Sum([]byte(key)))
+	return filepath.ToSlash(filepath.Join(md5key[:2], md5key[2:]))
+}
+
+
+func (s *Server) enrichTorrentWithTracks(t filedb.TorrentDetails) filedb.TorrentDetails {
+	if t == nil {
+		return t
+	}
+	if t["ffprobe"] != nil && t["languages"] != nil {
+		return t
+	}
+	magnet := strings.TrimSpace(asString(t["magnet"]))
+	if magnet == "" || s.TracksDB == nil {
+		return t
+	}
+	streams, ok := s.TracksDB.GetByMagnet(magnet, toStringSliceAny(t["types"]), true)
+	if !ok || len(streams) == 0 {
+		return t
+	}
+	if t["ffprobe"] == nil {
+		t["ffprobe"] = streams
+	}
+	if t["languages"] == nil {
+		t["languages"] = tracks.Languages(toStringSliceAny(t["languages"]), streams)
+	}
+	return t
+}
+
+func toStringSliceAny(v any) []string {
+	switch x := v.(type) {
+	case nil:
+		return nil
+	case []string:
+		out := make([]string, 0, len(x))
+		for _, s := range x {
+			s = strings.TrimSpace(s)
+			if s != "" {
+				out = append(out, s)
+			}
+		}
+		return out
+	case []any:
+		out := make([]string, 0, len(x))
+		for _, it := range x {
+			s := strings.TrimSpace(asString(it))
+			if s != "" {
+				out = append(out, s)
+			}
+		}
+		return out
+	default:
+		s := strings.TrimSpace(asString(v))
+		if s == "" {
+			return nil
+		}
+		return []string{s}
+	}
+}
+
+func isLocalRequest(r *http.Request) bool {
+	host, _, err := net.SplitHostPort(strings.TrimSpace(r.RemoteAddr))
+	if err != nil {
+		host = strings.TrimSpace(r.RemoteAddr)
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+func recomputeSizeBytes(sizeName string) int64 {
+	sizeName = strings.TrimSpace(strings.ReplaceAll(sizeName, ",", "."))
+	if sizeName == "" {
+		return 0
+	}
+	parts := strings.Fields(sizeName)
+	if len(parts) < 2 {
+		return 0
+	}
+	value, _ := strconv.ParseFloat(parts[0], 64)
+	if value == 0 {
+		return 0
+	}
+	switch strings.ToLower(parts[1]) {
+	case "gb", "гб":
+		value *= 1024
+	case "tb", "тб":
+		value *= 1048576
+	case "mb", "мб":
+	default:
+		return 0
+	}
+	return int64(value * 1048576)
+}
+
+func (s *Server) handleDevUpdateSize(w http.ResponseWriter, r *http.Request) {
+	if !isLocalRequest(r) {
+		writeJSON(w, http.StatusOK, map[string]any{"badip": true})
+		return
+	}
+	updated := 0
+	for _, item := range s.DB.OrderedMasterEntries() {
+		bucket, err := s.DB.OpenReadOrEmpty(item.Key)
+		if err != nil {
+			continue
+		}
+		changed := false
+		for url, t := range bucket {
+			if t == nil {
+				delete(bucket, url)
+				changed = true
+				continue
+			}
+			newSize := recomputeSizeBytes(asString(t["sizeName"]))
+			if toInt64Any(t["size"]) != newSize {
+				t["size"] = newSize
+				t["updateTime"] = time.Now().UTC().Format(time.RFC3339Nano)
+				bucket[url] = t
+				changed = true
+				updated++
+			}
+		}
+		if changed {
+			_ = s.DB.SaveBucket(item.Key, bucket, time.Now().UTC())
+		}
+	}
+	_ = s.DB.SaveChangesToFile()
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "updated": updated})
+}
+
+func (s *Server) handleDevUpdateSearchName(w http.ResponseWriter, r *http.Request) {
+	if !isLocalRequest(r) {
+		writeJSON(w, http.StatusOK, map[string]any{"badip": true})
+		return
+	}
+	updated := 0
+	for _, item := range s.DB.OrderedMasterEntries() {
+		bucket, err := s.DB.OpenReadOrEmpty(item.Key)
+		if err != nil {
+			continue
+		}
+		changed := false
+		for url, t := range bucket {
+			if t == nil {
+				delete(bucket, url)
+				changed = true
+				continue
+			}
+			name := strings.TrimSpace(asString(t["name"]))
+			original := strings.TrimSpace(asString(t["originalname"]))
+			if name == "" {
+				name = firstNonEmpty(strings.TrimSpace(asString(t["title"])), original)
+				t["name"] = name
+			}
+			if original == "" {
+				original = firstNonEmpty(strings.TrimSpace(asString(t["title"])), name)
+				t["originalname"] = original
+			}
+			sn := core.SearchName(name)
+			so := core.SearchName(original)
+			if asString(t["_sn"]) != sn || asString(t["_so"]) != so {
+				t["_sn"] = sn
+				t["_so"] = so
+				t["updateTime"] = time.Now().UTC().Format(time.RFC3339Nano)
+				bucket[url] = t
+				changed = true
+				updated++
+			}
+		}
+		if changed {
+			_ = s.DB.SaveBucket(item.Key, bucket, time.Now().UTC())
+		}
+	}
+	_ = s.DB.SaveChangesToFile()
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "updated": updated})
+}
+
+func toInt64Any(v any) int64 {
+	switch x := v.(type) {
+	case int64:
+		return x
+	case int:
+		return int64(x)
+	case float64:
+		return int64(x)
+	case json.Number:
+		n, _ := x.Int64()
+		return n
+	case string:
+		n, _ := strconv.ParseInt(strings.TrimSpace(x), 10, 64)
+		return n
+	default:
+		n, _ := strconv.ParseInt(strings.TrimSpace(asString(v)), 10, 64)
+		return n
+	}
+}
+
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if strings.TrimSpace(v) != "" {
+			return strings.TrimSpace(v)
+		}
+	}
+	return ""
+}
+
+func (s *Server) handleSyncTracks(w http.ResponseWriter, r *http.Request) {
+	writeBareNotFound(w)
+}
+
+func (s *Server) handleSyncTracksCheck(w http.ResponseWriter, r *http.Request) {
+	writeBareNotFound(w)
+}

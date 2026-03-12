@@ -1,0 +1,728 @@
+package torrentby
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"html"
+	"io"
+	"net/http"
+	"os"
+	"path/filepath"
+	"regexp"
+	"sort"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+	"jacred/app"
+	"jacred/core"
+	"jacred/filedb"
+)
+
+const trackerName = "torrentby"
+
+var (
+	rowSplitRe     = regexp.MustCompile(`<tr class="ttable_col`)
+	cleanupSpaceRe = regexp.MustCompile(`[\n\r\t\x{00A0} ]+`)
+	firstNamePart  = regexp.MustCompile(`(\[|/|\(|\|)`)
+	pageCountRe    = regexp.MustCompile(`href="\?page=([0-9]+)">[0-9]+</a>([\t ]+)?</center></td>`)
+)
+
+var categories = []string{"films", "movies", "serials", "tv", "humor", "cartoons", "anime", "sport"}
+
+type Task struct {
+	UpdateTime string `json:"updateTime"`
+	Page       int    `json:"page"`
+}
+
+func (t Task) UpdatedToday(loc *time.Location) bool {
+	tm := parseTaskTime(t.UpdateTime, loc)
+	if tm.IsZero() {
+		return false
+	}
+	now := time.Now().In(loc)
+	y1, m1, d1 := tm.Date()
+	y2, m2, d2 := now.Date()
+	return y1 == y2 && m1 == m2 && d1 == d2
+}
+
+func (t *Task) MarkToday(loc *time.Location) {
+	if loc == nil {
+		loc = time.Local
+	}
+	now := time.Now().In(loc)
+	t.UpdateTime = time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc).Format("2006-01-02T15:04:05Z07:00")
+}
+
+type Parser struct {
+	Config  app.Config
+	DB      *filedb.DB
+	DataDir string
+	Client  *http.Client
+	loc     *time.Location
+
+	mu       sync.Mutex
+	working  bool
+	allWork  bool
+	latestMu sync.Mutex
+	tasks    map[string][]Task
+}
+
+type ParseResult struct {
+	Fetched, Added, Updated, Skipped, Failed int
+	Status                                   string
+	PerCategory                              map[string]int
+}
+
+func New(cfg app.Config, db *filedb.DB, dataDir string) *Parser {
+	loc, err := time.LoadLocation("Asia/Jerusalem")
+	if err != nil {
+		loc = time.FixedZone("+0200", 2*3600)
+	}
+	p := &Parser{Config: cfg, DB: db, DataDir: dataDir, Client: &http.Client{Timeout: 30 * time.Second}, loc: loc, tasks: map[string][]Task{}}
+	_ = p.loadTasks()
+	return p
+}
+
+func (p *Parser) Parse(ctx context.Context, page int) (ParseResult, error) {
+	p.mu.Lock()
+	if p.working {
+		p.mu.Unlock()
+		return ParseResult{Status: "work"}, nil
+	}
+	p.working = true
+	p.mu.Unlock()
+	defer func() { p.mu.Lock(); p.working = false; p.mu.Unlock() }()
+
+	if isDisabled(p.Config.DisableTrackers, trackerName) {
+		return ParseResult{Status: "disabled"}, nil
+	}
+	if strings.TrimSpace(p.Config.TorrentBy.Host) == "" {
+		return ParseResult{Status: "config missing"}, nil
+	}
+
+	res := ParseResult{Status: "ok", PerCategory: map[string]int{}}
+	for _, cat := range categories {
+		items, err := p.parsePage(ctx, cat, page)
+		if err != nil {
+			return res, err
+		}
+		res.Fetched += len(items)
+		res.PerCategory[cat] = len(items)
+		if len(items) == 0 {
+			continue
+		}
+		added, updated, skipped, failed, err := p.saveTorrents(items)
+		if err != nil {
+			return res, err
+		}
+		res.Added += added
+		res.Updated += updated
+		res.Skipped += skipped
+		res.Failed += failed
+	}
+	return res, nil
+}
+
+func (p *Parser) UpdateTasksParse(ctx context.Context) (map[string][]Task, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.tasks == nil {
+		p.tasks = map[string][]Task{}
+	}
+	for _, cat := range categories {
+		htmlBody, err := p.fetchCategoryRoot(ctx, cat)
+		if err != nil {
+			return nil, err
+		}
+		maxPages := 0
+		if m := pageCountRe.FindStringSubmatch(htmlBody); len(m) > 1 {
+			maxPages, _ = strconv.Atoi(strings.TrimSpace(m[1]))
+		}
+		existing := p.tasks[cat]
+		pages := map[int]Task{}
+		for _, t := range existing {
+			pages[t.Page] = t
+		}
+		for page := 0; page <= maxPages; page++ {
+			if _, ok := pages[page]; !ok {
+				pages[page] = Task{Page: page, UpdateTime: "0001-01-01T00:00:00"}
+			}
+		}
+		merged := make([]Task, 0, len(pages))
+		for _, t := range pages {
+			merged = append(merged, t)
+		}
+		sort.Slice(merged, func(i, j int) bool { return merged[i].Page < merged[j].Page })
+		p.tasks[cat] = merged
+	}
+	if err := p.saveTasksLocked(); err != nil {
+		return nil, err
+	}
+	return cloneTasks(p.tasks), nil
+}
+
+func (p *Parser) ParseAllTask(ctx context.Context) (string, error) {
+	p.mu.Lock()
+	if p.allWork {
+		p.mu.Unlock()
+		return "work", nil
+	}
+	p.allWork = true
+	if p.tasks == nil {
+		p.tasks = map[string][]Task{}
+	}
+	p.mu.Unlock()
+	defer func() { p.mu.Lock(); p.allWork = false; p.mu.Unlock() }()
+
+	p.mu.Lock()
+	snapshot := cloneTasks(p.tasks)
+	p.mu.Unlock()
+	for cat, list := range snapshot {
+		for _, task := range list {
+			if task.UpdatedToday(p.loc) {
+				continue
+			}
+			if p.Config.TorrentBy.ParseDelay > 0 {
+				select {
+				case <-ctx.Done():
+					return "", ctx.Err()
+				case <-time.After(time.Duration(p.Config.TorrentBy.ParseDelay) * time.Millisecond):
+				}
+			}
+			items, err := p.parsePage(ctx, cat, task.Page)
+			if err != nil {
+				return "", err
+			}
+			if len(items) > 0 {
+				if _, _, _, _, err := p.saveTorrents(items); err != nil {
+					return "", err
+				}
+				p.mu.Lock()
+				if list2, ok := p.tasks[cat]; ok {
+					for i := range list2 {
+						if list2[i].Page == task.Page {
+							list2[i].MarkToday(p.loc)
+						}
+					}
+					p.tasks[cat] = list2
+				}
+				if err := p.saveTasksLocked(); err != nil {
+					p.mu.Unlock()
+					return "", err
+				}
+				p.mu.Unlock()
+			}
+		}
+	}
+	return "ok", nil
+}
+
+func (p *Parser) ParseLatest(ctx context.Context, pages int) (string, error) {
+	if !p.latestMu.TryLock() {
+		return "work", nil
+	}
+	defer p.latestMu.Unlock()
+	if pages <= 0 {
+		pages = 5
+	}
+
+	p.mu.Lock()
+	snapshot := cloneTasks(p.tasks)
+	p.mu.Unlock()
+	if len(snapshot) == 0 {
+		if _, err := p.UpdateTasksParse(ctx); err != nil {
+			return "", err
+		}
+		p.mu.Lock()
+		snapshot = cloneTasks(p.tasks)
+		p.mu.Unlock()
+	}
+
+	var lines []string
+	for cat, list := range snapshot {
+		sort.Slice(list, func(i, j int) bool { return list[i].Page < list[j].Page })
+		if len(list) > pages {
+			list = list[:pages]
+		}
+		for _, task := range list {
+			if p.Config.TorrentBy.ParseDelay > 0 {
+				select {
+				case <-ctx.Done():
+					return "", ctx.Err()
+				case <-time.After(time.Duration(p.Config.TorrentBy.ParseDelay) * time.Millisecond):
+				}
+			}
+			items, err := p.parsePage(ctx, cat, task.Page)
+			if err != nil {
+				return "", err
+			}
+			if len(items) > 0 {
+				if _, _, _, _, err := p.saveTorrents(items); err != nil {
+					return "", err
+				}
+				p.mu.Lock()
+				if list2, ok := p.tasks[cat]; ok {
+					for i := range list2 {
+						if list2[i].Page == task.Page {
+							list2[i].MarkToday(p.loc)
+						}
+					}
+					p.tasks[cat] = list2
+				}
+				if err := p.saveTasksLocked(); err != nil {
+					p.mu.Unlock()
+					return "", err
+				}
+				p.mu.Unlock()
+				lines = append(lines, fmt.Sprintf("%s - %d", cat, task.Page))
+			}
+		}
+	}
+	if len(lines) == 0 {
+		return "ok", nil
+	}
+	return strings.Join(lines, "\n") + "\n", nil
+}
+
+func (p *Parser) parsePage(ctx context.Context, cat string, page int) ([]filedb.TorrentDetails, error) {
+	baseURL := strings.TrimRight(requestHost(p.Config.TorrentBy), "/")
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("%s/%s/?page=%d", baseURL, cat, page), nil)
+	if err != nil {
+		return nil, err
+	}
+	if cookie := p.cookie(); cookie != "" {
+		req.Header.Set("Cookie", cookie)
+	}
+	resp, err := p.Client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("torrentby status %d", resp.StatusCode)
+	}
+	normalized := replaceBadNames(html.UnescapeString(string(body)))
+	return parsePageHTML(strings.TrimRight(p.Config.TorrentBy.Host, "/"), cat, normalized, time.Now().UTC()), nil
+}
+
+func (p *Parser) fetchCategoryRoot(ctx context.Context, cat string) (string, error) {
+	baseURL := strings.TrimRight(requestHost(p.Config.TorrentBy), "/")
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/"+cat+"/", nil)
+	if err != nil {
+		return "", err
+	}
+	if cookie := p.cookie(); cookie != "" {
+		req.Header.Set("Cookie", cookie)
+	}
+	resp, err := p.Client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", fmt.Errorf("torrentby status %d", resp.StatusCode)
+	}
+	return string(body), nil
+}
+
+func parsePageHTML(host, cat, htmlBody string, now time.Time) []filedb.TorrentDetails {
+	out := make([]filedb.TorrentDetails, 0)
+	for _, row := range rowSplitRe.Split(htmlBody, -1)[1:] {
+		if strings.TrimSpace(row) == "" || !strings.Contains(row, "magnet:?xt=urn") {
+			continue
+		}
+		match := func(pattern string, group ...int) string {
+			idx := 1
+			if len(group) > 0 {
+				idx = group[0]
+			}
+			re := regexp.MustCompile(`(?is)` + pattern)
+			m := re.FindStringSubmatch(row)
+			if len(m) <= idx {
+				return ""
+			}
+			res := cleanupSpaceRe.ReplaceAllString(html.UnescapeString(strings.TrimSpace(m[idx])), " ")
+			return strings.TrimSpace(strings.ReplaceAll(res, "\u0000", " "))
+		}
+
+		createTime := parseCreateTime(match(`>([0-9]{4}-[0-9]{2}-[0-9]{2})</td>`))
+		if createTime.IsZero() {
+			if strings.Contains(row, ">Сегодня</td>") {
+				createTime = now.UTC()
+			} else if strings.Contains(row, ">Вчера</td>") {
+				createTime = now.UTC().AddDate(0, 0, -1)
+			}
+		}
+		if createTime.IsZero() {
+			continue
+		}
+		urlPath := match(`<a name="search_select" [^>]+ href="/([0-9]+/[^"]+)"`)
+		title := match(`<a name="search_select" [^>]*>([^<]+)</a>`)
+		sidRaw := match(`<font color="green">&uarr; ([0-9]+)</font>`)
+		pirRaw := match(`<font color="red">&darr; ([0-9]+)</font>`)
+		sizeName := match(`</td><td style="white-space:nowrap;">([^<]+)</td>`)
+		magnet := match(`href="(magnet:\?xt=[^"]+)"`)
+		if urlPath == "" || title == "" || sidRaw == "" || pirRaw == "" || sizeName == "" || magnet == "" {
+			continue
+		}
+
+		name, original, relased := parseTitle(cat, title)
+		if strings.TrimSpace(name) == "" {
+			name = fallbackName(title)
+		}
+		types := typesForCategory(cat)
+		if strings.TrimSpace(name) == "" || len(types) == 0 {
+			continue
+		}
+		sid, _ := strconv.Atoi(sidRaw)
+		pir, _ := strconv.Atoi(pirRaw)
+		out = append(out, filedb.TorrentDetails{
+			"trackerName":  trackerName,
+			"types":        types,
+			"url":          strings.TrimRight(host, "/") + "/" + strings.TrimLeft(urlPath, "/"),
+			"title":        title,
+			"sid":          sid,
+			"pir":          pir,
+			"sizeName":     sizeName,
+			"magnet":       magnet,
+			"createTime":   createTime.UTC().Format(time.RFC3339Nano),
+			"updateTime":   now.UTC().Format(time.RFC3339Nano),
+			"name":         name,
+			"originalname": original,
+			"relased":      relased,
+			"_sn":          core.SearchName(name),
+			"_so":          core.SearchName(firstNonEmpty(original, name)),
+		})
+	}
+	return out
+}
+
+func (p *Parser) saveTorrents(torrents []filedb.TorrentDetails) (int, int, int, int, error) {
+	added, updated, skipped, failed := 0, 0, 0, 0
+	bucketCache := map[string]map[string]filedb.TorrentDetails{}
+	changed := map[string]time.Time{}
+	for _, incoming := range torrents {
+		key := p.DB.KeyDb(asString(incoming["name"]), asString(incoming["originalname"]))
+		if strings.TrimSpace(key) == "" || key == ":" {
+			skipped++
+			continue
+		}
+		bucket, ok := bucketCache[key]
+		if !ok {
+			loaded, err := p.DB.OpenReadOrEmpty(key)
+			if err != nil {
+				return added, updated, skipped, failed, err
+			}
+			bucket = loaded
+			bucketCache[key] = bucket
+		}
+		urlv := strings.TrimSpace(asString(incoming["url"]))
+		if urlv == "" {
+			skipped++
+			continue
+		}
+		existing, exists := bucket[urlv]
+		if exists && samePrimary(existing, incoming) {
+			skipped++
+			continue
+		}
+		bucket[urlv] = mergeTorrent(existing, exists, incoming)
+		changed[key] = fileTime(bucket[urlv])
+		if exists {
+			updated++
+		} else {
+			added++
+		}
+	}
+	for key, when := range changed {
+		if err := p.DB.SaveBucket(key, bucketCache[key], when); err != nil {
+			return added, updated, skipped, failed, err
+		}
+	}
+	if len(changed) > 0 {
+		if err := p.DB.SaveChangesToFile(); err != nil {
+			return added, updated, skipped, failed, err
+		}
+	}
+	return added, updated, skipped, failed, nil
+}
+
+func (p *Parser) loadTasks() error {
+	path := filepath.Join(p.DataDir, "temp", "torrentby_taskParse.json")
+	b, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			p.tasks = map[string][]Task{}
+			return nil
+		}
+		return err
+	}
+	tasks := map[string][]Task{}
+	if err := json.Unmarshal(b, &tasks); err != nil {
+		return err
+	}
+	p.tasks = tasks
+	return nil
+}
+
+func (p *Parser) saveTasksLocked() error {
+	path := filepath.Join(p.DataDir, "temp", "torrentby_taskParse.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	b, err := json.Marshal(p.tasks)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, b, 0o644)
+}
+
+func cloneTasks(in map[string][]Task) map[string][]Task {
+	out := make(map[string][]Task, len(in))
+	for k, v := range in {
+		vv := make([]Task, len(v))
+		copy(vv, v)
+		out[k] = vv
+	}
+	return out
+}
+
+func (p *Parser) cookie() string {
+	if strings.TrimSpace(p.Config.TorrentBy.Cookie) != "" {
+		return strings.TrimSpace(p.Config.TorrentBy.Cookie)
+	}
+	b, err := os.ReadFile(filepath.Join(p.DataDir, "temp", "torrentby.cookie"))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
+}
+
+func parseTaskTime(s string, loc *time.Location) time.Time {
+	s = strings.TrimSpace(s)
+	if s == "" || strings.HasPrefix(s, "0001-01-01") {
+		return time.Time{}
+	}
+	for _, layout := range []string{time.RFC3339Nano, time.RFC3339, "2006-01-02T15:04:05", "2006-01-02T15:04:05Z07:00"} {
+		if tm, err := time.ParseInLocation(layout, s, loc); err == nil {
+			return tm.In(loc)
+		}
+	}
+	return time.Time{}
+}
+
+func parseTitle(cat, title string) (string, string, int) {
+	switch cat {
+	case "films":
+		if m := regexp.MustCompile(`^([^/\(]+) / [^/]+ / ([^/\(]+) \(([0-9]{4})\)`).FindStringSubmatch(title); len(m) == 4 {
+			return strings.TrimSpace(m[1]), strings.TrimSpace(m[2]), atoi(m[3])
+		}
+		if m := regexp.MustCompile(`^([^/\(]+) / ([^/\(]+) \(([0-9]{4})\)`).FindStringSubmatch(title); len(m) == 4 {
+			return strings.TrimSpace(m[1]), strings.TrimSpace(m[2]), atoi(m[3])
+		}
+	case "movies":
+		if m := regexp.MustCompile(`^([^/\(]+) (/ [^/\(]+)?\(([0-9]{4})\)`).FindStringSubmatch(title); len(m) == 4 {
+			return strings.TrimSpace(m[1]), "", atoi(m[3])
+		}
+	case "serials":
+		if m := regexp.MustCompile(`^([^/\(\[]+) / [^/]+ / [^/]+ / ([^/\(\[]+) \[[^\]]+\] +\(([0-9]{4})(\)|-)`).FindStringSubmatch(title); len(m) >= 4 {
+			return strings.TrimSpace(m[1]), strings.TrimSpace(m[2]), atoi(m[3])
+		}
+		if m := regexp.MustCompile(`^([^/\(\[]+) / [^/]+ / ([^/\(\[]+) \[[^\]]+\] +\(([0-9]{4})(\)|-)`).FindStringSubmatch(title); len(m) >= 4 {
+			return strings.TrimSpace(m[1]), strings.TrimSpace(m[2]), atoi(m[3])
+		}
+		if m := regexp.MustCompile(`^([^/\(\[]+) / ([^/\[]+) \[[^\]]+\] +\(([0-9]{4})(\)|-)`).FindStringSubmatch(title); len(m) >= 4 {
+			return strings.TrimSpace(m[1]), strings.TrimSpace(m[2]), atoi(m[3])
+		}
+		if m := regexp.MustCompile(`^([^/\(\[]+) \[[^\]]+\] +\(([0-9]{4})(\)|-)`).FindStringSubmatch(title); len(m) >= 3 {
+			return strings.TrimSpace(m[1]), "", atoi(m[2])
+		}
+	case "cartoons", "anime", "tv", "humor", "sport":
+		if strings.Contains(title, " / ") {
+			if strings.Contains(title, "[") && strings.Contains(title, "]") {
+				if m := regexp.MustCompile(`^([^/]+) / [^/]+ / ([^/\[]+) \[[^\]]+\] +\(([0-9]{4})(\)|-)`).FindStringSubmatch(title); len(m) >= 4 {
+					return strings.TrimSpace(m[1]), strings.TrimSpace(m[2]), atoi(m[3])
+				}
+				if m := regexp.MustCompile(`^([^/]+) / ([^/\[]+) \[[^\]]+\] +\(([0-9]{4})(\)|-)`).FindStringSubmatch(title); len(m) >= 4 {
+					return strings.TrimSpace(m[1]), strings.TrimSpace(m[2]), atoi(m[3])
+				}
+			} else {
+				if m := regexp.MustCompile(`^([^/\(]+) / [^/]+ / ([^/\(]+) \(([0-9]{4})(\)|-)`).FindStringSubmatch(title); len(m) >= 4 {
+					return strings.TrimSpace(m[1]), strings.TrimSpace(m[2]), atoi(m[3])
+				}
+				if m := regexp.MustCompile(`^([^/\(]+) / ([^/\(]+) \(([0-9]{4})(\)|-)`).FindStringSubmatch(title); len(m) >= 4 {
+					return strings.TrimSpace(m[1]), strings.TrimSpace(m[2]), atoi(m[3])
+				}
+			}
+		} else {
+			if strings.Contains(title, "[") && strings.Contains(title, "]") {
+				if m := regexp.MustCompile(`^([^/\[]+) \[[^\]]+\] +\(([0-9]{4})(\)|-)`).FindStringSubmatch(title); len(m) >= 3 {
+					return strings.TrimSpace(m[1]), "", atoi(m[2])
+				}
+			} else if m := regexp.MustCompile(`^([^/\(]+) \(([0-9]{4})(\)|-)`).FindStringSubmatch(title); len(m) >= 3 {
+				return strings.TrimSpace(m[1]), "", atoi(m[2])
+			}
+		}
+	}
+	return "", "", 0
+}
+
+func typesForCategory(cat string) []string {
+	switch cat {
+	case "films", "movies":
+		return []string{"movie"}
+	case "serials":
+		return []string{"serial"}
+	case "tv", "humor":
+		return []string{"tvshow"}
+	case "cartoons":
+		return []string{"multfilm", "multserial"}
+	case "anime":
+		return []string{"anime"}
+	case "sport":
+		return []string{"sport"}
+	default:
+		return nil
+	}
+}
+
+func requestHost(t app.TrackerSettings) string {
+	if strings.TrimSpace(t.Alias) != "" {
+		return strings.TrimSpace(t.Alias)
+	}
+	return strings.TrimSpace(t.Host)
+}
+
+func parseCreateTime(v string) time.Time {
+	v = strings.TrimSpace(strings.ReplaceAll(v, "-", " "))
+	if v == "" {
+		return time.Time{}
+	}
+	tm, _ := time.ParseInLocation("2006 01 02", v, time.Local)
+	return tm
+}
+
+func replaceBadNames(s string) string {
+	s = strings.ReplaceAll(s, "Ванда/Вижн ", "ВандаВижн ")
+	s = strings.ReplaceAll(s, "Ё", "Е")
+	s = strings.ReplaceAll(s, "ё", "е")
+	s = strings.ReplaceAll(s, "щ", "ш")
+	return s
+}
+
+func mergeTorrent(existing filedb.TorrentDetails, exists bool, incoming filedb.TorrentDetails) filedb.TorrentDetails {
+	out := filedb.TorrentDetails{}
+	if exists {
+		for k, v := range existing {
+			out[k] = v
+		}
+	}
+	for k, v := range incoming {
+		if v == nil {
+			continue
+		}
+		if s, ok := v.(string); ok && strings.TrimSpace(s) == "" {
+			continue
+		}
+		out[k] = v
+	}
+	if strings.TrimSpace(asString(out["name"])) == "" {
+		out["name"] = fallbackName(asString(out["title"]))
+	}
+	if strings.TrimSpace(asString(out["originalname"])) == "" {
+		out["originalname"] = out["name"]
+	}
+	out["_sn"] = core.SearchName(asString(out["name"]))
+	out["_so"] = core.SearchName(firstNonEmpty(asString(out["originalname"]), asString(out["name"])))
+	if fileTime(out).IsZero() {
+		out["updateTime"] = time.Now().UTC().Format(time.RFC3339Nano)
+	}
+	return out
+}
+
+func samePrimary(existing, incoming filedb.TorrentDetails) bool {
+	return asString(existing["title"]) == asString(incoming["title"]) && asString(existing["magnet"]) == asString(incoming["magnet"]) && asInt(existing["sid"]) == asInt(incoming["sid"]) && asInt(existing["pir"]) == asInt(incoming["pir"])
+}
+
+func fileTime(t filedb.TorrentDetails) time.Time {
+	for _, key := range []string{"updateTime", "createTime"} {
+		s := strings.TrimSpace(asString(t[key]))
+		if s == "" {
+			continue
+		}
+		for _, layout := range []string{time.RFC3339Nano, "2006-01-02T15:04:05.9999999Z07:00", "2006-01-02T15:04:05Z07:00", time.RFC3339} {
+			if tm, err := time.Parse(layout, s); err == nil {
+				return tm.UTC()
+			}
+		}
+	}
+	return time.Now().UTC()
+}
+
+func fallbackName(title string) string {
+	return strings.TrimSpace(firstNamePart.Split(title, 2)[0])
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if strings.TrimSpace(v) != "" {
+			return strings.TrimSpace(v)
+		}
+	}
+	return ""
+}
+
+func isDisabled(list []string, tracker string) bool {
+	for _, item := range list {
+		if strings.EqualFold(strings.TrimSpace(item), strings.TrimSpace(tracker)) {
+			return true
+		}
+	}
+	return false
+}
+
+func atoi(s string) int {
+	n, _ := strconv.Atoi(strings.TrimSpace(s))
+	return n
+}
+
+func asString(v any) string {
+	switch x := v.(type) {
+	case string:
+		return x
+	case nil:
+		return ""
+	default:
+		return fmt.Sprint(v)
+	}
+}
+
+func asInt(v any) int {
+	switch x := v.(type) {
+	case int:
+		return x
+	case int64:
+		return int(x)
+	case float64:
+		return int(x)
+	case json.Number:
+		n, _ := x.Int64()
+		return int(n)
+	case string:
+		n, _ := strconv.Atoi(strings.TrimSpace(x))
+		return n
+	default:
+		return 0
+	}
+}

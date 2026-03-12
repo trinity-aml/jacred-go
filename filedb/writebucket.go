@@ -1,0 +1,73 @@
+package filedb
+
+import (
+	"os"
+	"sort"
+	"strings"
+	"time"
+)
+
+func (db *DB) OpenReadOrEmpty(key string) (map[string]TorrentDetails, error) {
+	bucket, err := db.OpenRead(key)
+	if err == nil {
+		return bucket, nil
+	}
+	if os.IsNotExist(err) {
+		return map[string]TorrentDetails{}, nil
+	}
+	return nil, err
+}
+
+func (db *DB) SaveBucket(key string, bucket map[string]TorrentDetails, updatedAt time.Time) error {
+	if strings.TrimSpace(key) == "" {
+		return nil
+	}
+	if updatedAt.IsZero() {
+		updatedAt = time.Now().UTC()
+	}
+	if err := writeBucket(db.PathDb(key), bucket); err != nil {
+		return err
+	}
+	if len(bucket) == 0 {
+		db.mu.Lock()
+		delete(db.masterDb, key)
+		for part, keys := range db.fastdb {
+			filtered := keys[:0]
+			for _, existing := range keys {
+				if existing != key {
+					filtered = append(filtered, existing)
+				}
+			}
+			if len(filtered) == 0 {
+				delete(db.fastdb, part)
+			} else {
+				db.fastdb[part] = filtered
+			}
+		}
+		db.mu.Unlock()
+		return nil
+	}
+	db.mu.Lock()
+	db.masterDb[key] = TorrentInfo{UpdateTime: updatedAt.UTC(), FileTime: ToFileTimeUTC(updatedAt.UTC())}
+	for _, part := range strings.Split(key, ":") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		keys := db.fastdb[part]
+		found := false
+		for _, existing := range keys {
+			if existing == key {
+				found = true
+				break
+			}
+		}
+		if !found {
+			keys = append(keys, key)
+			sort.Strings(keys)
+			db.fastdb[part] = keys
+		}
+	}
+	db.mu.Unlock()
+	return nil
+}

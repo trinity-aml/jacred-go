@@ -1,0 +1,843 @@
+package kinozal
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"html"
+	"io"
+	"net/http"
+	"net/url"
+	"os"
+	"path/filepath"
+	"regexp"
+	"sort"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+	"jacred/app"
+	"jacred/core"
+	"jacred/filedb"
+)
+
+const trackerName = "kinozal"
+
+var parseCats = []string{"45", "46", "8", "6", "15", "17", "35", "39", "13", "14", "24", "11", "9", "47", "18", "37", "12", "10", "7", "16", "49", "50", "21", "22", "20"}
+
+var (
+	browsePagesRe = regexp.MustCompile(`>([0-9]+)</a></li><li><a rel="next"`)
+	rowSplitRe    = regexp.MustCompile(`<tr class=('first bg'|bg)>`)
+	cleanSpaceRe  = regexp.MustCompile(`[\n\r\t\x{00A0} ]+`)
+	dateOnlyRe    = regexp.MustCompile(`<td class='s'>([0-9]{2}\.[0-9]{2}\.[0-9]{4}) в [0-9]{2}:[0-9]{2}</td>`)
+	movieMainRe   = regexp.MustCompile(`^([^\(/]+) (\([^\)/]+\) )?/ ([^\(/]+) (\([^\)/]+\) )?/ ([0-9]{4})`)
+	movieShortRe  = regexp.MustCompile(`^([^/\(]+) / ([0-9]{4})`)
+	rusSeasonRe   = regexp.MustCompile(`^([^\(/]+) (\([^\)/]+\) )?\([0-9\-]+ сезоны?: [^\)/]+\) ([^/]+ )?/ ([0-9]{4})`)
+	rusSeriesRe   = regexp.MustCompile(`^([^\(/]+) (\([^\)/]+\) )?\([^\)/]+\) ([^/]+ )?/ ([0-9]{4})`)
+	forSeasonRe   = regexp.MustCompile(`^([^\(/]+) (\([^\)/]+\) )?\([0-9\-]+ сезоны?: [^\)/]+\) ([^/]+ )?/ ([^\(/]+) / ([0-9]{4})`)
+	forSeriesRe   = regexp.MustCompile(`^([^\(/]+) (\([^\)/]+\) )?\([^\)/]+\) ([^/]+ )?/ ([^\(/]+) / ([0-9]{4})`)
+	forShortRe    = regexp.MustCompile(`^([^\(/]+) / ([^\(/]+) / ([0-9]{4})`)
+	tvMainRe      = regexp.MustCompile(`^([^\(/]+) (\([^\)/]+\) )?/ ([^\(/]+) / ([0-9]{4})`)
+	tvShortRe     = regexp.MustCompile(`^([^/\(]+) (\([^\)/]+\) )?/ ([0-9]{4})`)
+	idURLRe       = regexp.MustCompile(`\?id=([0-9]+)`)
+	hashRe        = regexp.MustCompile(`<ul><li>Инфо хеш: +([^<]+)</li>`)
+)
+
+type Task struct {
+	UpdateTime string `json:"updateTime"`
+	Page       int    `json:"page"`
+}
+
+type ParseResult struct {
+	Status      string         `json:"status"`
+	Fetched     int            `json:"fetched"`
+	Added       int            `json:"added"`
+	Updated     int            `json:"updated"`
+	Skipped     int            `json:"skipped"`
+	Failed      int            `json:"failed"`
+	PerCategory map[string]int `json:"by_category"`
+}
+
+type Parser struct {
+	Config  app.Config
+	DB      *filedb.DB
+	DataDir string
+	Client  *http.Client
+	loc     *time.Location
+
+	mu               sync.Mutex
+	working          bool
+	allWork          bool
+	latestMu         sync.Mutex
+	tasks            map[string]map[string][]Task
+	cookieMu         sync.Mutex
+	cookie           string
+	lastLoginAttempt time.Time
+}
+
+func New(cfg app.Config, db *filedb.DB, dataDir string) *Parser {
+	loc, _ := time.LoadLocation("Asia/Jerusalem")
+	if loc == nil {
+		loc = time.Local
+	}
+	p := &Parser{Config: cfg, DB: db, DataDir: dataDir, Client: &http.Client{Timeout: 35 * time.Second}, loc: loc, tasks: map[string]map[string][]Task{}}
+	_ = p.loadTasks()
+	return p
+}
+
+func (p *Parser) Parse(ctx context.Context, page int) (ParseResult, error) {
+	p.mu.Lock()
+	if p.working {
+		p.mu.Unlock()
+		return ParseResult{Status: "work"}, nil
+	}
+	p.working = true
+	p.mu.Unlock()
+	defer func() { p.mu.Lock(); p.working = false; p.mu.Unlock() }()
+	if isDisabled(p.Config.DisableTrackers, trackerName) {
+		return ParseResult{Status: "disabled"}, nil
+	}
+	res := ParseResult{Status: "ok", PerCategory: map[string]int{}}
+	for _, cat := range parseCats {
+		items, err := p.parsePage(ctx, cat, page, "")
+		if err != nil {
+			return res, err
+		}
+		res.Fetched += len(items)
+		res.PerCategory[cat] = len(items)
+		if len(items) == 0 {
+			continue
+		}
+		a, u, s, f, err := p.saveTorrents(ctx, items)
+		if err != nil {
+			return res, err
+		}
+		res.Added += a
+		res.Updated += u
+		res.Skipped += s
+		res.Failed += f
+	}
+	return res, nil
+}
+
+func (p *Parser) UpdateTasksParse(ctx context.Context) (map[string]map[string][]Task, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.tasks == nil {
+		p.tasks = map[string]map[string][]Task{}
+	}
+	for _, cat := range parseCats {
+		for year := time.Now().In(p.loc).Year(); year >= 1990; year-- {
+			arg := fmt.Sprintf("&d=%d&t=1", year)
+			htmlBody, err := p.fetchBrowse(ctx, cat, 0, arg)
+			if err != nil || htmlBody == "" {
+				continue
+			}
+			maxPages := 0
+			if m := browsePagesRe.FindStringSubmatch(htmlBody); len(m) > 1 {
+				maxPages, _ = strconv.Atoi(strings.TrimSpace(m[1]))
+			}
+			if _, ok := p.tasks[cat]; !ok {
+				p.tasks[cat] = map[string][]Task{}
+			}
+			pagesMap := map[int]Task{}
+			for _, t := range p.tasks[cat][arg] {
+				pagesMap[t.Page] = t
+			}
+			for page := 0; page <= maxPages; page++ {
+				if _, ok := pagesMap[page]; !ok {
+					pagesMap[page] = Task{Page: page, UpdateTime: "0001-01-01T00:00:00"}
+				}
+			}
+			merged := make([]Task, 0, len(pagesMap))
+			for _, t := range pagesMap {
+				merged = append(merged, t)
+			}
+			sort.Slice(merged, func(i, j int) bool { return merged[i].Page < merged[j].Page })
+			p.tasks[cat][arg] = merged
+		}
+	}
+	if err := p.saveTasksLocked(); err != nil {
+		return nil, err
+	}
+	return cloneTasks(p.tasks), nil
+}
+
+func (p *Parser) ParseAllTask(ctx context.Context) (string, error) {
+	p.mu.Lock()
+	if p.allWork {
+		p.mu.Unlock()
+		return "work", nil
+	}
+	p.allWork = true
+	snapshot := cloneTasks(p.tasks)
+	p.mu.Unlock()
+	defer func() { p.mu.Lock(); p.allWork = false; p.mu.Unlock() }()
+	for cat, byArg := range snapshot {
+		for arg, list := range byArg {
+			for _, task := range list {
+				if task.UpdatedToday(p.loc) {
+					continue
+				}
+				if p.Config.Kinozal.ParseDelay > 0 {
+					select {
+					case <-ctx.Done():
+						return "", ctx.Err()
+					case <-time.After(time.Duration(p.Config.Kinozal.ParseDelay) * time.Millisecond):
+					}
+				}
+				items, err := p.parsePage(ctx, cat, task.Page, arg)
+				if err != nil {
+					return "", err
+				}
+				if len(items) == 0 {
+					continue
+				}
+				if _, _, _, _, err := p.saveTorrents(ctx, items); err != nil {
+					return "", err
+				}
+				p.mu.Lock()
+				if argMap, ok := p.tasks[cat]; ok {
+					if list2, ok := argMap[arg]; ok {
+						for i := range list2 {
+							if list2[i].Page == task.Page {
+								list2[i].MarkToday(p.loc)
+							}
+						}
+						argMap[arg] = list2
+						p.tasks[cat] = argMap
+					}
+				}
+				if err := p.saveTasksLocked(); err != nil {
+					p.mu.Unlock()
+					return "", err
+				}
+				p.mu.Unlock()
+			}
+		}
+	}
+	return "ok", nil
+}
+
+func (p *Parser) ParseLatest(ctx context.Context, pages int) (string, error) {
+	if !p.latestMu.TryLock() {
+		return "work", nil
+	}
+	defer p.latestMu.Unlock()
+	if pages <= 0 {
+		pages = 5
+	}
+	p.mu.Lock()
+	snapshot := cloneTasks(p.tasks)
+	p.mu.Unlock()
+	if len(snapshot) == 0 {
+		if _, err := p.UpdateTasksParse(ctx); err != nil {
+			return "", err
+		}
+		p.mu.Lock()
+		snapshot = cloneTasks(p.tasks)
+		p.mu.Unlock()
+	}
+	var lines []string
+	for cat, byArg := range snapshot {
+		for arg, list := range byArg {
+			sort.Slice(list, func(i, j int) bool { return list[i].Page < list[j].Page })
+			if len(list) > pages {
+				list = list[:pages]
+			}
+			for _, task := range list {
+				if p.Config.Kinozal.ParseDelay > 0 {
+					select {
+					case <-ctx.Done():
+						return "", ctx.Err()
+					case <-time.After(time.Duration(p.Config.Kinozal.ParseDelay) * time.Millisecond):
+					}
+				}
+				items, err := p.parsePage(ctx, cat, task.Page, arg)
+				if err != nil {
+					return "", err
+				}
+				if len(items) == 0 {
+					continue
+				}
+				if _, _, _, _, err := p.saveTorrents(ctx, items); err != nil {
+					return "", err
+				}
+				p.mu.Lock()
+				if argMap, ok := p.tasks[cat]; ok {
+					if list2, ok := argMap[arg]; ok {
+						for i := range list2 {
+							if list2[i].Page == task.Page {
+								list2[i].MarkToday(p.loc)
+							}
+						}
+						argMap[arg] = list2
+						p.tasks[cat] = argMap
+					}
+				}
+				if err := p.saveTasksLocked(); err != nil {
+					p.mu.Unlock()
+					return "", err
+				}
+				p.mu.Unlock()
+				lines = append(lines, fmt.Sprintf("%s - %s - %d", cat, arg, task.Page))
+			}
+		}
+	}
+	if len(lines) == 0 {
+		return "ok", nil
+	}
+	return strings.Join(lines, "\n") + "\n", nil
+}
+
+func (p *Parser) parsePage(ctx context.Context, cat string, page int, arg string) ([]filedb.TorrentDetails, error) {
+	htmlBody, err := p.fetchBrowse(ctx, cat, page, arg)
+	if err != nil {
+		return nil, err
+	}
+	if htmlBody == "" || !strings.Contains(htmlBody, "Кинозал.ТВ</title>") {
+		return nil, nil
+	}
+	if p.getCookie() == "" || !strings.Contains(htmlBody, ">Выход</a>") {
+		_ = p.takeLogin(ctx)
+	}
+	rows := rowSplitRe.Split(replaceBadNames(htmlBody), -1)
+	out := make([]filedb.TorrentDetails, 0, len(rows))
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	host := strings.TrimRight(p.Config.Kinozal.Host, "/")
+	for _, row := range rows[1:] {
+		if strings.TrimSpace(row) == "" {
+			continue
+		}
+		match := func(pattern string, idx ...int) string {
+			group := 1
+			if len(idx) > 0 {
+				group = idx[0]
+			}
+			re := regexp.MustCompile(`(?is)` + pattern)
+			m := re.FindStringSubmatch(row)
+			if len(m) <= group {
+				return ""
+			}
+			s := html.UnescapeString(strings.TrimSpace(m[group]))
+			s = cleanSpaceRe.ReplaceAllString(s, " ")
+			return strings.TrimSpace(s)
+		}
+		createTime := time.Time{}
+		if strings.Contains(row, "<td class='s'>сегодня") {
+			createTime = time.Now().UTC()
+		} else if strings.Contains(row, "<td class='s'>вчера") {
+			createTime = time.Now().UTC().AddDate(0, 0, -1)
+		} else if m := dateOnlyRe.FindStringSubmatch(row); len(m) > 1 {
+			createTime = parseCreateTime(m[1], "02.01.2006")
+		}
+		if createTime.IsZero() {
+			continue
+		}
+		urlPath := match(`href="/(details.php\?id=[0-9]+)"`)
+		title := match(`class="r[0-9]+">([^<]+)</a>`)
+		sidRaw := match(`<td class='sl_s'>([0-9]+)</td>`)
+		pirRaw := match(`<td class='sl_p'>([0-9]+)</td>`)
+		sizeName := match(`<td class='s'>([0-9\.,]+ (МБ|ГБ))</td>`)
+		if urlPath == "" || title == "" || sidRaw == "" || pirRaw == "" || sizeName == "" {
+			continue
+		}
+		name, original, relased := parseTitle(cat, title, row)
+		if strings.TrimSpace(name) == "" {
+			name = fallbackName(title)
+		}
+		types := categoryTypes(cat)
+		if name == "" || len(types) == 0 {
+			continue
+		}
+		sid, _ := strconv.Atoi(sidRaw)
+		pir, _ := strconv.Atoi(pirRaw)
+		out = append(out, filedb.TorrentDetails{
+			"trackerName":  trackerName,
+			"types":        types,
+			"url":          host + "/" + strings.TrimLeft(urlPath, "/"),
+			"title":        title,
+			"sid":          sid,
+			"pir":          pir,
+			"sizeName":     sizeName,
+			"createTime":   createTime.UTC().Format(time.RFC3339Nano),
+			"updateTime":   now,
+			"name":         name,
+			"originalname": original,
+			"relased":      relased,
+			"_sn":          core.SearchName(name),
+			"_so":          core.SearchName(firstNonEmpty(original, name)),
+		})
+	}
+	return out, nil
+}
+
+func (p *Parser) saveTorrents(ctx context.Context, torrents []filedb.TorrentDetails) (int, int, int, int, error) {
+	added, updated, skipped, failed := 0, 0, 0, 0
+	bucketCache := map[string]map[string]filedb.TorrentDetails{}
+	changed := map[string]time.Time{}
+	for _, incoming := range torrents {
+		key := p.DB.KeyDb(asString(incoming["name"]), asString(incoming["originalname"]))
+		if strings.TrimSpace(key) == "" || key == ":" {
+			skipped++
+			continue
+		}
+		bucket, ok := bucketCache[key]
+		if !ok {
+			loaded, err := p.DB.OpenReadOrEmpty(key)
+			if err != nil {
+				return added, updated, skipped, failed, err
+			}
+			bucket = loaded
+			bucketCache[key] = bucket
+		}
+		urlv := strings.TrimSpace(asString(incoming["url"]))
+		if urlv == "" {
+			skipped++
+			continue
+		}
+		existing, exists := bucket[urlv]
+		if exists && samePrimary(existing, incoming) && asString(existing["magnet"]) != "" {
+			skipped++
+			continue
+		}
+		magnet, err := p.resolveMagnet(ctx, urlv)
+		if err != nil {
+			failed++
+			continue
+		}
+		if magnet == "" {
+			failed++
+			continue
+		}
+		incoming["magnet"] = magnet
+		bucket[urlv] = mergeTorrent(existing, exists, incoming)
+		if exists {
+			updated++
+		} else {
+			added++
+		}
+		changed[key] = fileTime(bucket[urlv])
+	}
+	for key, bucket := range bucketCache {
+		if _, ok := changed[key]; !ok {
+			continue
+		}
+		if err := p.DB.SaveBucket(key, bucket, changed[key]); err != nil {
+			return added, updated, skipped, failed, err
+		}
+	}
+	return added, updated, skipped, failed, nil
+}
+
+func (p *Parser) resolveMagnet(ctx context.Context, detailURL string) (string, error) {
+	idm := idURLRe.FindStringSubmatch(detailURL)
+	if len(idm) < 2 {
+		return "", nil
+	}
+	id := idm[1]
+	cookie := p.getCookie()
+	form := url.Values{}
+	form.Set("id", id)
+	form.Set("action", "2")
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(requestHost(p.Config.Kinozal), "/")+"/get_srv_details.php?id="+id+"&action=2", bytes.NewBufferString(form.Encode()))
+	if err != nil {
+		return "", err
+	}
+	setKinozalHeaders(req, requestHost(p.Config.Kinozal), cookie)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	resp, err := p.Client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+	text := core.DecodeCP1251(body)
+	if text == "" {
+		text = string(body)
+	}
+	if m := hashRe.FindStringSubmatch(text); len(m) > 1 {
+		h := strings.TrimSpace(m[1])
+		if h != "" {
+			return "magnet:?xt=urn:btih:" + h, nil
+		}
+	}
+	return "", nil
+}
+
+func (p *Parser) fetchBrowse(ctx context.Context, cat string, page int, arg string) (string, error) {
+	rawURL := fmt.Sprintf("%s/browse.php?c=%s&page=%d%s", strings.TrimRight(requestHost(p.Config.Kinozal), "/"), cat, page, arg)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return "", err
+	}
+	setKinozalHeaders(req, requestHost(p.Config.Kinozal), p.getCookie())
+	resp, err := p.Client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+	text := core.DecodeCP1251(body)
+	if !strings.Contains(text, "Кинозал") {
+		text = string(body)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", nil
+	}
+	return text, nil
+}
+
+func (p *Parser) takeLogin(ctx context.Context) error {
+	p.cookieMu.Lock()
+	if time.Since(p.lastLoginAttempt) < 2*time.Minute {
+		p.cookieMu.Unlock()
+		return nil
+	}
+	p.lastLoginAttempt = time.Now()
+	p.cookieMu.Unlock()
+	form := url.Values{}
+	form.Set("username", p.Config.Kinozal.Login.U)
+	form.Set("password", p.Config.Kinozal.Login.P)
+	form.Set("returnto", "")
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(requestHost(p.Config.Kinozal), "/")+"/takelogin.php", bytes.NewBufferString(form.Encode()))
+	if err != nil {
+		return err
+	}
+	setKinozalHeaders(req, requestHost(p.Config.Kinozal), "")
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	resp, err := p.Client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	uid, pass := "", ""
+	for _, line := range resp.Header.Values("Set-Cookie") {
+		if uid == "" && strings.Contains(line, "uid=") {
+			if m := regexp.MustCompile(`uid=([0-9]+)`).FindStringSubmatch(line); len(m) > 1 {
+				uid = m[1]
+			}
+		}
+		if pass == "" && strings.Contains(line, "pass=") {
+			if m := regexp.MustCompile(`pass=([^;]+)(;|$)`).FindStringSubmatch(line); len(m) > 1 {
+				pass = m[1]
+			}
+		}
+	}
+	if uid != "" && pass != "" {
+		p.cookieMu.Lock()
+		p.cookie = fmt.Sprintf("uid=%s; pass=%s;", uid, pass)
+		p.cookieMu.Unlock()
+	}
+	return nil
+}
+
+func (p *Parser) getCookie() string {
+	p.cookieMu.Lock()
+	defer p.cookieMu.Unlock()
+	if strings.TrimSpace(p.cookie) != "" {
+		return p.cookie
+	}
+	if strings.TrimSpace(p.Config.Kinozal.Cookie) != "" {
+		return strings.TrimSpace(p.Config.Kinozal.Cookie)
+	}
+	return ""
+}
+
+func setKinozalHeaders(req *http.Request, host, cookie string) {
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/99.0.4844.51 Safari/537.36")
+	req.Header.Set("Cache-Control", "no-cache")
+	req.Header.Set("Pragma", "no-cache")
+	req.Header.Set("DNT", "1")
+	req.Header.Set("Origin", strings.TrimRight(host, "/"))
+	req.Header.Set("Referer", strings.TrimRight(host, "/")+"/")
+	req.Header.Set("Upgrade-Insecure-Requests", "1")
+	if strings.TrimSpace(cookie) != "" {
+		req.Header.Set("Cookie", cookie)
+	}
+}
+
+func (p *Parser) tasksPath() string {
+	return filepath.Join(p.DataDir, "temp", "kinozal_taskParse.json")
+}
+func (p *Parser) loadTasks() error {
+	data, err := os.ReadFile(p.tasksPath())
+	if err != nil {
+		if os.IsNotExist(err) {
+			p.tasks = map[string]map[string][]Task{}
+			return nil
+		}
+		return err
+	}
+	var tasks map[string]map[string][]Task
+	if err := json.Unmarshal(data, &tasks); err != nil {
+		return err
+	}
+	if tasks == nil {
+		tasks = map[string]map[string][]Task{}
+	}
+	p.tasks = tasks
+	return nil
+}
+func (p *Parser) saveTasksLocked() error {
+	if p.tasks == nil {
+		p.tasks = map[string]map[string][]Task{}
+	}
+	if err := os.MkdirAll(filepath.Dir(p.tasksPath()), 0o755); err != nil {
+		return err
+	}
+	data, err := json.Marshal(p.tasks)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(p.tasksPath(), data, 0o644)
+}
+
+func cloneTasks(in map[string]map[string][]Task) map[string]map[string][]Task {
+	out := make(map[string]map[string][]Task, len(in))
+	for cat, byArg := range in {
+		out[cat] = map[string][]Task{}
+		for arg, list := range byArg {
+			vv := make([]Task, len(list))
+			copy(vv, list)
+			out[cat][arg] = vv
+		}
+	}
+	return out
+}
+func (t Task) UpdatedToday(loc *time.Location) bool {
+	tm := parseTaskTime(t.UpdateTime, loc)
+	if tm.IsZero() {
+		return false
+	}
+	now := time.Now().In(loc)
+	y1, m1, d1 := tm.Date()
+	y2, m2, d2 := now.Date()
+	return y1 == y2 && m1 == m2 && d1 == d2
+}
+func (t *Task) MarkToday(loc *time.Location) {
+	if loc == nil {
+		loc = time.Local
+	}
+	now := time.Now().In(loc)
+	t.UpdateTime = time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc).Format(time.RFC3339)
+}
+func parseTaskTime(s string, loc *time.Location) time.Time {
+	if strings.TrimSpace(s) == "" {
+		return time.Time{}
+	}
+	layouts := []string{time.RFC3339Nano, time.RFC3339, "2006-01-02T15:04:05", "2006-01-02 15:04:05", "2006-01-02"}
+	for _, layout := range layouts {
+		if tm, err := time.Parse(layout, s); err == nil {
+			if loc != nil {
+				return tm.In(loc)
+			}
+			return tm
+		}
+		if loc != nil {
+			if tm, err := time.ParseInLocation(layout, s, loc); err == nil {
+				return tm
+			}
+		}
+	}
+	return time.Time{}
+}
+
+func parseTitle(cat, title, row string) (string, string, int) {
+	var name, original string
+	relased := 0
+	if movieCategory(cat) {
+		if g := movieMainRe.FindStringSubmatch(title); len(g) > 5 {
+			name = strings.TrimSpace(g[1])
+			original = strings.TrimSpace(g[3])
+			relased, _ = strconv.Atoi(strings.TrimSpace(g[5]))
+		} else if g := movieShortRe.FindStringSubmatch(title); len(g) > 2 {
+			name = strings.TrimSpace(g[1])
+			relased, _ = strconv.Atoi(strings.TrimSpace(g[2]))
+		}
+	} else if cat == "45" || cat == "22" {
+		if strings.Contains(row, "сезон") {
+			if g := rusSeasonRe.FindStringSubmatch(title); len(g) > 4 {
+				name = strings.TrimSpace(g[1])
+				relased, _ = strconv.Atoi(strings.TrimSpace(g[4]))
+			}
+		} else if g := rusSeriesRe.FindStringSubmatch(title); len(g) > 4 {
+			name = strings.TrimSpace(g[1])
+			relased, _ = strconv.Atoi(strings.TrimSpace(g[4]))
+		}
+	} else if cat == "46" || cat == "21" || cat == "20" {
+		if strings.Contains(row, "сезон") {
+			if g := forSeasonRe.FindStringSubmatch(title); len(g) > 5 {
+				name = strings.TrimSpace(g[1])
+				original = strings.TrimSpace(g[4])
+				relased, _ = strconv.Atoi(strings.TrimSpace(g[5]))
+			}
+		} else if g := forSeriesRe.FindStringSubmatch(title); len(g) > 5 {
+			name = strings.TrimSpace(g[1])
+			original = strings.TrimSpace(g[4])
+			relased, _ = strconv.Atoi(strings.TrimSpace(g[5]))
+		} else if g := forShortRe.FindStringSubmatch(title); len(g) > 3 {
+			name = strings.TrimSpace(g[1])
+			original = strings.TrimSpace(g[2])
+			relased, _ = strconv.Atoi(strings.TrimSpace(g[3]))
+		}
+	} else if cat == "49" || cat == "50" {
+		if g := tvMainRe.FindStringSubmatch(title); len(g) > 4 {
+			name = strings.TrimSpace(g[1])
+			original = strings.TrimSpace(g[3])
+			relased, _ = strconv.Atoi(strings.TrimSpace(g[4]))
+		} else if g := tvShortRe.FindStringSubmatch(title); len(g) > 3 {
+			name = strings.TrimSpace(g[1])
+			relased, _ = strconv.Atoi(strings.TrimSpace(g[3]))
+		}
+	}
+	return strings.TrimSpace(name), strings.TrimSpace(original), relased
+}
+func movieCategory(cat string) bool {
+	switch cat {
+	case "8", "6", "15", "17", "35", "39", "13", "14", "24", "11", "9", "47", "18", "37", "12", "10", "7", "16":
+		return true
+	default:
+		return false
+	}
+}
+func categoryTypes(cat string) []string {
+	switch cat {
+	case "8", "6", "15", "17", "35", "39", "13", "14", "24", "11", "9", "47", "18", "37", "12", "10", "7", "16":
+		return []string{"movie"}
+	case "45", "46":
+		return []string{"serial"}
+	case "49", "50":
+		return []string{"tvshow"}
+	case "21", "22":
+		return []string{"multfilm", "multserial"}
+	case "20":
+		return []string{"anime"}
+	default:
+		return nil
+	}
+}
+func fallbackName(title string) string {
+	parts := regexp.MustCompile(`(\[|/|\(|\|)`).Split(title, -1)
+	if len(parts) == 0 {
+		return strings.TrimSpace(title)
+	}
+	return strings.TrimSpace(parts[0])
+}
+func requestHost(cfg app.TrackerSettings) string {
+	if strings.TrimSpace(cfg.Alias) != "" {
+		return strings.TrimSpace(cfg.Alias)
+	}
+	return strings.TrimSpace(cfg.Host)
+}
+func replaceBadNames(s string) string {
+	return strings.NewReplacer("Ванда/Вижн ", "ВандаВижн ", "Ё", "Е", "ё", "е", "щ", "ш").Replace(s)
+}
+func parseCreateTime(line, format string) time.Time {
+	line = strings.ToLower(strings.TrimSpace(line))
+	patterns := []struct{ re, to string }{
+		{` янв\.? `, `.01.`}, {` февр?\.? `, `.02.`}, {` март?\.? `, `.03.`}, {` апр\.? `, `.04.`},
+		{` май `, `.05.`}, {` июнь?\.? `, `.06.`}, {` июль?\.? `, `.07.`}, {` авг\.? `, `.08.`},
+		{` сент?\.? `, `.09.`}, {` окт\.? `, `.10.`}, {` нояб?\.? `, `.11.`}, {` дек\.? `, `.12.`},
+		{` январ(ь|я)?\.? `, `.01.`}, {` феврал(ь|я)?\.? `, `.02.`}, {` марта?\.? `, `.03.`}, {` апрел(ь|я)?\.? `, `.04.`},
+		{` май?я?\.? `, `.05.`}, {` июн(ь|я)?\.? `, `.06.`}, {` июл(ь|я)?\.? `, `.07.`}, {` августа?\.? `, `.08.`},
+		{` сентябр(ь|я)?\.? `, `.09.`}, {` октябр(ь|я)?\.? `, `.10.`}, {` ноябр(ь|я)?\.? `, `.11.`}, {` декабр(ь|я)?\.? `, `.12.`},
+		{` jan `, `.01.`}, {` feb `, `.02.`}, {` mar `, `.03.`}, {` apr `, `.04.`}, {` may `, `.05.`}, {` jun `, `.06.`},
+		{` jul `, `.07.`}, {` aug `, `.08.`}, {` sep `, `.09.`}, {` oct `, `.10.`}, {` nov `, `.11.`}, {` dec `, `.12.`},
+	}
+	for _, p := range patterns {
+		line = regexp.MustCompile(p.re).ReplaceAllString(line, p.to)
+	}
+	if regexp.MustCompile(`^[0-9]\.`).MatchString(line) {
+		line = "0" + line
+	}
+	layouts := []string{format, "02.01.2006 15:04:05", "02.01.2006 15:04", "02.01.2006"}
+	for _, layout := range layouts {
+		if tm, err := time.ParseInLocation(layout, line, time.Local); err == nil {
+			return tm
+		}
+	}
+	return time.Time{}
+}
+func mergeTorrent(existing filedb.TorrentDetails, exists bool, incoming filedb.TorrentDetails) filedb.TorrentDetails {
+	out := filedb.TorrentDetails{}
+	if exists {
+		for k, v := range existing {
+			out[k] = v
+		}
+	}
+	for k, v := range incoming {
+		if v != nil {
+			out[k] = v
+		}
+	}
+	out["updateTime"] = time.Now()
+	return out
+}
+func samePrimary(existing, incoming filedb.TorrentDetails) bool {
+	return asString(existing["title"]) == asString(incoming["title"]) && asString(existing["magnet"]) == asString(incoming["magnet"]) && asString(existing["sizeName"]) == asString(incoming["sizeName"]) && asInt(existing["sid"]) == asInt(incoming["sid"]) && asInt(existing["pir"]) == asInt(incoming["pir"])
+}
+func fileTime(t filedb.TorrentDetails) time.Time {
+	if tm, ok := t["updateTime"].(time.Time); ok {
+		return tm
+	}
+	return time.Now()
+}
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if strings.TrimSpace(v) != "" {
+			return strings.TrimSpace(v)
+		}
+	}
+	return ""
+}
+func isDisabled(list []string, name string) bool {
+	for _, v := range list {
+		if strings.EqualFold(strings.TrimSpace(v), name) {
+			return true
+		}
+	}
+	return false
+}
+func asString(v any) string {
+	switch x := v.(type) {
+	case string:
+		return x
+	case fmt.Stringer:
+		return x.String()
+	default:
+		if v == nil {
+			return ""
+		}
+		return fmt.Sprint(v)
+	}
+}
+func asInt(v any) int {
+	switch x := v.(type) {
+	case int:
+		return x
+	case int32:
+		return int(x)
+	case int64:
+		return int(x)
+	case float64:
+		return int(x)
+	case json.Number:
+		i, _ := x.Int64()
+		return int(i)
+	case string:
+		i, _ := strconv.Atoi(strings.TrimSpace(x))
+		return i
+	default:
+		i, _ := strconv.Atoi(strings.TrimSpace(fmt.Sprint(v)))
+		return i
+	}
+}

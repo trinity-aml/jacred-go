@@ -1,0 +1,1125 @@
+package server
+
+import (
+	"crypto/subtle"
+	"encoding/json"
+	"fmt"
+	"net"
+	"net/http"
+	"net/url"
+	"regexp"
+	"strconv"
+	"strings"
+	"time"
+
+	"jacred/app"
+	"jacred/cron/anidub"
+	"jacred/cron/aniliberty"
+	"jacred/cron/animelayer"
+	"jacred/cron/bitru"
+	"jacred/cron/bitruapi"
+	"jacred/cron/kinozal"
+	"jacred/cron/knaben"
+	"jacred/cron/lostfilm"
+	"jacred/cron/megapeer"
+	"jacred/cron/nnmclub"
+	"jacred/cron/rutor"
+	"jacred/cron/rutracker"
+	"jacred/cron/selezen"
+	"jacred/cron/toloka"
+	"jacred/cron/torrentby"
+	"jacred/filedb"
+	"jacred/tracks"
+)
+
+type VersionInfo struct {
+	Version   string `json:"version"`
+	GitSha    string `json:"gitSha"`
+	GitBranch string `json:"gitBranch"`
+	BuildDate string `json:"buildDate"`
+}
+
+type Server struct {
+	Config           app.Config
+	DB               *filedb.DB
+	WWWRoot          string
+	Version          VersionInfo
+	KnabenParser     *knaben.Parser
+	AnidubParser     *anidub.Parser
+	AnilibertyParser *aniliberty.Parser
+	AnimelayerParser *animelayer.Parser
+	BitruParser      *bitru.Parser
+	BitruAPIParser   *bitruapi.Parser
+	RutorParser      *rutor.Parser
+	MegapeerParser   *megapeer.Parser
+	TorrentByParser  *torrentby.Parser
+	NNMClubParser    *nnmclub.Parser
+	LostfilmParser   *lostfilm.Parser
+	RutrackerParser  *rutracker.Parser
+	KinozalParser    *kinozal.Parser
+	TolokaParser     *toloka.Parser
+	SelezenParser    *selezen.Parser
+	TracksDB         *tracks.DB
+}
+
+func New(cfg app.Config, db *filedb.DB, tracksDB *tracks.DB, wwwroot string) *Server {
+	if tracksDB == nil {
+		tracksDB = tracks.New("Data")
+		_ = tracksDB.Load()
+	}
+	return &Server{Config: cfg, DB: db, WWWRoot: wwwroot, Version: VersionInfo{Version: "dev", GitSha: "unknown", GitBranch: "unknown", BuildDate: time.Now().UTC().Format("2006-01-02 15:04:05 UTC")}, KnabenParser: knaben.New(cfg, db), AnidubParser: anidub.New(cfg, db), AnilibertyParser: aniliberty.New(cfg, db), AnimelayerParser: animelayer.New(cfg, db), BitruParser: bitru.New(cfg, db, "Data"), BitruAPIParser: bitruapi.New(cfg, db, "Data"), RutorParser: rutor.New(cfg, db), MegapeerParser: megapeer.New(cfg, db), TorrentByParser: torrentby.New(cfg, db, "Data"), NNMClubParser: nnmclub.New(cfg, db, "Data"), LostfilmParser: lostfilm.New(cfg, db), RutrackerParser: rutracker.New(cfg, db, "Data"), KinozalParser: kinozal.New(cfg, db, "Data"), TolokaParser: toloka.New(cfg, db, "Data"), SelezenParser: selezen.New(cfg, db), TracksDB: tracksDB}
+}
+
+func (s *Server) Handler() http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", s.handleRoot)
+	mux.HandleFunc("/stats", s.handleStats)
+	mux.HandleFunc("/health", s.handleHealth)
+	mux.HandleFunc("/version", s.handleVersion)
+	mux.HandleFunc("/lastupdatedb", s.handleLastUpdateDB)
+	mux.HandleFunc("/api/v1.0/conf", s.handleConf)
+	mux.HandleFunc("/api/v1.0/torrents", s.handleTorrents)
+	mux.HandleFunc("/api/v1.0/Torrents", s.handleTorrents)
+	mux.HandleFunc("/api/v1.0/qualitys", s.handleQualitys)
+	mux.HandleFunc("/api/v1.0/Qualitys", s.handleQualitys)
+	mux.HandleFunc("/api/v2.0/indexers/", s.handleJackett)
+	mux.HandleFunc("/stats/trackers", s.handleStatsTrackers)
+	mux.HandleFunc("/stats/trackers/", s.handleStatsTrackers)
+	mux.HandleFunc("/stats/torrents", s.handleStatsTorrentsEx)
+	mux.HandleFunc("/sync/conf", s.handleSyncConf)
+	mux.HandleFunc("/sync/fdb", s.handleSyncFdb)
+	mux.HandleFunc("/sync/fdb/torrents", s.handleSyncFdbTorrents)
+	mux.HandleFunc("/sync/torrents", s.handleSyncTorrents)
+	mux.HandleFunc("/sync/tracks", s.handleSyncTracks)
+	mux.HandleFunc("/sync/tracks/check", s.handleSyncTracksCheck)
+	mux.HandleFunc("/jsondb/save", s.handleJSONDBSave)
+	mux.HandleFunc("/dev/findcorrupt", s.handleDevFindCorrupt)
+	mux.HandleFunc("/dev/updatesize", s.handleDevUpdateSize)
+	mux.HandleFunc("/dev/UpdateSize", s.handleDevUpdateSize)
+	mux.HandleFunc("/dev/updatesearchname", s.handleDevUpdateSearchName)
+	mux.HandleFunc("/dev/UpdateSearchName", s.handleDevUpdateSearchName)
+	mux.HandleFunc("/dev/removenullvalues", s.handleDevRemoveNullValues)
+	mux.HandleFunc("/dev/findduplicatekeys", s.handleDevFindDuplicateKeys)
+	mux.HandleFunc("/dev/findemptysearchfields", s.handleDevFindEmptySearchFields)
+	mux.HandleFunc("/stats/Trackers", s.handleStatsTrackers)
+	mux.HandleFunc("/stats/Trackers/", s.handleStatsTrackers)
+	mux.HandleFunc("/stats/Torrents", s.handleStatsTorrentsEx)
+	mux.HandleFunc("/sync/Conf", s.handleSyncConf)
+	mux.HandleFunc("/sync/Fdb", s.handleSyncFdb)
+	mux.HandleFunc("/sync/Fdb/Torrents", s.handleSyncFdbTorrents)
+	mux.HandleFunc("/sync/Torrents", s.handleSyncTorrents)
+	mux.HandleFunc("/sync/Tracks", s.handleSyncTracks)
+	mux.HandleFunc("/sync/Tracks/Check", s.handleSyncTracksCheck)
+	mux.HandleFunc("/jsondb/Save", s.handleJSONDBSave)
+	mux.HandleFunc("/dev/FindCorrupt", s.handleDevFindCorrupt)
+	mux.HandleFunc("/dev/RemoveNullValues", s.handleDevRemoveNullValues)
+	mux.HandleFunc("/dev/FindDuplicateKeys", s.handleDevFindDuplicateKeys)
+	mux.HandleFunc("/dev/FindEmptySearchFields", s.handleDevFindEmptySearchFields)
+	mux.HandleFunc("/cron/knaben/parse", s.handleCronKnabenParse)
+	mux.HandleFunc("/cron/anidub/parse", s.handleCronAnidubParse)
+	mux.HandleFunc("/cron/anidub/Parse", s.handleCronAnidubParse)
+	mux.HandleFunc("/cron/aniliberty/parse", s.handleCronAnilibertyParse)
+	mux.HandleFunc("/cron/aniliberty/Parse", s.handleCronAnilibertyParse)
+	mux.HandleFunc("/cron/animelayer/parse", s.handleCronAnimelayerParse)
+	mux.HandleFunc("/cron/animelayer/Parse", s.handleCronAnimelayerParse)
+	mux.HandleFunc("/cron/bitruapi/parse", s.handleCronBitruAPIParse)
+	mux.HandleFunc("/cron/bitruapi/parsefromdate", s.handleCronBitruAPIParseFromDate)
+	mux.HandleFunc("/cron/bitruapi/ParseFromDate", s.handleCronBitruAPIParseFromDate)
+	mux.HandleFunc("/cron/bitru/parse", s.handleCronBitruParse)
+	mux.HandleFunc("/cron/bitru/updatetasksparse", s.handleCronBitruUpdateTasksParse)
+	mux.HandleFunc("/cron/bitru/UpdateTasksParse", s.handleCronBitruUpdateTasksParse)
+	mux.HandleFunc("/cron/bitru/parsealltask", s.handleCronBitruParseAllTask)
+	mux.HandleFunc("/cron/bitru/ParseAllTask", s.handleCronBitruParseAllTask)
+	mux.HandleFunc("/cron/bitru/parselatest", s.handleCronBitruParseLatest)
+	mux.HandleFunc("/cron/bitru/ParseLatest", s.handleCronBitruParseLatest)
+	mux.HandleFunc("/cron/rutor/parse", s.handleCronRutorParse)
+	mux.HandleFunc("/cron/megapeer/parse", s.handleCronMegapeerParse)
+	mux.HandleFunc("/cron/torrentby/parse", s.handleCronTorrentByParse)
+	mux.HandleFunc("/cron/torrentby/updatetasksparse", s.handleCronTorrentByUpdateTasksParse)
+	mux.HandleFunc("/cron/torrentby/UpdateTasksParse", s.handleCronTorrentByUpdateTasksParse)
+	mux.HandleFunc("/cron/torrentby/parsealltask", s.handleCronTorrentByParseAllTask)
+	mux.HandleFunc("/cron/torrentby/ParseAllTask", s.handleCronTorrentByParseAllTask)
+	mux.HandleFunc("/cron/torrentby/parselatest", s.handleCronTorrentByParseLatest)
+	mux.HandleFunc("/cron/torrentby/ParseLatest", s.handleCronTorrentByParseLatest)
+	mux.HandleFunc("/cron/nnmclub/parse", s.handleCronNNMClubParse)
+	mux.HandleFunc("/cron/nnmclub/updatetasksparse", s.handleCronNNMClubUpdateTasksParse)
+	mux.HandleFunc("/cron/nnmclub/UpdateTasksParse", s.handleCronNNMClubUpdateTasksParse)
+	mux.HandleFunc("/cron/nnmclub/parsealltask", s.handleCronNNMClubParseAllTask)
+	mux.HandleFunc("/cron/nnmclub/ParseAllTask", s.handleCronNNMClubParseAllTask)
+	mux.HandleFunc("/cron/nnmclub/parselatest", s.handleCronNNMClubParseLatest)
+	mux.HandleFunc("/cron/nnmclub/ParseLatest", s.handleCronNNMClubParseLatest)
+	mux.HandleFunc("/cron/rutracker/parse", s.handleCronRutrackerParse)
+	mux.HandleFunc("/cron/rutracker/updatetasksparse", s.handleCronRutrackerUpdateTasksParse)
+	mux.HandleFunc("/cron/rutracker/UpdateTasksParse", s.handleCronRutrackerUpdateTasksParse)
+	mux.HandleFunc("/cron/rutracker/parsealltask", s.handleCronRutrackerParseAllTask)
+	mux.HandleFunc("/cron/rutracker/ParseAllTask", s.handleCronRutrackerParseAllTask)
+	mux.HandleFunc("/cron/rutracker/parselatest", s.handleCronRutrackerParseLatest)
+	mux.HandleFunc("/cron/rutracker/ParseLatest", s.handleCronRutrackerParseLatest)
+	mux.HandleFunc("/cron/lostfilm/parse", s.handleCronLostfilmParse)
+	mux.HandleFunc("/cron/lostfilm/parsepages", s.handleCronLostfilmParsePages)
+	mux.HandleFunc("/cron/lostfilm/ParsePages", s.handleCronLostfilmParsePages)
+	mux.HandleFunc("/cron/lostfilm/parseseasonpacks", s.handleCronLostfilmParseSeasonPacks)
+	mux.HandleFunc("/cron/lostfilm/ParseSeasonPacks", s.handleCronLostfilmParseSeasonPacks)
+	mux.HandleFunc("/cron/lostfilm/verifypage", s.handleCronLostfilmVerifyPage)
+	mux.HandleFunc("/cron/lostfilm/VerifyPage", s.handleCronLostfilmVerifyPage)
+	mux.HandleFunc("/cron/lostfilm/stats", s.handleCronLostfilmStats)
+	mux.HandleFunc("/cron/lostfilm/Stats", s.handleCronLostfilmStats)
+	mux.HandleFunc("/cron/kinozal/parse", s.handleCronKinozalParse)
+	mux.HandleFunc("/cron/kinozal/updatetasksparse", s.handleCronKinozalUpdateTasksParse)
+	mux.HandleFunc("/cron/kinozal/UpdateTasksParse", s.handleCronKinozalUpdateTasksParse)
+	mux.HandleFunc("/cron/kinozal/parsealltask", s.handleCronKinozalParseAllTask)
+	mux.HandleFunc("/cron/kinozal/ParseAllTask", s.handleCronKinozalParseAllTask)
+	mux.HandleFunc("/cron/kinozal/parselatest", s.handleCronKinozalParseLatest)
+	mux.HandleFunc("/cron/kinozal/ParseLatest", s.handleCronKinozalParseLatest)
+	mux.HandleFunc("/cron/toloka/parse", s.handleCronTolokaParse)
+	mux.HandleFunc("/cron/toloka/updatetasksparse", s.handleCronTolokaUpdateTasksParse)
+	mux.HandleFunc("/cron/toloka/UpdateTasksParse", s.handleCronTolokaUpdateTasksParse)
+	mux.HandleFunc("/cron/toloka/parsealltask", s.handleCronTolokaParseAllTask)
+	mux.HandleFunc("/cron/toloka/ParseAllTask", s.handleCronTolokaParseAllTask)
+	mux.HandleFunc("/cron/toloka/parselatest", s.handleCronTolokaParseLatest)
+	mux.HandleFunc("/cron/toloka/ParseLatest", s.handleCronTolokaParseLatest)
+	mux.HandleFunc("/cron/selezen/parse", s.handleCronSelezenParse)
+	mux.HandleFunc("/cron/selezen/Parse", s.handleCronSelezenParse)
+	return s.middleware(mux)
+}
+
+func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/" {
+		s.serveMaybeStatic(w, r)
+		return
+	}
+	s.serveHTMLFile(w, r, "index.html")
+}
+func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/stats" && r.URL.Path != "/stats/" && r.URL.Path != "/Stats" && r.URL.Path != "/Stats/" {
+		s.serveMaybeStatic(w, r)
+		return
+	}
+	s.serveHTMLFile(w, r, "stats.html")
+}
+func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
+	writeCanonicalJSON(w, http.StatusOK, map[string]string{"status": "OK"})
+}
+func (s *Server) handleVersion(w http.ResponseWriter, _ *http.Request) {
+	writeCanonicalJSON(w, http.StatusOK, s.Version)
+}
+func (s *Server) handleLastUpdateDB(w http.ResponseWriter, _ *http.Request) {
+	writeJSONOrdered(w, http.StatusOK, [][2]any{{"lastupdatedb", s.DB.LastUpdateDB()}})
+}
+func (s *Server) handleConf(w http.ResponseWriter, r *http.Request) {
+	key := r.URL.Query().Get("apikey")
+	if key == "" {
+		key = r.URL.Query().Get("apiKey")
+	}
+	writeJSONOrdered(w, http.StatusOK, [][2]any{{"apikey", s.Config.APIKey == "" || key == s.Config.APIKey}})
+}
+
+var jackettPathRe = regexp.MustCompile(`(?i)^/api/v2\.0/indexers/[^/]+/results$`)
+
+func (s *Server) handleJackett(w http.ResponseWriter, r *http.Request) {
+	if !jackettPathRe.MatchString(r.URL.Path) {
+		http.NotFound(w, r)
+		return
+	}
+	q := r.URL.Query()
+	categoryRaw := firstCategoryValue(q)
+	res, err := s.DB.JackettSearch(filedb.SearchParams{
+		APIKey:        firstQueryURL(q, "apikey", "apiKey"),
+		Query:         firstQueryURL(q, "query", "q"),
+		Title:         q.Get("title"),
+		TitleOriginal: q.Get("title_original"),
+		Year:          atoi(q.Get("year")),
+		IsSerial:      parseOptionalInt(q, "is_serial", -1),
+		CategoryRaw:   categoryRaw,
+		UserAgent:     r.UserAgent(),
+	})
+	if err != nil {
+		writeCanonicalJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "jacred": true, "Results": []any{}})
+		return
+	}
+	writeCanonicalJSON(w, http.StatusOK, map[string]any{"Results": buildResults(res.Results, res.RqNum), "jacred": true})
+}
+
+func (s *Server) handleTorrents(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	items, err := s.DB.TorrentsSearch(filedb.TorrentsParams{
+		Search:    firstQueryURL(q, "search", "q"),
+		AltName:   firstQueryURL(q, "altname", "altName"),
+		Exact:     parseBool(firstQueryURL(q, "exact")),
+		Type:      firstQueryURL(q, "type"),
+		Sort:      firstQueryURL(q, "sort"),
+		Tracker:   firstQueryURL(q, "tracker", "trackerName"),
+		Voice:     firstQueryURL(q, "voice", "voices"),
+		VideoType: firstQueryURL(q, "videotype", "videoType"),
+		Relased:   atoi(firstQueryURL(q, "relased", "released")),
+		Quality:   atoi(firstQueryURL(q, "quality")),
+		Season:    atoi(firstQueryURL(q, "season")),
+	})
+	if err != nil {
+		writeCanonicalJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	out := make([]map[string]any, 0, len(items))
+	for _, i := range items {
+		out = append(out, map[string]any{
+			"tracker":      i["trackerName"],
+			"url":          normalizeDetailURL(i["url"]),
+			"title":        i["title"],
+			"size":         i["size"],
+			"sizeName":     i["sizeName"],
+			"createTime":   i["createTime"],
+			"updateTime":   i["updateTime"],
+			"sid":          i["sid"],
+			"pir":          i["pir"],
+			"magnet":       i["magnet"],
+			"name":         i["name"],
+			"originalname": i["originalname"],
+			"relased":      i["relased"],
+			"videotype":    i["videotype"],
+			"quality":      i["quality"],
+			"voices":       i["voices"],
+			"seasons":      i["seasons"],
+			"types":        i["types"],
+		})
+	}
+	writeCanonicalJSON(w, http.StatusOK, out)
+}
+
+func (s *Server) handleQualitys(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	page := parseOptionalInt(q, "page", 1)
+	take := parseOptionalInt(q, "take", 1000)
+	items, err := s.DB.Qualitys(firstQueryURL(q, "name"), firstQueryURL(q, "originalname", "originalName"), firstQueryURL(q, "type"), page, take)
+	if err != nil {
+		writeCanonicalJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	writeCanonicalJSON(w, http.StatusOK, items)
+}
+
+func (s *Server) handleCronAnidubParse(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	q := r.URL.Query()
+	res, err := s.AnidubParser.Parse(r.Context(), parseOptionalInt(q, "parseFrom", 0), parseOptionalInt(q, "parseTo", 0))
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": res.Status})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": res.Status, "parsed": res.Parsed, "added": res.Added, "updated": res.Updated, "skipped": res.Skipped, "failed": res.Failed, "text": fmt.Sprintf("parsed=%d +%d ~%d =%d failed=%d", res.Parsed, res.Added, res.Updated, res.Skipped, res.Failed)})
+}
+
+func (s *Server) handleCronKnabenParse(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	q := r.URL.Query()
+	res, err := s.KnabenParser.Parse(r.Context(), parseOptionalInt(q, "from", 0), parseOptionalInt(q, "size", 300), parseOptionalInt(q, "pages", 1), q.Get("query"), parseOptionalInt(q, "hours", 0), defaultString(q.Get("orderBy"), "date"), q.Get("categories"))
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": res.Status})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":  res.Status,
+		"fetched": res.Fetched,
+		"added":   res.Added,
+		"updated": res.Updated,
+		"skipped": res.Skipped,
+		"failed":  res.Failed,
+		"text":    fmt.Sprintf("fetched=%d +%d ~%d =%d failed=%d", res.Fetched, res.Added, res.Updated, res.Skipped, res.Failed),
+	})
+}
+
+func (s *Server) handleCronBitruParse(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	res, err := s.BitruParser.Parse(r.Context(), parseOptionalInt(r.URL.Query(), "page", 1))
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"status": res.Status, "error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": res.Status, "fetched": res.Fetched, "added": res.Added, "updated": res.Updated, "skipped": res.Skipped, "failed": res.Failed, "by_category": res.PerCategory})
+}
+
+func (s *Server) handleCronBitruUpdateTasksParse(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	res, err := s.BitruParser.UpdateTasksParse(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "tasks": res})
+}
+
+func (s *Server) handleCronBitruParseAllTask(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	res, err := s.BitruParser.ParseAllTask(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": res})
+}
+
+func (s *Server) handleCronBitruParseLatest(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	res, err := s.BitruParser.ParseLatest(r.Context(), parseOptionalInt(r.URL.Query(), "pages", 5))
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": res})
+}
+
+func (s *Server) handleCronAnilibertyParse(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	q := r.URL.Query()
+	res, err := s.AnilibertyParser.Parse(r.Context(), parseOptionalInt(q, "parseFrom", 0), parseOptionalInt(q, "parseTo", 0))
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": res.Status})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": res.Status, "parsed": res.Parsed, "added": res.Added, "updated": res.Updated, "skipped": res.Skipped, "failed": res.Failed, "lastPage": res.LastPage, "text": fmt.Sprintf("parsed=%d +%d ~%d =%d failed=%d", res.Parsed, res.Added, res.Updated, res.Skipped, res.Failed)})
+}
+
+func (s *Server) handleCronAnimelayerParse(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	res, err := s.AnimelayerParser.Parse(r.Context(), parseOptionalInt(r.URL.Query(), "page", 1))
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": res.Status})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": res.Status, "parsed": res.Parsed, "added": res.Added, "updated": res.Updated, "skipped": res.Skipped, "failed": res.Failed, "text": fmt.Sprintf("parsed=%d +%d ~%d =%d failed=%d", res.Parsed, res.Added, res.Updated, res.Skipped, res.Failed)})
+}
+
+func (s *Server) handleCronBitruAPIParse(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	q := r.URL.Query()
+	res, err := s.BitruAPIParser.Parse(r.Context(), parseOptionalInt(q, "limit", 100))
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": res.Status})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":  res.Status,
+		"fetched": res.Fetched,
+		"added":   res.Added,
+		"updated": res.Updated,
+		"skipped": res.Skipped,
+		"failed":  res.Failed,
+		"text":    fmt.Sprintf("fetched=%d +%d ~%d =%d failed=%d", res.Fetched, res.Added, res.Updated, res.Skipped, res.Failed),
+	})
+}
+
+func (s *Server) handleCronBitruAPIParseFromDate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	q := r.URL.Query()
+	res, err := s.BitruAPIParser.ParseFromDate(r.Context(), q.Get("lastnewtor"), parseOptionalInt(q, "limit", 100))
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": res.Status})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":  res.Status,
+		"fetched": res.Fetched,
+		"added":   res.Added,
+		"updated": res.Updated,
+		"skipped": res.Skipped,
+		"failed":  res.Failed,
+		"text":    fmt.Sprintf("fetched=%d +%d ~%d =%d failed=%d", res.Fetched, res.Added, res.Updated, res.Skipped, res.Failed),
+	})
+}
+
+func (s *Server) handleCronRutorParse(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	res, err := s.RutorParser.Parse(r.Context(), parseOptionalInt(r.URL.Query(), "page", 0))
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": res.Status})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":      res.Status,
+		"fetched":     res.Fetched,
+		"added":       res.Added,
+		"updated":     res.Updated,
+		"skipped":     res.Skipped,
+		"failed":      res.Failed,
+		"by_category": res.PerCategory,
+		"text":        fmt.Sprintf("fetched=%d +%d ~%d =%d failed=%d", res.Fetched, res.Added, res.Updated, res.Skipped, res.Failed),
+	})
+}
+
+func (s *Server) handleCronMegapeerParse(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	res, err := s.MegapeerParser.Parse(r.Context(), parseOptionalInt(r.URL.Query(), "page", 0))
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": res.Status})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":      res.Status,
+		"fetched":     res.Fetched,
+		"added":       res.Added,
+		"updated":     res.Updated,
+		"skipped":     res.Skipped,
+		"failed":      res.Failed,
+		"by_category": res.PerCategory,
+		"text":        fmt.Sprintf("fetched=%d +%d ~%d =%d failed=%d", res.Fetched, res.Added, res.Updated, res.Skipped, res.Failed),
+	})
+}
+
+func (s *Server) handleCronTorrentByParse(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	res, err := s.TorrentByParser.Parse(r.Context(), parseOptionalInt(r.URL.Query(), "page", 0))
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": res.Status})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":      res.Status,
+		"fetched":     res.Fetched,
+		"added":       res.Added,
+		"updated":     res.Updated,
+		"skipped":     res.Skipped,
+		"failed":      res.Failed,
+		"by_category": res.PerCategory,
+		"text":        fmt.Sprintf("fetched=%d +%d ~%d =%d failed=%d", res.Fetched, res.Added, res.Updated, res.Skipped, res.Failed),
+	})
+}
+
+func (s *Server) handleCronTorrentByUpdateTasksParse(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	res, err := s.TorrentByParser.UpdateTasksParse(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "tasks": res})
+}
+
+func (s *Server) handleCronTorrentByParseAllTask(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	textRes, err := s.TorrentByParser.ParseAllTask(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "text": textRes})
+}
+
+func (s *Server) handleCronTorrentByParseLatest(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	textRes, err := s.TorrentByParser.ParseLatest(r.Context(), parseOptionalInt(r.URL.Query(), "pages", 5))
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "text": textRes})
+}
+
+func (s *Server) handleCronRutrackerParse(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	res, err := s.RutrackerParser.Parse(r.Context(), parseOptionalInt(r.URL.Query(), "page", 0))
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": res.Status})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": res.Status, "fetched": res.Fetched, "added": res.Added, "updated": res.Updated, "skipped": res.Skipped, "failed": res.Failed, "by_category": res.PerCategory, "text": fmt.Sprintf("fetched=%d +%d ~%d =%d failed=%d", res.Fetched, res.Added, res.Updated, res.Skipped, res.Failed)})
+}
+
+func (s *Server) handleCronRutrackerUpdateTasksParse(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	res, err := s.RutrackerParser.UpdateTasksParse(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "tasks": res})
+}
+
+func (s *Server) handleCronRutrackerParseAllTask(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	textRes, err := s.RutrackerParser.ParseAllTask(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "text": textRes})
+}
+
+func (s *Server) handleCronRutrackerParseLatest(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	textRes, err := s.RutrackerParser.ParseLatest(r.Context(), parseOptionalInt(r.URL.Query(), "pages", 5))
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "text": textRes})
+}
+
+func (s *Server) handleCronKinozalParse(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	res, err := s.KinozalParser.Parse(r.Context(), parseOptionalInt(r.URL.Query(), "page", 0))
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": res.Status})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": res.Status, "fetched": res.Fetched, "added": res.Added, "updated": res.Updated, "skipped": res.Skipped, "failed": res.Failed, "by_category": res.PerCategory, "text": fmt.Sprintf("fetched=%d +%d ~%d =%d failed=%d", res.Fetched, res.Added, res.Updated, res.Skipped, res.Failed)})
+}
+
+func (s *Server) handleCronKinozalUpdateTasksParse(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	res, err := s.KinozalParser.UpdateTasksParse(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "tasks": res})
+}
+
+func (s *Server) handleCronKinozalParseAllTask(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	textRes, err := s.KinozalParser.ParseAllTask(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "text": textRes})
+}
+
+func (s *Server) handleCronKinozalParseLatest(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	textRes, err := s.KinozalParser.ParseLatest(r.Context(), parseOptionalInt(r.URL.Query(), "pages", 5))
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "text": textRes})
+}
+
+func (s *Server) handleCronTolokaParse(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	res, err := s.TolokaParser.Parse(r.Context(), parseOptionalInt(r.URL.Query(), "page", 0))
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": res.Status})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": res.Status, "fetched": res.Fetched, "added": res.Added, "updated": res.Updated, "skipped": res.Skipped, "failed": res.Failed, "by_category": res.PerCategory, "text": fmt.Sprintf("fetched=%d +%d ~%d =%d failed=%d", res.Fetched, res.Added, res.Updated, res.Skipped, res.Failed)})
+}
+
+func (s *Server) handleCronTolokaUpdateTasksParse(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	res, err := s.TolokaParser.UpdateTasksParse(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "tasks": res})
+}
+
+func (s *Server) handleCronTolokaParseAllTask(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	textRes, err := s.TolokaParser.ParseAllTask(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "text": textRes})
+}
+
+func (s *Server) handleCronTolokaParseLatest(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	textRes, err := s.TolokaParser.ParseLatest(r.Context(), parseOptionalInt(r.URL.Query(), "pages", 5))
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "text": textRes})
+}
+
+func (s *Server) handleCronSelezenParse(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	q := r.URL.Query()
+	res, err := s.SelezenParser.Parse(r.Context(), parseOptionalInt(q, "parseFrom", 0), parseOptionalInt(q, "parseTo", 0))
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": res.Status})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": res.Status, "parsed": res.Parsed, "added": res.Added, "updated": res.Updated, "skipped": res.Skipped, "failed": res.Failed, "text": fmt.Sprintf("parsed=%d +%d ~%d =%d failed=%d", res.Parsed, res.Added, res.Updated, res.Skipped, res.Failed)})
+}
+
+func buildResults(items []filedb.TorrentDetails, rqnum bool) []map[string]any {
+	out := make([]map[string]any, 0, len(items))
+	for _, t := range items {
+		category, categoryDesc := categories(t)
+		result := map[string]any{
+			"Tracker":      t["trackerName"],
+			"Details":      normalizeDetailURL(t["url"]),
+			"Title":        t["title"],
+			"Size":         parseSize(t),
+			"PublishDate":  t["createTime"],
+			"Category":     category,
+			"CategoryDesc": categoryDesc,
+			"Seeders":      asInt(t["sid"]),
+			"Peers":        asInt(t["pir"]),
+			"MagnetUri":    t["magnet"],
+			"ffprobe":      nullableField(rqnum, t["ffprobe"]),
+			"languages":    nullableField(rqnum, t["languages"]),
+			"info":         nil,
+		}
+		if !rqnum {
+			result["info"] = map[string]any{
+				"name":         t["name"],
+				"originalname": t["originalname"],
+				"sizeName":     t["sizeName"],
+				"relased":      asInt(t["relased"]),
+				"videotype":    asString(t["videotype"]),
+				"quality":      asInt(t["quality"]),
+				"voices":       emptyToNil(t["voices"]),
+				"seasons":      emptyToNil(t["seasons"]),
+				"types":        t["types"],
+			}
+		}
+		out = append(out, result)
+	}
+	return out
+}
+
+func categories(t filedb.TorrentDetails) ([]int, string) {
+	var types []string
+	switch v := t["types"].(type) {
+	case []any:
+		for _, it := range v {
+			types = append(types, asString(it))
+		}
+	case []string:
+		types = append(types, v...)
+	}
+	set := map[int]struct{}{}
+	desc := ""
+	for _, raw := range types {
+		switch raw {
+		case "movie":
+			desc = "Movies"
+			set[2000] = struct{}{}
+		case "serial":
+			desc = "TV"
+			set[5000] = struct{}{}
+		case "documovie", "docuserial":
+			desc = "TV/Documentary"
+			set[5080] = struct{}{}
+		case "tvshow":
+			desc = "TV/Foreign"
+			set[5020] = struct{}{}
+			set[2010] = struct{}{}
+		case "anime":
+			desc = "TV/Anime"
+			set[5070] = struct{}{}
+		}
+	}
+	out := make([]int, 0, len(set))
+	for v := range set {
+		out = append(out, v)
+	}
+	return out, desc
+}
+func defaultString(v, def string) string {
+	if strings.TrimSpace(v) == "" {
+		return def
+	}
+	return v
+}
+
+func parseSize(t filedb.TorrentDetails) float64 {
+	switch v := t["size"].(type) {
+	case float64:
+		return v
+	case json.Number:
+		f, _ := v.Float64()
+		return f
+	}
+	return 0
+}
+func writeJSON(w http.ResponseWriter, code int, v any) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(code)
+	_ = json.NewEncoder(w).Encode(v)
+}
+func (s *Server) middleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		remote := parseRemoteIP(r.RemoteAddr)
+		fromLocal := isLocalOrPrivate(remote)
+		path := r.URL.Path
+		setCommonCORSHeaders(w, fromLocal || !isLocalOnlyPath(path))
+		if !fromLocal && isLocalOnlyPath(path) {
+			if r.Method == http.MethodOptions {
+				w.WriteHeader(http.StatusNoContent)
+			} else {
+				w.WriteHeader(http.StatusForbidden)
+			}
+			return
+		}
+		if fromLocal && s.Config.DevKey != "" && isLocalOnlyPath(path) && !devKeyMatches(r, s.Config.DevKey) {
+			if r.Method == http.MethodOptions {
+				w.WriteHeader(http.StatusNoContent)
+			} else {
+				w.WriteHeader(http.StatusUnauthorized)
+			}
+			return
+		}
+		if s.Config.APIKey != "" && !isPathWhitelisted(path) {
+			key := getAPIKey(r)
+			if key == "" || subtle.ConstantTimeCompare([]byte(key), []byte(s.Config.APIKey)) != 1 {
+				if r.Method == http.MethodOptions {
+					w.WriteHeader(http.StatusNoContent)
+				} else {
+					w.WriteHeader(http.StatusUnauthorized)
+				}
+				return
+			}
+		}
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+func setCommonCORSHeaders(w http.ResponseWriter, allowPrivate bool) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Api-Key, x-api-key")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+	if allowPrivate {
+		w.Header().Set("Access-Control-Allow-Private-Network", "true")
+	}
+}
+
+func isLocalOnlyPath(path string) bool {
+	lp := strings.ToLower(path)
+	return strings.HasPrefix(lp, "/cron/") || path == "/jsondb" || strings.HasPrefix(lp, "/jsondb/") || strings.HasPrefix(lp, "/dev/")
+}
+func isPathWhitelisted(path string) bool {
+	switch path {
+	case "/", "/stats", "/stats/", "/health", "/version", "/lastupdatedb", "/api/v1.0/conf":
+		return true
+	}
+	return strings.HasPrefix(path, "/sync/")
+}
+func firstQueryURL(v url.Values, keys ...string) string {
+	for _, key := range keys {
+		if s := strings.TrimSpace(v.Get(key)); s != "" {
+			return s
+		}
+	}
+	return ""
+}
+
+func getAPIKey(r *http.Request) string {
+	if v := r.URL.Query().Get("apikey"); v != "" {
+		return v
+	}
+	if v := strings.TrimSpace(r.Header.Get("X-Api-Key")); v != "" {
+		return v
+	}
+	if v := strings.TrimSpace(r.Header.Get("Authorization")); strings.HasPrefix(strings.ToLower(v), "bearer ") {
+		return strings.TrimSpace(v[7:])
+	}
+	return ""
+}
+func devKeyMatches(r *http.Request, key string) bool {
+	if v := strings.TrimSpace(r.Header.Get("X-Dev-Key")); v != "" {
+		return subtle.ConstantTimeCompare([]byte(v), []byte(key)) == 1
+	}
+	if v := r.URL.Query().Get("devkey"); v != "" {
+		return subtle.ConstantTimeCompare([]byte(v), []byte(key)) == 1
+	}
+	return false
+}
+func parseRemoteIP(remoteAddr string) net.IP {
+	host, _, err := net.SplitHostPort(remoteAddr)
+	if err != nil {
+		host = remoteAddr
+	}
+	return net.ParseIP(host)
+}
+func isLocalOrPrivate(ip net.IP) bool {
+	if ip == nil {
+		return false
+	}
+	if ip.IsLoopback() || ip.IsPrivate() {
+		return true
+	}
+	if ip.To4() == nil {
+		return strings.HasPrefix(strings.ToLower(ip.String()), "fe80:")
+	}
+	return false
+}
+func atoi(v string) int { n := 0; _, _ = fmt.Sscanf(v, "%d", &n); return n }
+func parseBool(v string) bool {
+	b, _ := strconv.ParseBool(v)
+	return b
+}
+func parseOptionalInt(q url.Values, key string, def int) int {
+	if v := q.Get(key); v != "" {
+		return atoi(v)
+	}
+	return def
+}
+func firstCategoryValue(q url.Values) string {
+	for key, vals := range q {
+		if strings.HasPrefix(key, "category") && len(vals) > 0 {
+			return vals[0]
+		}
+	}
+	return ""
+}
+func (s *Server) handleCronNNMClubParse(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	res, err := s.NNMClubParser.Parse(r.Context(), parseOptionalInt(r.URL.Query(), "page", 0))
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": res.Status})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": res.Status, "fetched": res.Fetched, "added": res.Added, "updated": res.Updated, "skipped": res.Skipped, "failed": res.Failed})
+}
+
+func (s *Server) handleCronNNMClubUpdateTasksParse(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	res, err := s.NNMClubParser.UpdateTasksParse(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "tasks": res})
+}
+
+func (s *Server) handleCronNNMClubParseAllTask(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	text, err := s.NNMClubParser.ParseAllTask(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": text})
+}
+
+func (s *Server) handleCronNNMClubParseLatest(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	text, err := s.NNMClubParser.ParseLatest(r.Context(), parseOptionalInt(r.URL.Query(), "pages", 5))
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": text})
+}
+
+func normalizeDetailURL(v any) any {
+	s := asString(v)
+	if strings.HasPrefix(s, "http") {
+		return s
+	}
+	return nil
+}
+func nullableField(rqnum bool, v any) any {
+	if rqnum {
+		return nil
+	}
+	return emptyToNil(v)
+}
+func emptyToNil(v any) any {
+	switch x := v.(type) {
+	case nil:
+		return nil
+	case []any:
+		if len(x) == 0 {
+			return nil
+		}
+	case []string:
+		if len(x) == 0 {
+			return nil
+		}
+	case []int:
+		if len(x) == 0 {
+			return nil
+		}
+	}
+	return v
+}
+func asString(v any) string {
+	if s, ok := v.(string); ok {
+		return s
+	}
+	return ""
+}
+func asInt(v any) int {
+	switch n := v.(type) {
+	case float64:
+		return int(n)
+	case json.Number:
+		i, _ := n.Int64()
+		return int(i)
+	case int:
+		return n
+	}
+	return 0
+}
+
+func (s *Server) handleCronLostfilmParse(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	res, err := s.LostfilmParser.Parse(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": res.Status})
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
+}
+
+func (s *Server) handleCronLostfilmParsePages(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	q := r.URL.Query()
+	res, err := s.LostfilmParser.ParsePages(r.Context(), parseOptionalInt(q, "pageFrom", 1), parseOptionalInt(q, "pageTo", 1))
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": res.Status})
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
+}
+
+func (s *Server) handleCronLostfilmParseSeasonPacks(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	textRes, err := s.LostfilmParser.ParseSeasonPacks(r.Context(), r.URL.Query().Get("series"))
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": textRes})
+}
+
+func (s *Server) handleCronLostfilmVerifyPage(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	items, status, err := s.LostfilmParser.VerifyPage(r.Context(), r.URL.Query().Get("series"))
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	if status != "ok" {
+		writeJSON(w, http.StatusOK, map[string]any{"error": status})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "count": len(items), "items": items})
+}
+
+func (s *Server) handleCronLostfilmStats(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	writeJSON(w, http.StatusOK, s.LostfilmParser.Stats())
+}

@@ -1,0 +1,1383 @@
+<!DOCTYPE html>
+<html lang="ru">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="Статистика трекеров - мониторинг и аналитика" />
+  <title>Статистика трекеров</title>
+  <link rel="icon" type="image/png" href="./img/jacred.png" />
+  <link rel="icon" type="image/x-icon" href="./img/favicon.ico" />
+  <link rel="apple-touch-icon" href="./img/icon-192.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" />
+
+  <script>
+    (function () {
+      try {
+        var storedTheme = localStorage.getItem('theme');
+        var prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+        var isDark = storedTheme === 'dark' || (storedTheme === null && prefersDark);
+        document.documentElement.classList.toggle('dark', isDark);
+      } catch (e) {
+        console.warn('Theme init failed:', e);
+        if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+          document.documentElement.classList.add('dark');
+        }
+      }
+    })();
+  </script>
+
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Inter', 'system-ui', '-apple-system', 'sans-serif']
+          },
+          animation: {
+            'fade-in': 'fadeIn 0.3s ease-in-out',
+            'slide-up': 'slideUp 0.4s ease-out',
+          },
+          keyframes: {
+            fadeIn: {
+              '0%': { opacity: '0' },
+              '100%': { opacity: '1' }
+            },
+            slideUp: {
+              '0%': { transform: 'translateY(10px)', opacity: '0' },
+              '100%': { transform: 'translateY(0)', opacity: '1' }
+            }
+          }
+        }
+      }
+    }
+  </script>
+
+  <style>
+    ::-webkit-scrollbar {
+      width: 10px;
+      height: 10px;
+    }
+
+    ::-webkit-scrollbar-track {
+      background: #f3f4f6;
+    }
+
+    ::-webkit-scrollbar-thumb {
+      background: #d1d5db;
+      border-radius: 5px;
+    }
+
+    ::-webkit-scrollbar-thumb:hover {
+      background: #9ca3af;
+    }
+
+    .dark ::-webkit-scrollbar-track {
+      background: #1f2937;
+    }
+
+    .dark ::-webkit-scrollbar-thumb {
+      background: #4b5563;
+      border-radius: 5px;
+    }
+
+    .dark ::-webkit-scrollbar-thumb:hover {
+      background: #6b7280;
+    }
+
+    body,
+    .stat-card,
+    .toolbar-field,
+    button,
+    input,
+    select,
+    #statsTable tr,
+    .home-link,
+    #backToTop {
+      transition-property: background-color, border-color, color, fill, stroke;
+      transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+      transition-duration: 150ms;
+    }
+
+    button:focus-visible,
+    input:focus-visible,
+    select:focus-visible,
+    a:focus-visible {
+      outline: 2px solid #3b82f6;
+      outline-offset: 2px;
+    }
+
+    .stat-number {
+      font-variant-numeric: tabular-nums;
+    }
+
+    .stats-grid {
+      display: grid;
+      gap: 1rem;
+    }
+
+    .stat-card {
+      animation: fade-in 0.3s ease-in-out;
+    }
+
+    @keyframes spin {
+      to {
+        transform: rotate(360deg);
+      }
+    }
+
+    .spinner {
+      animation: spin 1s linear infinite;
+    }
+
+    :root {
+      --bg: #f9fafb;
+    }
+
+    :root.dark {
+      --bg: #0a0a0f;
+    }
+
+    body {
+      background-color: var(--bg);
+    }
+
+    .toolbar-field {
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+    }
+
+    .dark .toolbar-field {
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+    }
+
+    .tracker-icon.tracker-icon--fallback {
+      background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%239ca3af' stroke-width='2'%3E%3Crect x='3' y='3' width='18' height='18' rx='2'/%3E%3Cpath d='M12 8v4M12 16h.01'/%3E%3C/svg%3E") center/contain no-repeat;
+      opacity: 0.85;
+    }
+
+    .toolbar-block {
+      animation-delay: 0.1s;
+    }
+
+    #aggregateHost {
+      animation-delay: 0.2s;
+    }
+
+    #viewContainer {
+      animation-delay: 0.3s;
+    }
+
+    .spinner-ring--offset {
+      animation-delay: -0.5s;
+      animation-duration: 1.5s;
+    }
+
+    .search-input-wrap {
+      min-width: 0;
+    }
+
+    #tablePagination {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.5rem;
+      padding: 0.75rem 1rem;
+      border-top: 1px solid;
+      border-color: #e5e7eb;
+      background: #f9fafb;
+      font-size: 0.875rem;
+      color: #4b5563;
+    }
+
+    .dark #tablePagination {
+      border-color: #1f2937;
+      background: rgba(17, 24, 39, 0.5);
+      color: #9ca3af;
+    }
+
+    @media (max-width: 767px) {
+      #app {
+        padding-left: 0.75rem;
+        padding-right: 0.75rem;
+        padding-top: 0.75rem;
+        padding-bottom: 1rem;
+      }
+
+      input,
+      select,
+      button,
+      .home-link {
+        min-height: 44px;
+      }
+
+      #statsTable {
+        margin-left: -0.75rem;
+        margin-right: -0.75rem;
+        border-radius: 0;
+        border-left: none;
+        border-right: none;
+      }
+
+      #statsTable table {
+        min-width: 640px;
+      }
+    }
+
+    @media (max-width: 480px) {
+      #app {
+        padding-left: 0.5rem;
+        padding-right: 0.5rem;
+        padding-top: 0.5rem;
+        padding-bottom: 0.75rem;
+      }
+
+      input,
+      select,
+      button {
+        min-height: 44px;
+        font-size: 16px;
+      }
+
+      #statsTable {
+        margin-left: -0.5rem;
+        margin-right: -0.5rem;
+      }
+
+      #statsTable table {
+        font-size: 0.75rem;
+      }
+
+      #statsTable th,
+      #statsTable td {
+        padding: 0.5rem 0.25rem;
+      }
+
+      .stat-card {
+        padding: 1rem;
+      }
+    }
+
+    @media (min-width: 768px) {
+      #statsTable {
+        border-radius: 0.75rem;
+      }
+    }
+  </style>
+</head>
+
+<body class="text-gray-900 dark:text-gray-100 font-sans min-h-screen antialiased">
+  <div id="app" class="container mx-auto px-3 sm:px-4 py-4 sm:py-6 max-w-[1600px]">
+
+    <header class="mb-4 sm:mb-8 animate-slide-up">
+      <div class="flex items-center justify-between gap-3">
+        <div class="flex items-center gap-3 sm:gap-4 min-w-0">
+          <div
+            class="w-10 h-10 sm:w-12 sm:h-12 flex-shrink-0 bg-gradient-to-br from-blue-500 via-blue-600 to-cyan-500 rounded-xl flex items-center justify-center shadow-lg shadow-blue-900/50">
+            <svg class="w-5 h-5 sm:w-6 sm:h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+            </svg>
+          </div>
+          <div class="min-w-0">
+            <h1
+              class="text-xl sm:text-2xl font-bold bg-gradient-to-r from-blue-400 to-cyan-400 bg-clip-text text-transparent truncate">
+              Статистика трекеров
+            </h1>
+            <p class="text-xs sm:text-sm text-gray-500 mt-0.5 hidden sm:block">Мониторинг и аналитика в реальном времени
+            </p>
+          </div>
+        </div>
+
+        <div class="flex items-center gap-2">
+          <button type="button" id="apiKeyBtnHeader"
+            class="inline-flex md:hidden p-3 rounded-xl bg-gray-200 dark:bg-gray-800 hover:bg-gray-300 dark:hover:bg-gray-700 border border-gray-300 dark:border-gray-700 hover:border-gray-400 dark:hover:border-gray-600 transition-all shrink-0"
+            aria-label="Установить API ключ" title="Установить API ключ">
+            <svg class="w-5 h-5 text-gray-600 dark:text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
+            </svg>
+          </button>
+          <button id="toggleTheme"
+            class="p-3 rounded-xl bg-gray-200 dark:bg-gray-800 hover:bg-gray-300 dark:hover:bg-gray-700 border border-gray-300 dark:border-gray-700 hover:border-gray-400 dark:hover:border-gray-600 transition-all group shrink-0"
+            aria-label="Переключить тему оформления" type="button">
+          <svg id="iconMoon"
+            class="w-5 h-5 text-gray-600 dark:text-gray-400 group-hover:text-gray-800 dark:group-hover:text-gray-200 hidden"
+            fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+              d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
+          </svg>
+          <svg id="iconSun" class="w-5 h-5 text-yellow-500 hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24"
+            aria-hidden="true">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+              d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
+          </svg>
+          </button>
+        </div>
+        <script>
+            (function () {
+              var isDark = document.documentElement.classList.contains('dark');
+              var moon = document.getElementById('iconMoon');
+              var sun = document.getElementById('iconSun');
+              if (moon && sun) {
+                moon.classList.toggle('hidden', !isDark);
+                sun.classList.toggle('hidden', isDark);
+              }
+            })();
+        </script>
+      </div>
+    </header>
+
+    <div
+      class="toolbar-block mb-4 sm:mb-6 animate-slide-up rounded-2xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900/80 shadow-sm overflow-hidden">
+      <div class="p-3 sm:p-4 border-b border-gray-100 dark:border-gray-800">
+        <div class="flex flex-col sm:flex-row sm:flex-wrap items-stretch gap-2 sm:gap-3">
+          <div class="search-input-wrap relative flex-1 min-w-0 flex w-full sm:flex-1">
+            <label for="searchTracker" class="sr-only">Поиск трекера</label>
+            <input type="text" id="searchTracker"
+              class="toolbar-field w-full h-11 pl-10 pr-4 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-400 dark:focus:border-blue-500 text-sm transition-shadow"
+              placeholder="Поиск по имени трекера..." autocomplete="off" />
+            <svg
+              class="absolute left-3.5 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400 dark:text-gray-500 pointer-events-none"
+              fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+            </svg>
+          </div>
+          <div class="h-6 w-px flex-shrink-0 self-center bg-gray-300 dark:bg-gray-600 rounded-full hidden sm:block"
+            aria-hidden="true"></div>
+          <div class="flex flex-row items-stretch gap-2 sm:gap-3 flex-1 min-w-0 sm:flex-initial">
+            <div class="relative flex-1 sm:flex-initial flex-shrink-0 min-w-0">
+              <label for="sortSelect" class="sr-only">Сортировка</label>
+              <select id="sortSelect"
+                class="toolbar-field w-full sm:w-auto h-11 pl-4 pr-10 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl text-gray-900 dark:text-gray-100 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-400 dark:focus:border-blue-500 cursor-pointer appearance-none transition-shadow min-w-0 sm:min-w-[160px]"
+                aria-label="Сортировка результатов">
+                <option value="name">По имени ↑</option>
+                <option value="newtor">Новые торренты ↓</option>
+                <option value="update">Изменения ↓</option>
+                <option value="alltorrents">Всего торрентов ↓</option>
+                <option value="confirm">Подтверждено ↓</option>
+                <option value="wait">Ожидает ↓</option>
+                <option value="skip">Пропущено ↓</option>
+              </select>
+              <svg
+                class="absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400 dark:text-gray-500 pointer-events-none"
+                fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+              </svg>
+            </div>
+            <div class="h-6 w-px flex-shrink-0 self-center bg-gray-300 dark:bg-gray-600 rounded-full"
+              aria-hidden="true"></div>
+            <div
+              class="flex items-center h-11 px-4 rounded-xl bg-blue-50 dark:bg-blue-950/40 border border-blue-200/60 dark:border-blue-900/50 shrink-0">
+              <span class="stat-number text-sm font-semibold text-blue-700 dark:text-blue-300 whitespace-nowrap"
+                id="cardsCounter" aria-live="polite" aria-atomic="true">—</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="flex flex-wrap items-center gap-2 sm:gap-3 p-3 sm:p-4">
+        <div class="flex flex-nowrap sm:flex-wrap items-center gap-2 sm:gap-3 min-w-0 flex-1 sm:flex-initial">
+          <a href="/" id="homeLink"
+            class="home-link inline-flex items-center justify-center gap-1.5 sm:gap-2 h-9 min-w-[44px] px-2.5 sm:px-3 rounded-lg bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 text-sm font-medium no-underline transition-colors group shrink-0"
+            aria-label="На главную страницу">
+            <svg
+              class="w-4 h-4 text-gray-500 dark:text-gray-400 group-hover:text-gray-700 dark:group-hover:text-gray-200 shrink-0"
+              fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
+            </svg>
+            <span>Главная</span>
+          </a>
+          <button type="button" id="apiKeyBtn"
+            class="tap-target hidden md:inline-flex items-center justify-center gap-1.5 sm:gap-2 h-9 min-w-[44px] px-2.5 sm:px-3 rounded-lg bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 text-sm font-medium transition-colors border border-transparent shrink-0"
+            aria-label="Установить API ключ" title="Установить API ключ">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
+            </svg>
+            <span class="hidden sm:inline">API ключ</span>
+          </button>
+          <button id="refreshBtn"
+            class="inline-flex items-center justify-center gap-1.5 sm:gap-2 h-9 min-w-[44px] px-2.5 sm:px-3 rounded-lg bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white text-sm font-medium shadow shadow-blue-900/20 disabled:opacity-50 disabled:cursor-not-allowed transition-colors group shrink-0"
+            type="button" aria-label="Обновить статистику">
+            <svg id="refreshIcon" class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"
+              aria-hidden="true">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+            </svg>
+            <span id="refreshBtnText">Обновить</span>
+          </button>
+          <button id="toggleNumbers"
+            class="inline-flex items-center justify-center h-9 min-w-[44px] px-2.5 sm:px-3 rounded-lg bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 text-sm font-medium transition-colors shrink-0"
+            type="button"><span>Короткие числа</span></button>
+        </div>
+        <div class="h-4 w-px flex-shrink-0 bg-gray-200 dark:bg-gray-700 hidden sm:block" aria-hidden="true"></div>
+        <div class="flex flex-wrap items-center gap-2 hidden sm:flex">
+          <button id="toggleWidth"
+            class="inline-flex items-center justify-center h-9 min-w-[44px] px-3 rounded-lg bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 text-sm font-medium transition-colors"
+            type="button"><span>Широкий режим</span></button>
+          <button id="toggleView"
+            class="inline-flex items-center justify-center h-9 min-w-[44px] px-3 rounded-lg bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 text-sm font-medium transition-colors"
+            type="button"><span>Карточки</span></button>
+        </div>
+        <div class="w-full sm:w-auto sm:flex-1 sm:min-w-0 flex justify-end order-last sm:order-none">
+          <span class="inline-flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400 font-medium"
+            id="lastUpdate" aria-live="polite" aria-atomic="true">
+            <svg class="w-3.5 h-3.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"
+              aria-hidden="true">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <span>—</span>
+          </span>
+        </div>
+      </div>
+    </div>
+
+    <div id="loading" class="hidden text-center py-16 animate-fade-in" role="status" aria-live="polite"
+      aria-label="Загрузка статистики">
+      <div class="inline-flex flex-col items-center gap-4">
+        <div class="relative">
+          <div class="w-16 h-16 border-4 border-gray-300 dark:border-gray-800 border-t-blue-500 rounded-full spinner">
+          </div>
+          <div
+            class="absolute inset-0 w-16 h-16 border-4 border-transparent border-b-cyan-500 rounded-full spinner spinner-ring--offset">
+          </div>
+        </div>
+        <p class="text-gray-600 dark:text-gray-400 font-medium">Загрузка статистики...</p>
+      </div>
+    </div>
+
+    <div id="error"
+      class="hidden bg-red-950/50 border-2 border-red-800 rounded-xl p-6 text-center animate-fade-in backdrop-blur-sm"
+      role="alert" aria-live="assertive">
+      <svg class="w-12 h-12 text-red-500 mx-auto mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"
+        aria-hidden="true">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+          d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+      </svg>
+      <h3 class="text-lg font-semibold text-red-400 mb-2">Ошибка загрузки данных</h3>
+      <p class="text-red-300/80 text-sm mb-2">Не удалось получить данные с сервера.</p>
+      <p id="errorMessage" class="text-red-200/90 text-sm mb-4 font-medium"></p>
+      <button id="retryBtn" type="button"
+        class="px-4 py-2 bg-red-600 hover:bg-red-700 active:bg-red-800 rounded-lg text-white text-sm font-medium transition-colors">
+        Попробовать снова
+      </button>
+    </div>
+
+    <div id="aggregateHost" class="mb-6 animate-slide-up" aria-label="Сводная статистика по всем трекерам"></div>
+
+    <div id="viewContainer" class="animate-slide-up">
+      <div id="statsGrid" class="hidden stats-grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"
+        aria-live="polite" role="region" aria-label="Статистика трекеров в виде карточек"></div>
+
+      <div id="statsTable" class="overflow-x-auto rounded-xl border border-gray-300 dark:border-gray-800"
+        aria-live="polite" role="region" aria-label="Таблица статистики трекеров">
+        <table class="w-full text-sm">
+          <thead class="bg-gray-100 dark:bg-gray-900 sticky top-0 z-10">
+            <tr class="border-b border-gray-300 dark:border-gray-800">
+              <th scope="col" class="px-4 py-3 text-left font-semibold text-gray-700 dark:text-gray-300">Трекер</th>
+              <th scope="col" class="px-4 py-3 text-right font-semibold text-gray-700 dark:text-gray-300">Последний
+                новый</th>
+              <th scope="col" class="px-4 py-3 text-right font-semibold text-gray-700 dark:text-gray-300">Новые</th>
+              <th scope="col" class="px-4 py-3 text-right font-semibold text-gray-700 dark:text-gray-300">Обновлено</th>
+              <th scope="col" class="px-4 py-3 text-right font-semibold text-gray-700 dark:text-gray-300">Всего</th>
+              <th scope="col" class="px-4 py-3 text-right font-semibold text-gray-700 dark:text-gray-300">Подтверждено
+              </th>
+              <th scope="col" class="px-4 py-3 text-right font-semibold text-gray-700 dark:text-gray-300">Ожидает</th>
+              <th scope="col" class="px-4 py-3 text-right font-semibold text-gray-700 dark:text-gray-300">Пропущено</th>
+            </tr>
+          </thead>
+          <tbody id="statsTableBody" class="bg-white/50 dark:bg-gray-900/50"></tbody>
+        </table>
+        <div id="tablePagination" class="hidden">
+          <span id="paginationInfo" aria-live="polite" aria-atomic="true"></span>
+          <div class="flex items-center gap-2">
+            <button id="paginationPrev" type="button"
+              class="px-3 py-1.5 rounded-lg bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed text-gray-800 dark:text-gray-200 text-sm font-medium transition-colors"
+              aria-label="Предыдущая страница">Назад</button>
+            <button id="paginationNext" type="button"
+              class="px-3 py-1.5 rounded-lg bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed text-gray-800 dark:text-gray-200 text-sm font-medium transition-colors"
+              aria-label="Следующая страница">Вперёд</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="apiKeyModal" class="transition-ui fixed inset-0 z-[100] hidden" aria-modal="true"
+      aria-labelledby="apiKeyModalTitle" role="dialog">
+      <div class="absolute inset-0 bg-black/60 dark:bg-black/70 backdrop-blur-sm" id="apiKeyModalBackdrop"></div>
+      <div class="relative flex min-h-full items-center justify-center p-4">
+        <div
+          class="w-full max-w-md rounded-2xl bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 shadow-2xl p-6 animate-fade-in">
+          <h2 id="apiKeyModalTitle" class="text-xl font-semibold text-gray-900 dark:text-gray-100 mb-4">Установить API
+            ключ</h2>
+          <p class="text-sm text-gray-600 dark:text-gray-400 mb-4">Ключ используется для поиска и статистики. Сохраняется в
+            браузере.</p>
+          <input type="password" id="apiKeyInput" autocomplete="new-password"
+            class="w-full px-4 py-3 bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-xl text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 mb-2"
+            placeholder="Введите ключ API" />
+          <p id="apiKeyModalError" class="text-sm text-red-500 dark:text-red-400 mb-4 hidden" role="alert"></p>
+          <div class="flex gap-3 justify-end">
+            <button type="button" id="apiKeyModalCancel"
+              class="px-4 py-2.5 rounded-xl bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-200 font-medium hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors">Отмена</button>
+            <button type="button" id="apiKeyModalSave"
+              class="px-4 py-2.5 rounded-xl bg-red-600 hover:bg-red-700 text-white font-medium transition-colors">Сохранить</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="emptyState" class="hidden text-center py-16 animate-fade-in" role="status" aria-live="polite">
+      <svg class="w-16 h-16 text-gray-400 dark:text-gray-700 mx-auto mb-4" fill="none" stroke="currentColor"
+        viewBox="0 0 24 24" aria-hidden="true">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+          d="M9.172 16.172a4 4 0 015.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+      </svg>
+      <p class="text-gray-600 dark:text-gray-500 text-lg font-medium">Ничего не найдено</p>
+      <p class="text-gray-500 dark:text-gray-600 text-sm mt-1">Попробуйте изменить параметры поиска</p>
+    </div>
+
+  </div>
+
+  <button id="backToTop"
+    class="fixed bottom-6 right-6 p-3 bg-blue-600 hover:bg-blue-700 text-white rounded-full shadow-2xl shadow-blue-900/50 opacity-0 pointer-events-none transition-all duration-300 z-50 group hover:scale-110 active:scale-95"
+    aria-label="Вернуться к началу страницы" tabindex="-1" type="button">
+    <svg class="w-5 h-5 group-hover:-translate-y-0.5 transition-transform" fill="none" stroke="currentColor"
+      viewBox="0 0 24 24" aria-hidden="true">
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 10l7-7m0 0l7 7m-7-7v18" />
+    </svg>
+  </button>
+
+  <script>
+    (function () {
+      'use strict';
+
+      const LS = {
+        get: (key) => { try { return localStorage.getItem(key) || ''; } catch (_) { return ''; } },
+        set: (key, value) => { try { localStorage.setItem(key, value); } catch (e) { console.warn('localStorage.setItem(' + key + ') failed:', e); } },
+        remove: (key) => { try { localStorage.removeItem(key); } catch (e) { console.warn('localStorage.removeItem(' + key + ') failed:', e); } }
+      };
+
+      const appendApiKey = (url) => {
+        const key = LS.get('api_key');
+        if (!key) return url;
+        const sep = url.indexOf('?') >= 0 ? '&' : '?';
+        return url + sep + 'apikey=' + encodeURIComponent(key);
+      };
+
+      const API_BASE = '/api/v1.0';
+      const CONF_TIMEOUT_MS = 5000;
+
+      let openApiKeyModalRef = null;
+
+      const CONFIG = Object.freeze({
+        API_URL: '/stats/torrents',
+        LAST_UPDATE_URL: '/lastupdatedb',
+        DEBOUNCE_DELAY: 300,
+        RETRY_ATTEMPTS: 3,
+        RETRY_DELAY: 1000,
+        FETCH_TIMEOUT_MS: 10000,
+        LAST_UPDATE_TIMEOUT_MS: 5000,
+        PAGE_SIZE: 50,
+        BACK_TO_TOP_THRESHOLD: 300,
+        VIEW_BREAKPOINT: 768
+      });
+
+      const isDesktopViewport = () =>
+        window.matchMedia(`(min-width: ${CONFIG.VIEW_BREAKPOINT}px)`).matches;
+
+      const getModalFocusables = (modal) => {
+        if (!modal) return [];
+        return Array.from(modal.querySelectorAll(
+          'input:not([disabled]), button:not([disabled]), select:not([disabled]), textarea:not([disabled]), [href]'
+        )).filter(el => el.tabIndex !== -1);
+      };
+
+      const setupModalFocusTrap = (modal) => {
+        if (!modal) return;
+        modal.addEventListener('keydown', (e) => {
+          if (e.key !== 'Tab') return;
+          const focusables = getModalFocusables(modal);
+          if (!focusables.length) return;
+          const idx = focusables.indexOf(document.activeElement);
+          if (e.shiftKey) {
+            if (idx <= 0) { focusables[focusables.length - 1].focus(); e.preventDefault(); }
+          } else {
+            if (idx === -1 || idx >= focusables.length - 1) { focusables[0].focus(); e.preventDefault(); }
+          }
+        });
+      };
+
+      const debounce = (func, wait) => {
+        let timeout;
+        return function (...args) {
+          clearTimeout(timeout);
+          timeout = setTimeout(() => func.apply(this, args), wait);
+        };
+      };
+
+      const throttle = (func, limit) => {
+        let inThrottle = false;
+        return function (...args) {
+          if (!inThrottle) {
+            func.apply(this, args);
+            inThrottle = true;
+            setTimeout(() => { inThrottle = false; }, limit);
+          }
+        };
+      };
+
+      const pluralize = (n, one, few, many) => {
+        const num = Number(n) || 0;
+        const abs = Math.abs(num | 0);
+        const mod10 = abs % 10;
+        const mod100 = abs % 100;
+        if (mod10 === 1 && mod100 !== 11) return one;
+        if (mod10 >= 2 && mod10 <= 4 && (mod100 < 10 || mod100 >= 20)) return few;
+        return many;
+      };
+
+      const escapeHtml = (str) => {
+        if (str == null) return '';
+        return String(str)
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;')
+          .replace(/'/g, '&#39;');
+      };
+
+      const escapeAttr = (str) => {
+        if (str == null) return '';
+        return String(str)
+          .replace(/&/g, '&amp;')
+          .replace(/"/g, '&quot;');
+      };
+
+      const getEndpointLabel = (url) => {
+        if (url == null || url === '') return 'сервер';
+        const path = String(url)
+          .replace(/\?.*$/, '')
+          .replace(/^https?:\/\/[^/]+/, '') || '/';
+        if (path.endsWith('/stats/torrents')) return 'статистика трекеров';
+        if (path.endsWith('/lastupdatedb')) return 'время обновления';
+        return 'сервер';
+      };
+
+      const THOUSAND = 1e3;
+      const MILLION = 1e6;
+
+      const formatNumber = (n) => {
+        const num = Number(n);
+        if (n == null || Number.isNaN(num)) return '0';
+        if (!state.fullNumbers) {
+          if (num >= MILLION) return (num / MILLION).toFixed(1) + 'M';
+          if (num >= THOUSAND) return (num / THOUSAND).toFixed(1) + 'K';
+          return String(num);
+        }
+        return num.toLocaleString('ru-RU');
+      };
+
+      const formatNumberFull = (n) => {
+        const num = Number(n);
+        if (n == null || Number.isNaN(num)) return '0';
+        return num.toLocaleString('ru-RU');
+      };
+
+      const parseUTCDate = (dateStr) => {
+        if (dateStr == null) return null;
+        const parts = dateStr.match(/(\d{2})\.(\d{2})\.(\d{4})\s+(\d{2}):(\d{2})/);
+        if (!parts) return null;
+        return new Date(Date.UTC(
+          parseInt(parts[3], 10),
+          parseInt(parts[2], 10) - 1,
+          parseInt(parts[1], 10),
+          parseInt(parts[4], 10),
+          parseInt(parts[5], 10)
+        ));
+      };
+
+      const formatLocalDateTime = (utcDate) => {
+        if (!utcDate) return '—';
+        return utcDate.toLocaleString('ru-RU', {
+          year: 'numeric', month: '2-digit', day: '2-digit',
+          hour: '2-digit', minute: '2-digit'
+        });
+      };
+
+      const state = {
+        data: [],
+        fullNumbers: true,
+        wideMode: false,
+        tableView: true,
+        isLoading: false,
+        page: 1,
+        viewManuallySet: false
+      };
+
+      const elements = {};
+
+      const getTracksData = (item) => ({
+        wait: Number(item.tracks?.wait) || 0,
+        confirm: Number(item.tracks?.confirm) || 0,
+        skip: Number(item.tracks?.skip) || 0
+      });
+
+      const toSafeIconName = (name) => {
+        const base = (name || '').toString().toLowerCase();
+        const safe = base.replace(/[^a-z0-9_-]/g, '-');
+        return safe.replace(/-+/g, '-').replace(/^-|-$/g, '') || 'default';
+      };
+
+      const getSafeIconPath = (item) => {
+        const rawName = (item.trackerName || '').toLowerCase();
+        const safeName = rawName.replace(/[^a-z0-9_-]/g, '');
+        const finalName = safeName || 'default';
+        return `./img/ico/${finalName}.ico`;
+      };
+
+      const renderCard = (item) => {
+        const tracks = getTracksData(item);
+        const name = item.trackerName || '—';
+        const nameSafe = escapeHtml(name);
+        const icoName = toSafeIconName(item.trackerName);
+        const ico = escapeAttr(getSafeIconPath(item));
+
+        return `
+          <div class="stat-card bg-white dark:bg-gray-900 rounded-xl p-5 border border-gray-300 dark:border-gray-800
+                      hover:border-gray-400 dark:hover:border-gray-700 hover:shadow-xl hover:shadow-blue-900/10
+                      transition-all duration-200 group" data-name="${escapeAttr(name)}">
+            <div class="flex items-center gap-3 mb-4 pb-3 border-b border-gray-200 dark:border-gray-800">
+              <div class="w-8 h-8 rounded-lg bg-gray-100 dark:bg-gray-800 flex items-center justify-center flex-shrink-0">
+                <img src="${ico}" alt="" role="presentation"
+                     class="tracker-icon w-5 h-5 object-contain" loading="lazy" />
+              </div>
+              <span class="font-semibold text-base text-gray-900 dark:text-gray-100
+                           group-hover:text-blue-600 dark:group-hover:text-blue-400
+                           transition-colors truncate">${nameSafe}</span>
+            </div>
+            <dl class="space-y-2.5">
+              <div class="flex justify-between items-center text-sm">
+                <dt class="text-gray-500 dark:text-gray-400">Последний новый</dt>
+                <dd class="text-gray-700 dark:text-gray-300 font-medium">${escapeHtml(item.lastnewtor || '—')}</dd>
+              </div>
+              <div class="flex justify-between items-center text-sm">
+                <dt class="text-gray-500 dark:text-gray-400">Новые за сегодня</dt>
+                <dd class="stat-number text-blue-600 dark:text-blue-400 font-semibold"
+                    aria-label="${formatNumberFull(item.newtor)}">${formatNumber(item.newtor)}</dd>
+              </div>
+              <div class="flex justify-between items-center text-sm">
+                <dt class="text-gray-500 dark:text-gray-400">Обновлено за сегодня</dt>
+                <dd class="stat-number text-cyan-600 dark:text-cyan-400 font-semibold"
+                    aria-label="${formatNumberFull(item.update)}">${formatNumber(item.update)}</dd>
+              </div>
+              <div class="flex justify-between items-center text-sm">
+                <dt class="text-gray-500 dark:text-gray-400">Всего торрентов</dt>
+                <dd class="stat-number text-gray-700 dark:text-gray-200 font-semibold"
+                    aria-label="${formatNumberFull(item.alltorrents)}">${formatNumber(item.alltorrents)}</dd>
+              </div>
+              <div class="flex justify-between items-center text-sm pt-2 border-t border-gray-200/50 dark:border-gray-800/50">
+                <dt class="text-gray-500 dark:text-gray-400">Подтверждено</dt>
+                <dd class="stat-number text-green-600 dark:text-green-400 font-medium"
+                    aria-label="${formatNumberFull(tracks.confirm)}">${formatNumber(tracks.confirm)}</dd>
+              </div>
+              <div class="flex justify-between items-center text-sm">
+                <dt class="text-gray-500 dark:text-gray-400">Ожидает</dt>
+                <dd class="stat-number text-yellow-600 dark:text-yellow-400 font-medium"
+                    aria-label="${formatNumberFull(tracks.wait)}">${formatNumber(tracks.wait)}</dd>
+              </div>
+              <div class="flex justify-between items-center text-sm">
+                <dt class="text-gray-500 dark:text-gray-400">Пропущено</dt>
+                <dd class="stat-number text-red-600 dark:text-red-400 font-medium"
+                    aria-label="${formatNumberFull(tracks.skip)}">${formatNumber(tracks.skip)}</dd>
+              </div>
+            </dl>
+          </div>`;
+      };
+
+      const renderTableRow = (item) => {
+        const tracks = getTracksData(item);
+        const name = item.trackerName || '—';
+        const nameSafe = escapeHtml(name);
+        const ico = escapeAttr(getSafeIconPath(item));
+
+        return `
+          <tr class="border-b border-gray-200 dark:border-gray-800
+                     hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors"
+              data-name="${escapeAttr(name)}">
+            <td class="px-4 py-3">
+              <div class="flex items-center gap-3">
+                <img src="${ico}" alt="" role="presentation"
+                     class="tracker-icon w-5 h-5 object-contain flex-shrink-0" loading="lazy" />
+                <span class="font-medium text-gray-900 dark:text-gray-200">${nameSafe}</span>
+              </div>
+            </td>
+            <td class="px-4 py-3 text-right text-gray-700 dark:text-gray-300">${escapeHtml(item.lastnewtor || '—')}</td>
+            <td class="px-4 py-3 text-right stat-number text-blue-600 dark:text-blue-400 font-semibold"
+                aria-label="${formatNumberFull(item.newtor)}">${formatNumber(item.newtor)}</td>
+            <td class="px-4 py-3 text-right stat-number text-cyan-600 dark:text-cyan-400 font-semibold"
+                aria-label="${formatNumberFull(item.update)}">${formatNumber(item.update)}</td>
+            <td class="px-4 py-3 text-right stat-number text-gray-700 dark:text-gray-200 font-semibold"
+                aria-label="${formatNumberFull(item.alltorrents)}">${formatNumber(item.alltorrents)}</td>
+            <td class="px-4 py-3 text-right stat-number text-green-600 dark:text-green-400"
+                aria-label="${formatNumberFull(tracks.confirm)}">${formatNumber(tracks.confirm)}</td>
+            <td class="px-4 py-3 text-right stat-number text-yellow-600 dark:text-yellow-400"
+                aria-label="${formatNumberFull(tracks.wait)}">${formatNumber(tracks.wait)}</td>
+            <td class="px-4 py-3 text-right stat-number text-red-600 dark:text-red-400"
+                aria-label="${formatNumberFull(tracks.skip)}">${formatNumber(tracks.skip)}</td>
+          </tr>`;
+      };
+
+      const AGGREGATE_STATS = [
+        {
+          key: 'newtor', label: 'Новые за сегодня',
+          boxClass: 'bg-blue-100/60 dark:bg-blue-950/40 rounded-xl p-4 border border-blue-200 dark:border-blue-900/30',
+          labelClass: 'text-xs text-blue-700 dark:text-blue-300 mb-2 font-medium',
+          valueClass: 'stat-number text-2xl font-bold text-blue-900 dark:text-blue-200'
+        },
+        {
+          key: 'update', label: 'Обновлено за сегодня',
+          boxClass: 'bg-cyan-100/60 dark:bg-cyan-950/40 rounded-xl p-4 border border-cyan-200 dark:border-cyan-900/30',
+          labelClass: 'text-xs text-cyan-700 dark:text-cyan-300 mb-2 font-medium',
+          valueClass: 'stat-number text-2xl font-bold text-cyan-900 dark:text-cyan-200'
+        },
+        {
+          key: 'alltorrents', label: 'Всего торрентов',
+          boxClass: 'bg-gray-100/80 dark:bg-gray-800/60 rounded-xl p-4 border border-gray-300 dark:border-gray-700/50',
+          labelClass: 'text-xs text-gray-700 dark:text-gray-300 mb-2 font-medium',
+          valueClass: 'stat-number text-2xl font-bold text-gray-900 dark:text-gray-100'
+        },
+        {
+          key: 'confirm', label: 'Подтверждено',
+          boxClass: 'bg-green-100/60 dark:bg-green-950/40 rounded-xl p-4 border border-green-200 dark:border-green-900/30',
+          labelClass: 'text-xs text-green-700 dark:text-green-300 mb-2 font-medium',
+          valueClass: 'stat-number text-2xl font-bold text-green-900 dark:text-green-200'
+        },
+        {
+          key: 'wait', label: 'Ожидает',
+          boxClass: 'bg-yellow-100/60 dark:bg-yellow-950/40 rounded-xl p-4 border border-yellow-200 dark:border-yellow-900/30',
+          labelClass: 'text-xs text-yellow-700 dark:text-yellow-300 mb-2 font-medium',
+          valueClass: 'stat-number text-2xl font-bold text-yellow-900 dark:text-yellow-200'
+        },
+        {
+          key: 'skip', label: 'Пропущено',
+          boxClass: 'bg-red-100/60 dark:bg-red-950/40 rounded-xl p-4 border border-red-200 dark:border-red-900/30',
+          labelClass: 'text-xs text-red-700 dark:text-red-300 mb-2 font-medium',
+          valueClass: 'stat-number text-2xl font-bold text-red-900 dark:text-red-200'
+        }
+      ];
+
+      const renderAggregate = (list) => {
+        const sum = list.reduce((acc, item) => {
+          const tracks = getTracksData(item);
+          acc.newtor += Number(item.newtor) || 0;
+          acc.update += Number(item.update) || 0;
+          acc.alltorrents += Number(item.alltorrents) || 0;
+          acc.confirm += tracks.confirm;
+          acc.wait += tracks.wait;
+          acc.skip += tracks.skip;
+          return acc;
+        }, { newtor: 0, update: 0, alltorrents: 0, confirm: 0, wait: 0, skip: 0 });
+
+        const statBoxes = AGGREGATE_STATS.map(({ key, label, boxClass, labelClass, valueClass }) =>
+          `<div class="${boxClass}">
+             <div class="${labelClass}">${escapeHtml(label)}</div>
+             <div class="${valueClass}" aria-label="${formatNumberFull(sum[key])}">${formatNumber(sum[key])}</div>
+           </div>`
+        ).join('');
+
+        return `
+          <div class="bg-gradient-to-br from-blue-50 to-cyan-50 dark:from-blue-950/80 dark:via-gray-900
+                      dark:to-cyan-950/80 rounded-2xl p-6 border border-blue-200 dark:border-blue-900/30
+                      shadow-xl shadow-blue-100/50 dark:shadow-blue-900/20 backdrop-blur-sm">
+            <div class="flex items-center gap-3 mb-6">
+              <div class="w-10 h-10 bg-gradient-to-br from-blue-500 to-cyan-500 rounded-lg
+                          flex items-center justify-center flex-shrink-0" aria-hidden="true">
+                <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                    d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                </svg>
+              </div>
+              <h2 class="font-bold text-lg text-blue-900 dark:text-blue-100">Сводка по всем трекерам</h2>
+            </div>
+            <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+              ${statBoxes}
+            </div>
+          </div>`;
+      };
+
+      const getSortKey = (item, key) => {
+        switch (key) {
+          case 'name': return (item.trackerName || '').toLowerCase();
+          case 'newtor': return Number(item.newtor) || 0;
+          case 'update': return Number(item.update) || 0;
+          case 'alltorrents': return Number(item.alltorrents) || 0;
+          case 'confirm': return getTracksData(item).confirm;
+          case 'wait': return getTracksData(item).wait;
+          case 'skip': return getTracksData(item).skip;
+          default: return 0;
+        }
+      };
+
+      const applyFilterAndSort = () => {
+        const query = (elements.searchTracker?.value || '').toLowerCase().trim();
+        const sortVal = elements.sortSelect?.value || 'name';
+
+        const list = state.data.filter(item =>
+          !query || (item.trackerName || '').toLowerCase().includes(query)
+        );
+
+        list.sort((a, b) => {
+          const ka = getSortKey(a, sortVal);
+          const kb = getSortKey(b, sortVal);
+          if (sortVal === 'name') return ka < kb ? -1 : ka > kb ? 1 : 0;
+          return (kb - ka);
+        });
+
+        return list;
+      };
+
+      const render = () => {
+        const list = applyFilterAndSort();
+
+        const gridCols = state.wideMode
+          ? 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5 gap-4'
+          : 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4';
+        elements.statsGrid.className = `stats-grid ${gridCols}`;
+
+        elements.statsGrid.classList.toggle('hidden', state.tableView);
+        elements.statsTable.classList.toggle('hidden', !state.tableView);
+
+        if (list.length === 0) {
+          state.page = 1;
+          elements.aggregateHost.innerHTML = '';
+          elements.statsGrid.innerHTML = '';
+          elements.statsTableBody.innerHTML = '';
+          elements.tablePagination.classList.add('hidden');
+          elements.cardsCounter.textContent = `0 ${pluralize(0, 'трекер', 'трекера', 'трекеров')}`;
+          elements.emptyState.classList.remove('hidden');
+          return;
+        }
+
+        elements.emptyState.classList.add('hidden');
+        elements.cardsCounter.textContent =
+          `${list.length} ${pluralize(list.length, 'трекер', 'трекера', 'трекеров')}`;
+
+        elements.aggregateHost.innerHTML = renderAggregate(list);
+
+        if (state.tableView) {
+          const total = list.length;
+          const totalPages = Math.max(1, Math.ceil(total / CONFIG.PAGE_SIZE));
+          state.page = Math.min(Math.max(1, state.page), totalPages);
+
+          const start = (state.page - 1) * CONFIG.PAGE_SIZE;
+          const pageList = list.slice(start, start + CONFIG.PAGE_SIZE);
+          elements.statsTableBody.innerHTML = pageList.map(renderTableRow).join('');
+
+          if (total > CONFIG.PAGE_SIZE) {
+            elements.tablePagination.classList.remove('hidden');
+            const end = Math.min(start + CONFIG.PAGE_SIZE, total);
+            elements.paginationInfo.textContent =
+              `${start + 1}–${end} из ${total}`;
+            elements.paginationPrev.disabled = state.page <= 1;
+            elements.paginationNext.disabled = state.page >= totalPages;
+          } else {
+            elements.tablePagination.classList.add('hidden');
+          }
+        } else {
+          elements.statsGrid.innerHTML = list.map(renderCard).join('');
+          elements.tablePagination.classList.add('hidden');
+        }
+      };
+
+      const fetchWithRetry = async (url, attempts = CONFIG.RETRY_ATTEMPTS) => {
+        const label = getEndpointLabel(url);
+        let lastError;
+
+        for (let i = 0; i < attempts; i++) {
+          const controller = new AbortController();
+          const timerId = setTimeout(() => controller.abort(), CONFIG.FETCH_TIMEOUT_MS);
+
+          try {
+            const response = await fetch(url, { signal: controller.signal });
+            clearTimeout(timerId);
+
+            if (!response.ok) {
+              const status = response.status;
+              let msg;
+              if (status >= 500) {
+                msg = `Серверная ошибка при запросе «${label}»: HTTP ${status}. Попробуйте позже.`;
+              } else if (status >= 400) {
+                msg = `Ошибка запроса к «${label}»: HTTP ${status}. Проверьте корректность запроса.`;
+              } else {
+                msg = `Неожиданный HTTP-ответ от «${label}»: статус ${status}.`;
+              }
+              if (status >= 400 && status < 500) throw new Error(msg);
+              lastError = new Error(msg);
+            } else {
+              return await response.text();
+            }
+          } catch (err) {
+            clearTimeout(timerId);
+
+            if (err.name === 'AbortError') {
+              lastError = new Error(
+                `Превышено время ожидания ответа от «${label}». Проверьте подключение к сети.`
+              );
+            } else if (err instanceof TypeError) {
+              lastError = new Error(
+                `Ошибка сети при обращении к «${label}». Проверьте подключение к интернету.`
+              );
+            } else {
+              if (i === attempts - 1 || err.message.includes('HTTP 4')) throw err;
+              lastError = err;
+            }
+          }
+
+          if (i < attempts - 1) {
+            await new Promise(resolve => setTimeout(resolve, CONFIG.RETRY_DELAY * (i + 1)));
+          }
+        }
+
+        throw lastError ?? new Error(`Не удалось загрузить данные («${label}») после ${attempts} попыток.`);
+      };
+
+      const renderLastUpdateFallback = (title = 'Не удалось загрузить время обновления') => {
+        elements.lastUpdate.innerHTML = `
+          <svg class="w-3.5 h-3.5 flex-shrink-0" fill="none" stroke="currentColor"
+               viewBox="0 0 24 24" aria-hidden="true">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+              d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+          <span title="${escapeAttr(title)}">—</span>`;
+      };
+
+      const loadLastUpdate = async () => {
+        const controller = new AbortController();
+        const timerId = setTimeout(() => controller.abort(), CONFIG.LAST_UPDATE_TIMEOUT_MS);
+
+        try {
+          const response = await fetch(appendApiKey(CONFIG.LAST_UPDATE_URL), { signal: controller.signal });
+          clearTimeout(timerId);
+
+          if (!response.ok) {
+            console.warn(`Не удалось загрузить время обновления (HTTP ${response.status}).`);
+            renderLastUpdateFallback();
+            return;
+          }
+
+          let data;
+          try {
+            data = await response.json();
+          } catch {
+            console.warn('Некорректный JSON от /lastupdatedb.');
+            renderLastUpdateFallback();
+            return;
+          }
+
+          if (data && data.lastupdatedb) {
+            const utcDate = parseUTCDate(data.lastupdatedb);
+            const formattedDate = utcDate ? formatLocalDateTime(utcDate) : String(data.lastupdatedb);
+            elements.lastUpdate.innerHTML = `
+              <svg class="w-3.5 h-3.5 flex-shrink-0" fill="none" stroke="currentColor"
+                   viewBox="0 0 24 24" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                  d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              <span>${escapeHtml(formattedDate)}</span>`;
+          } else {
+            renderLastUpdateFallback('Время обновления недоступно');
+          }
+        } catch (err) {
+          clearTimeout(timerId);
+          console.warn('Ошибка при загрузке времени обновления:', err);
+          renderLastUpdateFallback();
+        }
+      };
+
+      const load = async () => {
+        if (state.isLoading) return;
+
+        state.isLoading = true;
+        elements.loading.classList.remove('hidden');
+        elements.error.classList.add('hidden');
+        elements.refreshBtn.disabled = true;
+        elements.refreshBtnText.textContent = 'Загрузка...';
+        elements.refreshIcon.classList.add('spinner');
+
+        try {
+          const raw = await fetchWithRetry(appendApiKey(CONFIG.API_URL));
+
+          if (typeof raw !== 'string' || raw.trim() === '') {
+            throw new Error(
+              raw == null
+                ? 'Сервер вернул некорректный ответ. Ожидается текстовый JSON.'
+                : 'Сервер вернул пустой ответ. Попробуйте обновить страницу позже.'
+            );
+          }
+
+          let parsed;
+          try {
+            parsed = JSON.parse(raw);
+          } catch {
+            throw new Error(
+              'Сервер вернул некорректные данные (ошибка разбора JSON). Проверьте работу сервера.'
+            );
+          }
+
+          if (!Array.isArray(parsed)) {
+            throw new Error(
+              `Сервер вернул данные в неожиданном формате (${Object.prototype.toString.call(parsed)}). Ожидается массив.`
+            );
+          }
+
+          state.data = parsed;
+          render();
+          loadLastUpdate().catch(() => { });
+
+        } catch (err) {
+          console.error('Ошибка загрузки данных:', err);
+          const is401 = err && String(err.message).includes('401');
+          elements.errorMessage.textContent = is401
+            ? 'Требуется API ключ. Нажмите «API ключ» и введите ключ.'
+            : ((err && err.message) ? err.message : 'Не удалось загрузить данные. Проверьте подключение и попробуйте снова.');
+          elements.error.classList.remove('hidden');
+          if (is401 && openApiKeyModalRef) openApiKeyModalRef();
+        } finally {
+          elements.loading.classList.add('hidden');
+          elements.refreshBtn.disabled = false;
+          elements.refreshBtnText.textContent = 'Обновить';
+          elements.refreshIcon.classList.remove('spinner');
+          state.isLoading = false;
+        }
+      };
+
+      const updateThemeIcons = (isDark) => {
+        elements.iconMoon.classList.toggle('hidden', !isDark);
+        elements.iconSun.classList.toggle('hidden', isDark);
+      };
+
+      const toggleTheme = () => {
+        const isDark = document.documentElement.classList.toggle('dark');
+        updateThemeIcons(isDark);
+        try {
+          localStorage.setItem('theme', isDark ? 'dark' : 'light');
+        } catch (e) {
+          console.warn('localStorage.setItem("theme") failed:', e);
+        }
+      };
+
+      const handleScroll = () => {
+        const scrolled = window.scrollY || document.documentElement.scrollTop;
+        const visible = scrolled > CONFIG.BACK_TO_TOP_THRESHOLD;
+        elements.backToTop.classList.toggle('opacity-0', !visible);
+        elements.backToTop.classList.toggle('pointer-events-none', !visible);
+        elements.backToTop.classList.toggle('opacity-100', visible);
+        elements.backToTop.tabIndex = visible ? 0 : -1;
+      };
+
+      const handleSearch = debounce(() => {
+        state.page = 1;
+        render();
+      }, CONFIG.DEBOUNCE_DELAY);
+
+      const handleSortChange = () => {
+        state.page = 1;
+        render();
+      };
+
+      const handleToggleNumbers = () => {
+        state.fullNumbers = !state.fullNumbers;
+        elements.toggleNumbers.querySelector('span').textContent =
+          state.fullNumbers ? 'Короткие числа' : 'Полные числа';
+        render();
+      };
+
+      const handleToggleWidth = () => {
+        state.wideMode = !state.wideMode;
+        elements.toggleWidth.querySelector('span').textContent =
+          state.wideMode ? 'Узкий режим' : 'Широкий режим';
+        render();
+      };
+
+      const syncViewToggleLabel = () => {
+        if (elements.toggleView) {
+          elements.toggleView.querySelector('span').textContent =
+            state.tableView ? 'Карточки' : 'Таблица';
+        }
+      };
+
+      const handleToggleView = () => {
+        state.tableView = !state.tableView;
+        state.viewManuallySet = true;
+        syncViewToggleLabel();
+        render();
+      };
+
+      const init = () => {
+        const IDS = [
+          'searchTracker', 'sortSelect', 'cardsCounter', 'loading', 'error', 'errorMessage',
+          'retryBtn', 'aggregateHost', 'statsGrid', 'statsTable', 'statsTableBody',
+          'tablePagination', 'paginationInfo', 'paginationPrev', 'paginationNext',
+          'emptyState', 'refreshBtn', 'refreshBtnText', 'refreshIcon', 'lastUpdate',
+          'toggleNumbers', 'toggleWidth', 'toggleView', 'toggleTheme',
+          'iconMoon', 'iconSun', 'backToTop', 'homeLink', 'apiKeyModal', 'apiKeyInput',
+          'apiKeyModalError', 'apiKeyModalSave', 'apiKeyModalCancel', 'apiKeyModalBackdrop'
+        ];
+
+        const missing = [];
+        for (const id of IDS) {
+          const el = document.getElementById(id);
+          if (!el) { missing.push(id); continue; }
+          elements[id] = el;
+        }
+        if (missing.length) {
+          throw new Error('Отсутствуют обязательные элементы DOM: ' + missing.join(', '));
+        }
+
+        updateThemeIcons(document.documentElement.classList.contains('dark'));
+
+        state.tableView = isDesktopViewport();
+        syncViewToggleLabel();
+
+        elements.searchTracker.addEventListener('input', handleSearch);
+        elements.sortSelect.addEventListener('change', handleSortChange);
+        elements.refreshBtn.addEventListener('click', load);
+        elements.retryBtn.addEventListener('click', load);
+
+        const apiKeyModal = elements.apiKeyModal;
+        const apiKeyInput = elements.apiKeyInput;
+        const apiKeyModalError = elements.apiKeyModalError;
+        const apiKeyModalSave = elements.apiKeyModalSave;
+        const apiKeyModalCancel = elements.apiKeyModalCancel;
+        const apiKeyModalBackdrop = elements.apiKeyModalBackdrop;
+        let apiKeyModalTrigger = null;
+
+        setupModalFocusTrap(apiKeyModal);
+
+        const openApiKeyModal = (e) => {
+          if (!apiKeyModal || !apiKeyInput) return;
+          const isDesktop = window.matchMedia('(min-width: 768px)').matches;
+          apiKeyModalTrigger = (e && e.currentTarget) || (isDesktop ? document.getElementById('apiKeyBtn') : document.getElementById('apiKeyBtnHeader'));
+          apiKeyInput.value = LS.get('api_key');
+          if (apiKeyModalError) { apiKeyModalError.classList.add('hidden'); apiKeyModalError.textContent = ''; }
+          apiKeyModal.classList.remove('hidden');
+          setTimeout(() => { const f = getModalFocusables(apiKeyModal)[0]; if (f) f.focus(); else apiKeyInput.focus(); }, 50);
+        };
+        openApiKeyModalRef = openApiKeyModal;
+
+        const closeApiKeyModal = () => {
+          if (apiKeyModal) apiKeyModal.classList.add('hidden');
+          if (apiKeyModalTrigger) { apiKeyModalTrigger.focus(); apiKeyModalTrigger = null; }
+        };
+
+        const saveApiKeyFromModal = () => {
+          const key = (apiKeyInput?.value || '').trim();
+          if (!key) {
+            if (apiKeyModalError) { apiKeyModalError.textContent = 'Введите ключ'; apiKeyModalError.classList.remove('hidden'); }
+            return;
+          }
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), CONF_TIMEOUT_MS);
+          fetch(API_BASE + '/conf?apikey=' + encodeURIComponent(key), { signal: controller.signal })
+            .then(r => r.json())
+            .then(json => {
+              clearTimeout(timeoutId);
+              if (json.apikey) {
+                LS.set('api_key', key);
+                closeApiKeyModal();
+                elements.error.classList.add('hidden');
+                load();
+              } else {
+                if (apiKeyModalError) { apiKeyModalError.textContent = 'Ключ неверный или не принят сервером'; apiKeyModalError.classList.remove('hidden'); }
+              }
+            })
+            .catch(err => {
+              clearTimeout(timeoutId);
+              if (apiKeyModalError) {
+                apiKeyModalError.textContent = err?.name === 'AbortError' ? 'Истекло время ожидания' : 'Ошибка проверки ключа';
+                apiKeyModalError.classList.remove('hidden');
+              }
+            });
+        };
+
+        document.getElementById('apiKeyBtn')?.addEventListener('click', openApiKeyModal);
+        document.getElementById('apiKeyBtnHeader')?.addEventListener('click', openApiKeyModal);
+        apiKeyModalCancel?.addEventListener('click', closeApiKeyModal);
+        apiKeyModalBackdrop?.addEventListener('click', closeApiKeyModal);
+        apiKeyModalSave?.addEventListener('click', saveApiKeyFromModal);
+        apiKeyInput?.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') { e.preventDefault(); saveApiKeyFromModal(); }
+          else if (e.key === 'Escape') { e.preventDefault(); closeApiKeyModal(); }
+        });
+
+        document.addEventListener('keydown', (e) => {
+          if (e.key !== 'Escape') return;
+          if (apiKeyModal && !apiKeyModal.classList.contains('hidden')) { e.preventDefault(); closeApiKeyModal(); }
+        });
+
+        elements.toggleNumbers.addEventListener('click', handleToggleNumbers);
+        elements.toggleWidth.addEventListener('click', handleToggleWidth);
+        elements.toggleView.addEventListener('click', handleToggleView);
+        elements.toggleTheme.addEventListener('click', toggleTheme);
+
+        elements.backToTop.addEventListener('click', (e) => {
+          e.preventDefault();
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+        });
+
+        elements.paginationPrev.addEventListener('click', () => {
+          if (state.page > 1) { state.page--; render(); }
+        });
+
+        elements.paginationNext.addEventListener('click', () => {
+          const total = applyFilterAndSort().length;
+          const totalPages = Math.max(1, Math.ceil(total / CONFIG.PAGE_SIZE));
+          if (state.page < totalPages) { state.page++; render(); }
+        });
+
+        window.addEventListener('scroll', throttle(handleScroll, 100), { passive: true });
+
+        window.matchMedia(`(min-width: ${CONFIG.VIEW_BREAKPOINT}px)`)
+          .addEventListener('change', (mq) => {
+            if (!state.viewManuallySet) {
+              state.tableView = mq.matches;
+              syncViewToggleLabel();
+              render();
+            }
+          });
+
+        document.body.addEventListener('error', (e) => {
+          const target = e.target;
+          if (
+            target instanceof HTMLImageElement &&
+            target.classList.contains('tracker-icon') &&
+            !target.classList.contains('tracker-icon--fallback')
+          ) {
+            target.classList.add('tracker-icon--fallback');
+            target.src = '';
+          }
+        }, true);
+
+        load();
+      };
+
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', init);
+      } else {
+        init();
+      }
+
+    })();
+  </script>
+
+</body>
+
+</html>
