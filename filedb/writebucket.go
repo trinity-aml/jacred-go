@@ -18,7 +18,39 @@ func (db *DB) OpenReadOrEmpty(key string) (map[string]TorrentDetails, error) {
 	return nil, err
 }
 
+// OpenReadOrEmptyLocked reads the bucket while holding the per-key write lock.
+// The caller MUST call the returned unlock function when done with modifications
+// (typically after SaveBucketUnlocked). Usage pattern:
+//
+//	bucket, unlock, err := db.OpenReadOrEmptyLocked(key)
+//	defer unlock()
+//	// ... modify bucket ...
+//	db.SaveBucketUnlocked(key, bucket, time.Now())
+func (db *DB) OpenReadOrEmptyLocked(key string) (map[string]TorrentDetails, func(), error) {
+	mu := db.lockKey(key)
+	mu.Lock()
+	bucket, err := db.OpenReadOrEmpty(key)
+	if err != nil {
+		mu.Unlock()
+		return nil, func() {}, err
+	}
+	return bucket, mu.Unlock, nil
+}
+
+// SaveBucketUnlocked writes the bucket without acquiring the per-key lock.
+// Use only when the caller already holds the lock via OpenReadOrEmptyLocked.
+func (db *DB) SaveBucketUnlocked(key string, bucket map[string]TorrentDetails, updatedAt time.Time) error {
+	return db.saveBucketInternal(key, bucket, updatedAt)
+}
+
 func (db *DB) SaveBucket(key string, bucket map[string]TorrentDetails, updatedAt time.Time) error {
+	mu := db.lockKey(key)
+	mu.Lock()
+	defer mu.Unlock()
+	return db.saveBucketInternal(key, bucket, updatedAt)
+}
+
+func (db *DB) saveBucketInternal(key string, bucket map[string]TorrentDetails, updatedAt time.Time) error {
 	if strings.TrimSpace(key) == "" {
 		return nil
 	}

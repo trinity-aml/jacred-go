@@ -27,7 +27,31 @@ const (
 )
 
 var defaultCategories = []int{2000000, 2001000, 2002000, 2003000, 2004000, 2005000, 2006000, 2007000, 2008000, 3000000, 3001000, 3002000, 3003000, 3004000, 3005000, 3006000, 3007000, 3008000}
-var yearRe = regexp.MustCompile(`[\(\[](\d{4})[\)\]]`)
+var (
+	yearRe            = regexp.MustCompile(`[\(\[](\d{4})[\)\]]`)
+	yearStandaloneRe  = regexp.MustCompile(`\b(19|20)\d{2}\b`)
+	cleanBracketsRe   = regexp.MustCompile(`\[[^\]]*\]`)
+	seriesMatchRe     = regexp.MustCompile(`(?i)^(.+?)\s+S\d{1,2}E\d{1,2}\b`)
+	yearBracketRe     = regexp.MustCompile(`[\(\[](\d{4})[\)\]]`)
+	sxxexxRe          = regexp.MustCompile(`(?i)\b(S\d{1,2}E\d{1,2}|S\d{1,2}E?\d{0,2}|E\d{1,2}|\d{1,2}x\d{1,2})\b`)
+	seasonWordRe      = regexp.MustCompile(`(?i)(?:^|\s)(Сезон|Season)\s*\d{1,2}\b.*$`)
+	qualityWordRe     = regexp.MustCompile(`(?i)\b(2160p|1080p|720p|480p)\b`)
+	hdrWordRe         = regexp.MustCompile(`(?i)\b(HDR10?|DV|HDR|SDR|10bit)\b`)
+	sourceWordRe      = regexp.MustCompile(`(?i)\b(WEB[-\s]?DL|WEB[-\s]?Rip|WEB\b|BDRip|BDRemux|HDRip|BluRay|BRRip|DVDRip|HDTV)\b`)
+	codecWordRe       = regexp.MustCompile(`(?i)\b(x264|x265|xvid|h\.?264|h\.?265|hevc|avc|aac|ac3|dts)\b`)
+	serviceWordRe     = regexp.MustCompile(`(?i)\b(AMZN|NF|DS4K|DD\s*5\s*1|DD5\.?1|DDPA|DDP5\.?1|Atmos|DDP?\s*5\.?1|playWEB)\b`)
+	subWordRe         = regexp.MustCompile(`(?i)\b(ESub|Sub)\b`)
+	releaseGroupRe    = regexp.MustCompile(`(?i)[.\s]+-\s*[A-Za-z0-9][A-Za-z0-9.-]*$`)
+	multiSpaceRe      = regexp.MustCompile(`\s{2,}`)
+	bracketPipeRe     = regexp.MustCompile(`[\[\]|]`)
+	res2160Re         = regexp.MustCompile(`(?i)\b2160p\b`)
+	res1080Re         = regexp.MustCompile(`(?i)\b1080p\b`)
+	res720Re          = regexp.MustCompile(`(?i)\b720p\b`)
+	dotHdrRe          = regexp.MustCompile(`(?i)\.(HDR10?)\b`)
+	dolbyVisionRe     = regexp.MustCompile(`(?i)(dolby\s*vision|10-?bit)`)
+	hdrPresentRe      = regexp.MustCompile(`(?i)(\.|[\[,]| )hdr`)
+	trackerSuffixRe   = regexp.MustCompile(`\s*\|\s+[^|]+$`)
+)
 
 type Parser struct {
 	Config  app.Config
@@ -342,6 +366,10 @@ func mapHit(h hit) filedb.TorrentDetails {
 		updateTime = createTime
 	}
 	name, relased := parseNameAndYear(title)
+	title = buildTitleForFileDB(title)
+	if strings.TrimSpace(h.Tracker) != "" && !strings.Contains(title, h.Tracker) {
+		title = title + " | " + strings.TrimSpace(h.Tracker)
+	}
 	res := filedb.TorrentDetails{"trackerName": trackerName, "types": types, "url": detailURL, "title": title, "sid": h.Seeders, "pir": h.Peers, "size": float64(h.Bytes), "sizeName": formatSize(h.Bytes), "createTime": createTime.Format(time.RFC3339Nano), "updateTime": updateTime.Format(time.RFC3339Nano), "magnet": strings.TrimSpace(h.MagnetURL), "name": name, "originalname": name, "relased": relased, "quality": qualityFromCategoryID(h.CategoryID)}
 	if strings.TrimSpace(h.MagnetURL) == "" && strings.TrimSpace(h.Link) != "" {
 		res["_sn"] = strings.TrimSpace(h.Link)
@@ -407,20 +435,80 @@ func parseNameAndYear(title string) (string, int) {
 	if title == "" {
 		return "", 0
 	}
-	name, relased := title, 0
-	if m := yearRe.FindStringSubmatchIndex(title); len(m) >= 4 {
-		if year, err := strconv.Atoi(title[m[2]:m[3]]); err == nil {
-			relased = year
+	name := trackerSuffixRe.ReplaceAllString(title, "")
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return title, 0
+	}
+	relased := 0
+	if m := yearBracketRe.FindStringSubmatchIndex(name); len(m) >= 4 {
+		if y, err := strconv.Atoi(name[m[2]:m[3]]); err == nil {
+			relased = y
 			if m[0] > 0 {
-				name = strings.TrimSpace(strings.TrimRight(title[:m[0]], " /-|"))
+				name = strings.TrimSpace(strings.TrimRight(name[:m[0]], " /-|"))
 			}
 		}
+	} else if m := yearStandaloneRe.FindString(name); m != "" {
+		if y, err := strconv.Atoi(m); err == nil {
+			relased = y
+			name = strings.TrimSpace(yearStandaloneRe.ReplaceAllString(name, ""))
+		}
 	}
+	name = cleanTitleForSearch(name)
 	if name == "" {
-		name = title
+		return title, relased
 	}
 	return name, relased
 }
+
+func cleanTitleForSearch(title string) string {
+	if strings.TrimSpace(title) == "" {
+		return title
+	}
+	t := strings.TrimSpace(title)
+	t = cleanBracketsRe.ReplaceAllString(t, " ")
+	if m := seriesMatchRe.FindStringSubmatch(t); len(m) > 1 && len(m[1]) > 0 {
+		t = strings.TrimSpace(m[1])
+	} else {
+		if idx := yearBracketRe.FindStringIndex(t); idx != nil && idx[0] > 0 {
+			t = t[:idx[0]]
+		}
+		t = sxxexxRe.ReplaceAllString(t, "")
+		t = seasonWordRe.ReplaceAllString(t, "")
+	}
+	t = qualityWordRe.ReplaceAllString(t, "")
+	t = hdrWordRe.ReplaceAllString(t, "")
+	t = sourceWordRe.ReplaceAllString(t, "")
+	t = codecWordRe.ReplaceAllString(t, "")
+	t = serviceWordRe.ReplaceAllString(t, "")
+	t = subWordRe.ReplaceAllString(t, "")
+	t = strings.ReplaceAll(t, ".", " ")
+	t = bracketPipeRe.ReplaceAllString(t, " ")
+	t = multiSpaceRe.ReplaceAllString(t, " ")
+	t = strings.TrimRight(strings.TrimSpace(t), " /-|")
+	t = releaseGroupRe.ReplaceAllString(t, "")
+	t = strings.TrimRight(strings.TrimSpace(t), " -")
+	if strings.TrimSpace(t) == "" {
+		return title
+	}
+	return t
+}
+
+func buildTitleForFileDB(title string) string {
+	if strings.TrimSpace(title) == "" {
+		return title
+	}
+	t := strings.TrimSpace(title)
+	t = res2160Re.ReplaceAllString(t, "2160p")
+	t = res1080Re.ReplaceAllString(t, "1080p")
+	t = res720Re.ReplaceAllString(t, "720p")
+	t = dotHdrRe.ReplaceAllString(t, " $1")
+	if dolbyVisionRe.MatchString(t) && !hdrPresentRe.MatchString(t) {
+		t += " HDR"
+	}
+	return t
+}
+
 func parseDate(s string) time.Time {
 	s = strings.TrimSpace(s)
 	if s == "" {
@@ -452,6 +540,9 @@ func htmlDecode(s string) string {
 	return strings.NewReplacer("&amp;", "&", "&quot;", "\"", "&#39;", "'", "&lt;", "<", "&gt;", ">").Replace(s)
 }
 func asString(v any) string {
+	if v == nil {
+		return ""
+	}
 	if s, ok := v.(string); ok {
 		return s
 	}

@@ -234,4 +234,11 @@ func (p *bparser) parseBytes() ([]byte, error) {
 	return v, nil
 }
 
-func (p *bparser) peek() byte { return p.b[p.i] }
+func (p *bparser) peek() byte {
+	if p.i >= len(p.b) {
+		return 0
+	}
+	return p.b[p.i]
+}
+
+func (p *bparser) eof() bool { return p.i >= len(p.b) }

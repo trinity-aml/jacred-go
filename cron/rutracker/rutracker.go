@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"html"
 	"io"
+	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -17,6 +19,7 @@ import (
 	"time"
 
 	"jacred/app"
+	"jacred/core"
 	"jacred/filedb"
 )
 
@@ -74,12 +77,15 @@ type Parser struct {
 	allWork  bool
 	latestMu sync.Mutex
 	tasks    map[string][]Task
+	cookieMu sync.Mutex
+	cookie   string
+	cookieT  time.Time
 }
 
 type ParseResult struct {
-	Fetched, Added, Updated, Skipped, Failed int
-	Status                                   string
-	PerCategory                              map[string]int
+	Fetched, Added, Updated, Skipped, Duplicates, Failed int
+	Status                                               string
+	PerCategory                                          map[string]int
 }
 
 func New(cfg app.Config, db *filedb.DB, dataDir string) *Parser {
@@ -90,6 +96,72 @@ func New(cfg app.Config, db *filedb.DB, dataDir string) *Parser {
 	p := &Parser{Config: cfg, DB: db, DataDir: dataDir, Client: &http.Client{Timeout: 35 * time.Second}, loc: loc, tasks: map[string][]Task{}}
 	_ = p.loadTasks()
 	return p
+}
+
+func (p *Parser) getCookie() string {
+	p.cookieMu.Lock()
+	defer p.cookieMu.Unlock()
+	if p.cookie != "" && time.Since(p.cookieT) < 2*time.Hour {
+		return p.cookie
+	}
+	return ""
+}
+
+func (p *Parser) takeLogin(ctx context.Context) bool {
+	host := strings.TrimRight(p.Config.Rutracker.Host, "/")
+	if host == "" || p.Config.Rutracker.Login.U == "" {
+		log.Println("rutracker: login skipped — no host or login configured")
+		return false
+	}
+	log.Printf("rutracker: attempting login to %s as %s", host, p.Config.Rutracker.Login.U)
+	loginClient := &http.Client{
+		Timeout: 20 * time.Second,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	form := url.Values{
+		"login_username": {p.Config.Rutracker.Login.U},
+		"login_password": {p.Config.Rutracker.Login.P},
+		"login":          {"\xc2\xf5\xee\xe4"}, // "Вход" in CP1251
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, host+"/forum/login.php", strings.NewReader(form.Encode()))
+	if err != nil {
+		log.Printf("rutracker: login request error: %v", err)
+		return false
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+	resp, err := loginClient.Do(req)
+	if err != nil {
+		log.Printf("rutracker: login HTTP error: %v", err)
+		return false
+	}
+	defer resp.Body.Close()
+	log.Printf("rutracker: login response status=%d", resp.StatusCode)
+
+	var parts []string
+	for _, line := range resp.Header.Values("Set-Cookie") {
+		parts = append(parts, strings.SplitN(line, ";", 2)[0])
+	}
+	cookieStr := strings.Join(parts, "; ")
+	if strings.Contains(cookieStr, "bb_session") {
+		p.cookieMu.Lock()
+		p.cookie = cookieStr
+		p.cookieT = time.Now()
+		p.cookieMu.Unlock()
+		log.Printf("rutracker: login OK, got bb_session")
+		return true
+	}
+	log.Printf("rutracker: login FAILED — no bb_session in cookies: %s", cookieStr)
+	return false
+}
+
+func (p *Parser) ensureLogin(ctx context.Context) bool {
+	if p.getCookie() != "" {
+		return true
+	}
+	return p.takeLogin(ctx)
 }
 
 func (p *Parser) Parse(ctx context.Context, page int) (ParseResult, error) {
@@ -104,30 +176,45 @@ func (p *Parser) Parse(ctx context.Context, page int) (ParseResult, error) {
 	if isDisabled(p.Config.DisableTrackers, trackerName) {
 		return ParseResult{Status: "disabled"}, nil
 	}
+	if !p.ensureLogin(ctx) {
+		return ParseResult{Status: "login failed"}, nil
+	}
 	res := ParseResult{Status: "ok", PerCategory: map[string]int{}}
-	for _, cat := range firstPageCats {
+	seenURLs := map[string]struct{}{} // cross-category duplicate tracking
+	log.Printf("rutracker: starting parse, %d categories, masterDb=%d entries", len(firstPageCats), len(p.DB.MasterEntries()))
+	for i, cat := range firstPageCats {
 		items, err := p.parsePage(ctx, cat, page)
 		if err != nil {
-			return res, err
+			log.Printf("rutracker: cat %s error: %v (continuing)", cat, err)
+			continue // don't abort all categories on single failure
 		}
 		res.Fetched += len(items)
 		res.PerCategory[cat] = len(items)
 		if len(items) == 0 {
 			continue
 		}
-		a, u, s, f, err := p.saveTorrents(ctx, items)
+		a, u, s, d, f, err := p.saveTorrents(ctx, items, seenURLs)
 		if err != nil {
-			return res, err
+			log.Printf("rutracker: cat %s save error: %v (continuing)", cat, err)
+			continue
 		}
 		res.Added += a
 		res.Updated += u
 		res.Skipped += s
+		res.Duplicates += d
 		res.Failed += f
+		if (i+1)%10 == 0 {
+			log.Printf("rutracker: progress %d/%d cats, fetched=%d added=%d dup=%d", i+1, len(firstPageCats), res.Fetched, res.Added, res.Duplicates)
+		}
 	}
+	log.Printf("rutracker: parse done, fetched=%d added=%d updated=%d skipped=%d duplicates=%d failed=%d", res.Fetched, res.Added, res.Updated, res.Skipped, res.Duplicates, res.Failed)
 	return res, nil
 }
 
 func (p *Parser) UpdateTasksParse(ctx context.Context) (map[string][]Task, error) {
+	if !p.ensureLogin(ctx) {
+		return nil, fmt.Errorf("login failed")
+	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.tasks == nil {
@@ -165,6 +252,9 @@ func (p *Parser) UpdateTasksParse(ctx context.Context) (map[string][]Task, error
 }
 
 func (p *Parser) ParseAllTask(ctx context.Context) (string, error) {
+	if !p.ensureLogin(ctx) {
+		return "login failed", nil
+	}
 	p.mu.Lock()
 	if p.allWork {
 		p.mu.Unlock()
@@ -191,7 +281,7 @@ func (p *Parser) ParseAllTask(ctx context.Context) (string, error) {
 				return "", err
 			}
 			if len(items) > 0 {
-				if _, _, _, _, err := p.saveTorrents(ctx, items); err != nil {
+				if _, _, _, _, _, err := p.saveTorrents(ctx, items, nil); err != nil {
 					return "", err
 				}
 				p.mu.Lock()
@@ -219,6 +309,9 @@ func (p *Parser) ParseLatest(ctx context.Context, pages int) (string, error) {
 		return "work", nil
 	}
 	defer p.latestMu.Unlock()
+	if !p.ensureLogin(ctx) {
+		return "login failed", nil
+	}
 	if pages <= 0 {
 		pages = 5
 	}
@@ -254,7 +347,7 @@ func (p *Parser) ParseLatest(ctx context.Context, pages int) (string, error) {
 			if len(items) == 0 {
 				continue
 			}
-			if _, _, _, _, err := p.saveTorrents(ctx, items); err != nil {
+			if _, _, _, _, _, err := p.saveTorrents(ctx, items, nil); err != nil {
 				return "", err
 			}
 			p.mu.Lock()
@@ -316,18 +409,23 @@ func (p *Parser) parsePage(ctx context.Context, cat string, page int) ([]filedb.
 	return out, nil
 }
 
-func (p *Parser) saveTorrents(ctx context.Context, torrents []filedb.TorrentDetails) (int, int, int, int, error) {
-	added, updated, skipped, failed := 0, 0, 0, 0
+func (p *Parser) saveTorrents(ctx context.Context, torrents []filedb.TorrentDetails, seenURLs map[string]struct{}) (int, int, int, int, int, error) {
+	added, updated, skipped, duplicates, failed := 0, 0, 0, 0, 0
+	skipCached, skipSame, skipEmpty := 0, 0, 0
 	bucketCache := map[string]map[string]filedb.TorrentDetails{}
 	changed := map[string]time.Time{}
+	if seenURLs == nil {
+		seenURLs = map[string]struct{}{}
+	}
 	for _, incoming := range torrents {
 		select {
 		case <-ctx.Done():
-			return added, updated, skipped, failed, ctx.Err()
+			return added, updated, skipped, duplicates, failed, ctx.Err()
 		default:
 		}
 		key := p.DB.KeyDb(asString(incoming["name"]), asString(incoming["originalname"]))
 		if strings.TrimSpace(key) == "" || key == ":" {
+			skipEmpty++
 			skipped++
 			continue
 		}
@@ -335,18 +433,26 @@ func (p *Parser) saveTorrents(ctx context.Context, torrents []filedb.TorrentDeta
 		if !ok {
 			loaded, err := p.DB.OpenReadOrEmpty(key)
 			if err != nil {
-				return added, updated, skipped, failed, err
+				return added, updated, skipped, duplicates, failed, err
 			}
 			bucket = loaded
 			bucketCache[key] = bucket
 		}
 		urlv := strings.TrimSpace(asString(incoming["url"]))
 		if urlv == "" {
+			skipEmpty++
 			skipped++
 			continue
 		}
+		// Check if we already processed this URL in this parse run (cross-category duplicate)
+		if _, seen := seenURLs[urlv]; seen {
+			duplicates++
+			continue
+		}
+		seenURLs[urlv] = struct{}{}
 		existing, exists := bucket[urlv]
 		if exists && asString(existing["title"]) == asString(incoming["title"]) && strings.TrimSpace(asString(existing["magnet"])) != "" {
+			skipCached++
 			skipped++
 			continue
 		}
@@ -366,6 +472,7 @@ func (p *Parser) saveTorrents(ctx context.Context, torrents []filedb.TorrentDeta
 			continue
 		}
 		if exists && samePrimary(existing, incoming) {
+			skipSame++
 			skipped++
 			continue
 		}
@@ -377,17 +484,20 @@ func (p *Parser) saveTorrents(ctx context.Context, torrents []filedb.TorrentDeta
 			added++
 		}
 	}
+	if skipCached > 0 || skipSame > 0 || skipEmpty > 0 {
+		log.Printf("rutracker: save detail — skipCached=%d skipSame=%d skipEmpty=%d", skipCached, skipSame, skipEmpty)
+	}
 	for key, when := range changed {
 		if err := p.DB.SaveBucket(key, bucketCache[key], when); err != nil {
-			return added, updated, skipped, failed, err
+			return added, updated, skipped, duplicates, failed, err
 		}
 	}
 	if len(changed) > 0 {
 		if err := p.DB.SaveChangesToFile(); err != nil {
-			return added, updated, skipped, failed, err
+			return added, updated, skipped, duplicates, failed, err
 		}
 	}
-	return added, updated, skipped, failed, nil
+	return added, updated, skipped, duplicates, failed, nil
 }
 
 func (p *Parser) fetchCategoryRoot(ctx context.Context, cat string) (string, error) {
@@ -409,6 +519,9 @@ func (p *Parser) fetch(ctx context.Context, url string) (string, error) {
 		return "", err
 	}
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0 Safari/537.36")
+	if c := p.getCookie(); c != "" {
+		req.Header.Set("Cookie", c)
+	}
 	resp, err := p.Client.Do(req)
 	if err != nil {
 		return "", err
@@ -418,7 +531,7 @@ func (p *Parser) fetch(ctx context.Context, url string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return string(body), nil
+	return core.DecodeCP1251(body), nil
 }
 
 func (p *Parser) loadTasks() error {
@@ -668,6 +781,8 @@ func asString(v any) string {
 		return x
 	case fmt.Stringer:
 		return x.String()
+	case nil:
+		return ""
 	default:
 		if v == nil {
 			return ""

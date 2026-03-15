@@ -119,6 +119,8 @@ func asString(v any) string {
 	switch t := v.(type) {
 	case string:
 		return t
+	case nil:
+		return ""
 	default:
 		return fmt.Sprint(v)
 	}

@@ -30,10 +30,17 @@ type DB struct {
 	mu       sync.RWMutex
 	masterDb map[string]TorrentInfo
 	fastdb   map[string][]string
+	keyLocks sync.Map // per-key *sync.Mutex for write serialization
 }
 
 func New(cfg app.Config, dataDir string) *DB {
 	return &DB{Config: cfg, DataDir: dataDir, masterDb: map[string]TorrentInfo{}, fastdb: map[string][]string{}}
+}
+
+// lockKey returns a per-key mutex for serializing writes to the same bucket file.
+func (db *DB) lockKey(key string) *sync.Mutex {
+	v, _ := db.keyLocks.LoadOrStore(key, &sync.Mutex{})
+	return v.(*sync.Mutex)
 }
 
 func (db *DB) KeyDb(name, original string) string { return core.NameToHash(name, original) }
@@ -368,6 +375,8 @@ func asString(v any) string {
 	switch s := v.(type) {
 	case string:
 		return s
+	case nil:
+		return ""
 	default:
 		return fmt.Sprint(v)
 	}

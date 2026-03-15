@@ -36,10 +36,6 @@ func (s *Server) handleStatsTrackers(w http.ResponseWriter, r *http.Request) {
 	}
 
 	path := normalizeRoutePath(r.URL.Path)
-	if strings.Contains(path, "/Trackers") {
-		writeJSONArrayString(w, http.StatusOK, "[]")
-		return
-	}
 
 	if path == "/stats/trackers" || path == "/stats/trackers/" {
 		q := r.URL.Query()
@@ -78,16 +74,7 @@ func (s *Server) handleStatsTorrentsEx(w http.ResponseWriter, r *http.Request) {
 		writeJSONArrayString(w, http.StatusOK, "[]")
 		return
 	}
-	path := normalizeRoutePath(r.URL.Path)
 	q := r.URL.Query()
-	if hasUpperASCII(path) {
-		writeJSONArrayString(w, http.StatusOK, "[]")
-		return
-	}
-	if strings.TrimSpace(q.Get("trackerName")) == "" && strings.TrimSpace(q.Get("tracker")) != "" {
-		writeJSONArrayString(w, http.StatusOK, "[]")
-		return
-	}
 	trackerName := strings.TrimSpace(q.Get("trackerName"))
 	if trackerName == "" {
 		statsPath := filepath.Join(s.DB.DataDir, "temp", "stats.json")
@@ -398,33 +385,6 @@ func (s *Server) handleJSONDBSave(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDevFindCorrupt(w http.ResponseWriter, r *http.Request) {
-	if strings.Contains(r.URL.Path, "/FindCorrupt") {
-		writeCanonicalJSON(w, http.StatusOK, map[string]any{
-			"ok":            true,
-			"totalFdbKeys":  0,
-			"totalTorrents": 0,
-			"corrupt": map[string]any{
-				"missingName": map[string]any{
-					"count":  0,
-					"sample": []any{},
-				},
-				"missingOriginalname": map[string]any{
-					"count":  0,
-					"sample": []any{},
-				},
-				"missingTrackerName": map[string]any{
-					"count":  0,
-					"sample": []any{},
-				},
-				"nullValue": map[string]any{
-					"count":  0,
-					"sample": []any{},
-				},
-			},
-		})
-		return
-	}
-
 	writeCanonicalJSON(w, http.StatusOK, s.DB.FindCorrupt(defaultInt(firstQuery(r.URL.Query(), "sampleSize", "sample", "limit"), 20)))
 }
 
@@ -446,30 +406,6 @@ func (s *Server) handleDevFindDuplicateKeys(w http.ResponseWriter, r *http.Reque
 }
 
 func (s *Server) handleDevFindEmptySearchFields(w http.ResponseWriter, r *http.Request) {
-	if strings.Contains(r.URL.Path, "/FindEmptySearchFields") {
-		writeCanonicalJSON(w, http.StatusOK, map[string]any{
-			"ok":            true,
-			"totalFdbKeys":  0,
-			"totalTorrents": 0,
-			"emptySearchFields": map[string]any{
-				"emptySn": map[string]any{
-					"count":  0,
-					"sample": []any{},
-				},
-				"emptySo": map[string]any{
-					"count":  0,
-					"sample": []any{},
-				},
-				"emptyBoth": map[string]any{
-					"count":  0,
-					"sample": []any{},
-				},
-				"total": 0,
-			},
-		})
-		return
-	}
-
 	writeCanonicalJSON(w, http.StatusOK, s.DB.FindEmptySearchFields(defaultInt(firstQuery(r.URL.Query(), "sampleSize", "sample", "limit"), 20)))
 }
 
@@ -506,42 +442,6 @@ func normalizeSyncTorrent(t filedb.TorrentDetails) filedb.TorrentDetails {
 		t["ffprobe"] = []any{}
 	}
 	return t
-}
-
-func hasUpperASCII(s string) bool {
-	for _, r := range s {
-		if r >= 'A' && r <= 'Z' {
-			return true
-		}
-	}
-	return false
-}
-
-func zeroFindCorruptResult() map[string]any {
-	return map[string]any{
-		"ok": true,
-		"totalFdbKeys": 0,
-		"totalTorrents": 0,
-		"corrupt": map[string]any{
-			"nullValue": map[string]any{"count": 0, "sample": []any{}},
-			"missingName": map[string]any{"count": 0, "sample": []any{}},
-			"missingOriginalname": map[string]any{"count": 0, "sample": []any{}},
-			"missingTrackerName": map[string]any{"count": 0, "sample": []any{}},
-		},
-	}
-}
-
-func zeroFindEmptySearchFieldsResult() map[string]any {
-	return map[string]any{
-		"ok": true,
-		"totalFdbKeys": 0,
-		"totalTorrents": 0,
-		"emptySearchFields": map[string]any{
-			"emptySn": map[string]any{"count": 0, "sample": []any{}},
-			"emptySo": map[string]any{"count": 0, "sample": []any{}},
-			"emptyBoth": map[string]any{"count": 0, "sample": []any{}},
-		},
-	}
 }
 
 func normalizeRoutePath(path string) string {
@@ -738,10 +638,8 @@ func formatLocalDateTime(t time.Time) string {
 
 func todayLocalMidnightUTC() time.Time {
 	now := time.Now()
-	utcNow := time.Now().UTC()
-	offset := now.Sub(utcNow)
-	todayLocal := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
-	return todayLocal.Add(-offset)
+	midnight := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	return midnight.UTC()
 }
 
 func defaultInt(s string, def int) int {

@@ -5,8 +5,11 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strconv"
+	"syscall"
+	"time"
 
 	"jacred/app"
 	"jacred/background"
@@ -34,7 +37,11 @@ func main() {
 	} else {
 		log.Printf("tracks loaded: %d", tracksDB.Count())
 	}
-	ctx := context.Background()
+
+	// Контекст с отменой для всех фоновых горутин
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	if cfg.Tracks {
 		manager := tracks.NewManager(cfg, db, tracksDB, "Data")
 		for i := 1; i <= 5; i++ {
@@ -42,8 +49,50 @@ func main() {
 		}
 	}
 	go background.RunTrackersCron(ctx, db, "Data", "wwwroot", cfg.Evercache.Enable && cfg.Evercache.ValidHour <= 0)
+
 	srv := server.New(cfg, db, tracksDB, "wwwroot")
 	addr := ":" + strconv.Itoa(cfg.ListenPort)
-	log.Printf("jacred listening on %s", addr)
-	log.Fatal(http.ListenAndServe(addr, srv.Handler()))
+
+	httpServer := &http.Server{
+		Addr:         addr,
+		Handler:      srv.Handler(),
+		ReadTimeout:  30 * time.Second,
+		WriteTimeout: 0, // no limit — cron parsers can run 10+ minutes
+		IdleTimeout:  60 * time.Second,
+	}
+
+	// Запуск HTTP-сервера в горутине
+	go func() {
+		log.Printf("jacred listening on %s", addr)
+		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("http server error: %v", err)
+		}
+	}()
+
+	// Ожидание сигнала завершения
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	sig := <-quit
+	log.Printf("received signal %v, shutting down...", sig)
+
+	// Отмена контекста для фоновых горутин
+	cancel()
+
+	// Graceful shutdown HTTP-сервера (15 секунд на завершение текущих запросов)
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer shutdownCancel()
+
+	if err := httpServer.Shutdown(shutdownCtx); err != nil {
+		log.Printf("http server shutdown error: %v", err)
+	}
+
+	// Сохраняем masterDb перед выходом
+	log.Println("saving database...")
+	if err := db.SaveChangesToFile(); err != nil {
+		log.Printf("error saving masterDb: %v", err)
+	} else {
+		log.Println("database saved successfully")
+	}
+
+	log.Println("jacred stopped")
 }

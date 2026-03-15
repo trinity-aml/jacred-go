@@ -24,6 +24,31 @@ var (
 	whitespaceRe    = regexp.MustCompile(`[\n\r\t]+`)
 	cleanupSpaceRe  = regexp.MustCompile(`[\n\r\t\x{00A0} ]+`)
 	firstNamePartRe = regexp.MustCompile(`(\[|/|\(|\|)`)
+
+	// parsePageHTML field extractors
+	createTimeRe = regexp.MustCompile(`(?i)<td>([^<]+)</td><td(?:[^>]+)?><a class="downgif"`)
+	urlPathRe    = regexp.MustCompile(`(?i)<a href="/(torrent/[^"]+)">`)
+	titleRe      = regexp.MustCompile(`(?i)<a href="/torrent/[^"]+">([^<]+)</a>`)
+	sidRawRe     = regexp.MustCompile(`(?i)<span class="green"><img [^>]+>&nbsp;([0-9]+)</span>`)
+	pirRawRe     = regexp.MustCompile(`(?i)<span class="red">&nbsp;([0-9]+)</span>`)
+	sizeNameRe   = regexp.MustCompile(`(?i)<td align="right">([^<]+)</td>`)
+	magnetRe     = regexp.MustCompile(`(?i)href="(magnet:\?xt=[^"]+)"`)
+
+	// parseTitle patterns
+	movieFullRe       = regexp.MustCompile(`^([^/]+) / ([^/]+) / ([^/\(]+) \(([0-9]{4})\)`)
+	movieShortRe      = regexp.MustCompile(`^([^/\(]+) / ([^/\(]+) \(([0-9]{4})\)`)
+	musicYearRe       = regexp.MustCompile(`^([^/\(]+) \(([0-9]{4})\)`)
+	serialPattern1Re  = regexp.MustCompile(`^([^/]+) / [^/]+ / [^/]+ / ([^/\[]+) \[[^\]]+\] +\(([0-9]{4})(\)|-)`)
+	serialPattern2Re  = regexp.MustCompile(`^([^/]+) / [^/]+ / ([^/\[]+) \[[^\]]+\] +\(([0-9]{4})(\)|-)`)
+	serialPattern3Re  = regexp.MustCompile(`^([^/]+) / ([^/\[]+) \[[^\]]+\] +\(([0-9]{4})(\)|-)`)
+	multSerialRe      = regexp.MustCompile(`^([^/]+) \[[^\]]+\] \(([0-9]{4})(\)|-)`)
+	genBracketFullRe  = regexp.MustCompile(`^([^/]+) / ([^/]+) / ([^/\[]+) \[[^\]]+\] +\(([0-9]{4})(\)|-)`)
+	genBracketShortRe = regexp.MustCompile(`^([^/]+) / ([^/\[]+) \[[^\]]+\] +\(([0-9]{4})(\)|-)`)
+	genSlashFullRe    = regexp.MustCompile(`^([^/]+) / ([^/]+) / ([^/\(]+) \(([0-9]{4})\)`)
+	genSlashShortRe   = regexp.MustCompile(`^([^/\(]+) / ([^/\(]+) \(([0-9]{4})\)`)
+	genNoBracketRe    = regexp.MustCompile(`^([^/\[]+) \[[^\]]+\] +\(([0-9]{4})(\)|-)`)
+	genPlainYearRe    = regexp.MustCompile(`^([^/\(]+) \(([0-9]{4})\)`)
+	singleDigitDateRe = regexp.MustCompile(`^[0-9]\.`)
 )
 
 var categories = []string{"1", "5", "4", "16", "12", "6", "7", "10", "17", "13", "15"}
@@ -124,31 +149,26 @@ func parsePageHTML(host, cat, htmlBody string) []filedb.TorrentDetails {
 		if strings.TrimSpace(row) == "" || !strings.Contains(row, "magnet:?xt=urn") {
 			continue
 		}
-		match := func(pattern string, index ...int) string {
-			idx := 1
-			if len(index) > 0 {
-				idx = index[0]
-			}
-			re := regexp.MustCompile(`(?i)` + pattern)
+		extract := func(re *regexp.Regexp, idx int) string {
 			g := re.FindStringSubmatch(row)
 			if len(g) <= idx {
 				return ""
 			}
 			s := strings.TrimSpace(html.UnescapeString(g[idx]))
 			s = cleanupSpaceRe.ReplaceAllString(strings.ReplaceAll(s, "\u0000", " "), " ")
-			return strings.TrimSpace(strings.ReplaceAll(s, "\u0000", " "))
+			return strings.TrimSpace(s)
 		}
 
-		createTime := parseCreateTime(match(`<td>([^<]+)</td><td(?:[^>]+)?><a class="downgif"`), "02.01.06")
+		createTime := parseCreateTime(extract(createTimeRe, 1), "02.01.06")
 		if createTime.IsZero() {
 			continue
 		}
-		urlPath := match(`<a href="/(torrent/[^"]+)">`)
-		title := match(`<a href="/torrent/[^"]+">([^<]+)</a>`)
-		sidRaw := match(`<span class="green"><img [^>]+>&nbsp;([0-9]+)</span>`)
-		pirRaw := match(`<span class="red">&nbsp;([0-9]+)</span>`)
-		sizeName := match(`<td align="right">([^<]+)</td>`)
-		magnet := match(`href="(magnet:\?xt=[^"]+)"`)
+		urlPath := extract(urlPathRe, 1)
+		title := extract(titleRe, 1)
+		sidRaw := extract(sidRawRe, 1)
+		pirRaw := extract(pirRawRe, 1)
+		sizeName := extract(sizeNameRe, 1)
+		magnet := extract(magnetRe, 1)
 		if urlPath == "" || title == "" || strings.Contains(strings.ToLower(title), "трейлер") || sidRaw == "" || pirRaw == "" || sizeName == "" || magnet == "" {
 			continue
 		}
@@ -247,54 +267,49 @@ func (p *Parser) saveTorrents(torrents []filedb.TorrentDetails) (int, int, int, 
 func parseTitle(cat, title string) (string, string, int) {
 	switch cat {
 	case "1", "17":
-		if m := regexp.MustCompile(`^([^/]+) / ([^/]+) / ([^/\(]+) \(([0-9]{4})\)`).FindStringSubmatch(title); len(m) == 5 {
+		if m := movieFullRe.FindStringSubmatch(title); len(m) == 5 {
 			return strings.TrimSpace(m[1]), strings.TrimSpace(m[3]), atoi(m[4])
 		}
-		if m := regexp.MustCompile(`^([^/\(]+) / ([^/\(]+) \(([0-9]{4})\)`).FindStringSubmatch(title); len(m) == 4 {
+		if m := movieShortRe.FindStringSubmatch(title); len(m) == 4 {
 			return strings.TrimSpace(m[1]), strings.TrimSpace(m[2]), atoi(m[3])
 		}
 	case "5":
-		if m := regexp.MustCompile(`^([^/\(]+) \(([0-9]{4})\)`).FindStringSubmatch(title); len(m) == 3 {
+		if m := musicYearRe.FindStringSubmatch(title); len(m) == 3 {
 			return strings.TrimSpace(m[1]), "", atoi(m[2])
 		}
 	case "4":
-		patterns := []string{
-			`^([^/]+) / [^/]+ / [^/]+ / ([^/\[]+) \[[^\]]+\] +\(([0-9]{4})(\)|-)`,
-			`^([^/]+) / [^/]+ / ([^/\[]+) \[[^\]]+\] +\(([0-9]{4})(\)|-)`,
-			`^([^/]+) / ([^/\[]+) \[[^\]]+\] +\(([0-9]{4})(\)|-)`,
-		}
-		for _, pat := range patterns {
-			if m := regexp.MustCompile(pat).FindStringSubmatch(title); len(m) >= 4 {
+		for _, re := range []*regexp.Regexp{serialPattern1Re, serialPattern2Re, serialPattern3Re} {
+			if m := re.FindStringSubmatch(title); len(m) >= 4 {
 				return strings.TrimSpace(m[1]), strings.TrimSpace(m[2]), atoi(m[3])
 			}
 		}
 	case "16":
-		if m := regexp.MustCompile(`^([^/]+) \[[^\]]+\] \(([0-9]{4})(\)|-)`).FindStringSubmatch(title); len(m) >= 3 {
+		if m := multSerialRe.FindStringSubmatch(title); len(m) >= 3 {
 			return strings.TrimSpace(m[1]), "", atoi(m[2])
 		}
 	case "12", "6", "7", "10", "15", "13":
 		if strings.Contains(title, " / ") {
 			if strings.Contains(title, "[") && strings.Contains(title, "]") {
-				if m := regexp.MustCompile(`^([^/]+) / ([^/]+) / ([^/\[]+) \[[^\]]+\] +\(([0-9]{4})(\)|-)`).FindStringSubmatch(title); len(m) >= 5 {
+				if m := genBracketFullRe.FindStringSubmatch(title); len(m) >= 5 {
 					return strings.TrimSpace(m[1]), strings.TrimSpace(m[3]), atoi(m[4])
 				}
-				if m := regexp.MustCompile(`^([^/]+) / ([^/\[]+) \[[^\]]+\] +\(([0-9]{4})(\)|-)`).FindStringSubmatch(title); len(m) >= 4 {
+				if m := genBracketShortRe.FindStringSubmatch(title); len(m) >= 4 {
 					return strings.TrimSpace(m[1]), strings.TrimSpace(m[2]), atoi(m[3])
 				}
 			} else {
-				if m := regexp.MustCompile(`^([^/]+) / ([^/]+) / ([^/\(]+) \(([0-9]{4})\)`).FindStringSubmatch(title); len(m) == 5 {
+				if m := genSlashFullRe.FindStringSubmatch(title); len(m) == 5 {
 					return strings.TrimSpace(m[1]), strings.TrimSpace(m[3]), atoi(m[4])
 				}
-				if m := regexp.MustCompile(`^([^/\(]+) / ([^/\(]+) \(([0-9]{4})\)`).FindStringSubmatch(title); len(m) == 4 {
+				if m := genSlashShortRe.FindStringSubmatch(title); len(m) == 4 {
 					return strings.TrimSpace(m[1]), strings.TrimSpace(m[2]), atoi(m[3])
 				}
 			}
 		} else {
 			if strings.Contains(title, "[") && strings.Contains(title, "]") {
-				if m := regexp.MustCompile(`^([^/\[]+) \[[^\]]+\] +\(([0-9]{4})(\)|-)`).FindStringSubmatch(title); len(m) >= 3 {
+				if m := genNoBracketRe.FindStringSubmatch(title); len(m) >= 3 {
 					return strings.TrimSpace(m[1]), "", atoi(m[2])
 				}
-			} else if m := regexp.MustCompile(`^([^/\(]+) \(([0-9]{4})\)`).FindStringSubmatch(title); len(m) == 3 {
+			} else if m := genPlainYearRe.FindStringSubmatch(title); len(m) == 3 {
 				return strings.TrimSpace(m[1]), "", atoi(m[2])
 			}
 		}
@@ -382,12 +397,18 @@ func fileTime(t filedb.TorrentDetails) time.Time {
 
 func parseCreateTime(line, layout string) time.Time {
 	repl := strings.NewReplacer(
+		// abbreviated with period (original C# format)
 		" янв. ", ".01.", " февр. ", ".02.", " март ", ".03.", " апр. ", ".04.", " май ", ".05.", " июнь ", ".06.", " июль ", ".07.", " авг. ", ".08.", " сент. ", ".09.", " окт. ", ".10.", " нояб. ", ".11.", " дек. ", ".12.",
+		// abbreviated WITHOUT period (rutor actual format: "14 Мар 26")
+		" янв ", ".01.", " фев ", ".02.", " мар ", ".03.", " апр ", ".04.", " май ", ".05.", " июн ", ".06.", " июл ", ".07.", " авг ", ".08.", " сен ", ".09.", " окт ", ".10.", " ноя ", ".11.", " дек ", ".12.",
+		// English full
 		" january ", ".01.", " february ", ".02.", " march ", ".03.", " april ", ".04.", " may ", ".05.", " june ", ".06.", " july ", ".07.", " august ", ".08.", " september ", ".09.", " october ", ".10.", " november ", ".11.", " december ", ".12.",
+		// English abbreviated
+		" jan ", ".01.", " feb ", ".02.", " mar ", ".03.", " apr ", ".04.", " jun ", ".06.", " jul ", ".07.", " aug ", ".08.", " sep ", ".09.", " oct ", ".10.", " nov ", ".11.", " dec ", ".12.",
 	)
 	line = repl.Replace(" " + strings.ToLower(strings.TrimSpace(line)) + " ")
 	line = strings.TrimSpace(line)
-	if matched, _ := regexp.MatchString(`^[0-9]\.`, line); matched {
+	if singleDigitDateRe.MatchString(line) {
 		line = "0" + line
 	}
 	tm, _ := time.ParseInLocation(layout, line, time.Local)

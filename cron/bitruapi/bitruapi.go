@@ -514,6 +514,9 @@ func htmlDecode(s string) string {
 }
 
 func asString(v any) string {
+	if v == nil {
+		return ""
+	}
 	if s, ok := v.(string); ok {
 		return s
 	}

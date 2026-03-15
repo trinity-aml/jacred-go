@@ -813,6 +813,8 @@ func asString(v any) string {
 		return x
 	case fmt.Stringer:
 		return x.String()
+	case nil:
+		return ""
 	default:
 		if v == nil {
 			return ""

@@ -8,7 +8,7 @@ apikey: ""
 mergeduplicates: true
 logParsers: false
 Rutor:
-  host: https://rutor.is
+  host: http://6tor.org
   alias: ""
   useproxy: false
   reqMinute: 8
@@ -17,7 +17,7 @@ Rutor:
 
 Megapeer:
   host: https://megapeer.vip
-  cookie: ""
+  cookie: "cf_clearance=wGqavscYP4uxfzqS36mr3fgWXKdS5WCpTg8ABqhdrWs-1770640377-1.2.1.1-naR7DlV0NyPJl.4aXRAWYFYjI2_te8ndL6FjysA9m_lOckYFXcG_SjfP9RP6DJmfG22WsXPwykWOd5Iys6ov9c0CD9Qajd3IrO7M___Lbz2hWd06wWXV0oVSd7OEj39coKQ0FIwnVwmhPFANmNX3f3F.AdE7zlTC5KXzfw4uGWB8LqO06cTgTQwnFqBQCFiBUCkifjzIJ9nZgXs8YDxpW1hjY6F8u1Ye4cgXxCGTIPs; ecceebe695_blockTimer=1; ecceebe695_delayCount=2; u_ecceebe695=1;"
   alias: ""
   useproxy: false
   reqMinute: 8
@@ -32,8 +32,8 @@ TorrentBy:
   parseDelay: 7000
   log: false
   login:
-    u: ""
-    p: ""
+    u: "trinity1980"
+    p: "maksim1980"
     
 Kinozal:
   host: https://kinozal.tv
@@ -42,8 +42,8 @@ Kinozal:
   parseDelay: 7000
   log: false
   login:
-    u: ""
-    p: ""
+    u: "trinity1980"
+    p: "maksim1980"
 
 NNMClub:
   host: https://nnmclub.to
@@ -53,8 +53,8 @@ NNMClub:
   parseDelay: 7000
   log: false
   login:
-    u: ""
-    p: ""
+    u: "trinity1980"
+    p: "maksim1980"
     
 Bitru:
   host: https://bitru.org
@@ -71,8 +71,8 @@ Toloka:
   parseDelay: 7000
   log: false
   login:
-    u: ""
-    p: ""
+    u: "trinity1980"
+    p: "maksim1980"
 
 Mazepa:
   host: https://mazepa.to
@@ -81,8 +81,8 @@ Mazepa:
   parseDelay: 7000
   log: false
   login:
-    u: ""
-    p: ""
+    u: "trinity1980"
+    p: "maksim1980"
 
 Rutracker:
   host: https://rutracker.org
@@ -92,8 +92,8 @@ Rutracker:
   parseDelay: 7000
   log: false
   login:
-    u: ""
-    p: ""
+    u: "trinity1980"
+    p: "maksim1980"
 
 Selezen:
   host: https://selezen.top
@@ -103,8 +103,8 @@ Selezen:
   parseDelay: 7000
   log: false
   login:
-    u: ""
-    p: ""
+    u: "trinity1980"
+    p: "maksim1980"
 
 Anilibria:
   host: https://aniliberty.top
@@ -133,12 +133,12 @@ Animelayer:
   reqMinute: 8
   parseDelay: 7000
   login:
-    u: ""
-    p: ""
+    u: "trinity1980"
+    p: "maksim1980"
 
 Anifilm:
   host: https://anifilm.pro
-  cookie: ""
+  cookie: "_ga_TLYKZQ27X5=GS2.1.s1773491057$o3$g0$t1773491060$j57$l0$h0; _ga=GA1.1.1530140171.1772790006; _ym_d=1772566290; _ym_isad=1; _ym_uid=1772566290486822579; cf_clearance=zyWG1c7OjNdJtdWfcdnhsf9xA27PTNChGsoOdaVKzRw-1773491058-1.2.1.1-BTbM.CWmt6rqK3tt0cb6VwIy6VtzL11IXC59Zt91a5LVVaQ6iP9FaPlKpyadyS_wt3Ahpd1fcvRGVm8t.kSNocHz2oNaAghzHR2xYV0t0MGm4gJZGEBVu26PTViw3gF27RM6sVzhG9cZKuvwNlplZgzKBxEK.nRezP4y0PXZOn8AiZpsbN_Ij.Tk7r2OATU_0Vmc_slpLm0WNhQEhYh3j01zzRNXac3wUNThXW5PTabaa.80KffgjjuhD4RnpB8y; PHPSESSID=026si9k0smu1l5sdg7a1p0f2se; YII_CSRF_TOKEN=THZTZXVXYld0NzJRRGxXUUpfSlhBMGEyblN4MnREc2grU-oGlOWRYbH3CyCs_nsZSgExYx_dq-5jNAWMZipGtQ%3D%3D;"
   alias: ""
   useproxy: false
   reqMinute: 8
@@ -158,12 +158,12 @@ Baibako:
   parseDelay: 7000
   log: false
   login:
-    u: ""
-    p: ""
+    u: "trinity1980"
+    p: "maksim1980"
 
 Lostfilm:
   host: https://www.lostfilm.tv
-  cookie: ""
+  cookie: "lf_loyal_person=1; lf_session=647e664730897efd66381589fcd7d454.701975; lf_udv=9389f928b3a5c0892da4567c353844ee; PHPSESSID=vd57hh56smvpv9jh0pop3cp7u4;"
   useproxy: false
   reqMinute: 8
   parseDelay: 7000

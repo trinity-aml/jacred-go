@@ -535,6 +535,8 @@ func toString(v any) string {
 	switch s := v.(type) {
 	case string:
 		return s
+	case nil:
+		return ""
 	default:
 		return fmt.Sprint(v)
 	}
