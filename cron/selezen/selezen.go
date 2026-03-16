@@ -331,7 +331,14 @@ func (p *Parser) takeLogin(ctx context.Context) (string, error) {
 	req.Header.Set("Referer", host+"/")
 	req.Header.Set("Origin", host)
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	resp, err := p.Client.Do(req)
+	// Use separate client with redirect disabled to capture Set-Cookie from 302
+	loginClient := &http.Client{
+		Timeout: 20 * time.Second,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	resp, err := loginClient.Do(req)
 	if err != nil {
 		return "", err
 	}

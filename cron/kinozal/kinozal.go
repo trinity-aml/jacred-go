@@ -99,6 +99,15 @@ func (p *Parser) Parse(ctx context.Context, page int) (ParseResult, error) {
 	if isDisabled(p.Config.DisableTrackers, trackerName) {
 		return ParseResult{Status: "disabled"}, nil
 	}
+	// Login before parsing — resolveMagnet requires auth
+	if p.getCookie() == "" {
+		if err := p.takeLogin(ctx); err != nil {
+			return ParseResult{Status: "login error: " + err.Error()}, nil
+		}
+		if p.getCookie() == "" {
+			return ParseResult{Status: "login failed"}, nil
+		}
+	}
 	res := ParseResult{Status: "ok", PerCategory: map[string]int{}}
 	for _, cat := range parseCats {
 		items, err := p.parsePage(ctx, cat, page, "")
@@ -123,6 +132,9 @@ func (p *Parser) Parse(ctx context.Context, page int) (ParseResult, error) {
 }
 
 func (p *Parser) UpdateTasksParse(ctx context.Context) (map[string]map[string][]Task, error) {
+	if p.getCookie() == "" {
+		_ = p.takeLogin(ctx)
+	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.tasks == nil {
@@ -166,6 +178,9 @@ func (p *Parser) UpdateTasksParse(ctx context.Context) (map[string]map[string][]
 }
 
 func (p *Parser) ParseAllTask(ctx context.Context) (string, error) {
+	if p.getCookie() == "" {
+		_ = p.takeLogin(ctx)
+	}
 	p.mu.Lock()
 	if p.allWork {
 		p.mu.Unlock()
@@ -226,6 +241,9 @@ func (p *Parser) ParseLatest(ctx context.Context, pages int) (string, error) {
 		return "work", nil
 	}
 	defer p.latestMu.Unlock()
+	if p.getCookie() == "" {
+		_ = p.takeLogin(ctx)
+	}
 	if pages <= 0 {
 		pages = 5
 	}
@@ -514,7 +532,14 @@ func (p *Parser) takeLogin(ctx context.Context) error {
 	}
 	setKinozalHeaders(req, requestHost(p.Config.Kinozal), "")
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	resp, err := p.Client.Do(req)
+	// Use separate client with redirect disabled to capture Set-Cookie from 302
+	loginClient := &http.Client{
+		Timeout: 20 * time.Second,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	resp, err := loginClient.Do(req)
 	if err != nil {
 		return err
 	}
