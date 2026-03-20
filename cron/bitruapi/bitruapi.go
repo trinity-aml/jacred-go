@@ -64,12 +64,48 @@ type apiItem struct {
 }
 
 type torrentInfo struct {
-	ID       int64  `json:"id"`
-	Size     int64  `json:"size"`
-	Added    int64  `json:"added"`
-	Seeders  int    `json:"seeders"`
-	Leechers int    `json:"leechers"`
-	File     string `json:"file"`
+	ID       flexInt64 `json:"id"`
+	Size     flexInt64 `json:"size"`
+	Added    flexInt64 `json:"added"`
+	Seeders  flexInt   `json:"seeders"`
+	Leechers flexInt   `json:"leechers"`
+	File     string    `json:"file"`
+}
+
+// flexInt64 unmarshals from both JSON number and string
+type flexInt64 int64
+
+func (f *flexInt64) UnmarshalJSON(b []byte) error {
+	s := strings.Trim(string(b), `"`)
+	if s == "" || s == "null" {
+		*f = 0
+		return nil
+	}
+	n, err := strconv.ParseInt(s, 10, 64)
+	if err != nil {
+		*f = 0
+		return nil
+	}
+	*f = flexInt64(n)
+	return nil
+}
+
+// flexInt unmarshals from both JSON number and string
+type flexInt int
+
+func (f *flexInt) UnmarshalJSON(b []byte) error {
+	s := strings.Trim(string(b), `"`)
+	if s == "" || s == "null" {
+		*f = 0
+		return nil
+	}
+	n, err := strconv.Atoi(s)
+	if err != nil {
+		*f = 0
+		return nil
+	}
+	*f = flexInt(n)
+	return nil
 }
 
 type infoBlock struct {
@@ -254,17 +290,17 @@ func (p *Parser) mapToTorrentDetails(item *apiItem) filedb.TorrentDetails {
 	if strings.TrimSpace(item.Template.Other) != "" {
 		titlePart += " | " + strings.TrimSpace(item.Template.Other)
 	}
-	detailURL := strings.TrimRight(p.Config.Bitru.Host, "/") + "/details.php?id=" + strconv.FormatInt(item.Torrent.ID, 10)
-	createTime := time.Unix(item.Torrent.Added, 0).UTC()
+	detailURL := strings.TrimRight(p.Config.Bitru.Host, "/") + "/details.php?id=" + strconv.FormatInt(int64(item.Torrent.ID), 10)
+	createTime := time.Unix(int64(item.Torrent.Added), 0).UTC()
 	res := filedb.TorrentDetails{
 		"trackerName": "bitru",
 		"types":       types,
 		"url":         detailURL,
 		"title":       htmlDecode(strings.TrimSpace(titlePart)),
-		"sid":         item.Torrent.Seeders,
-		"pir":         item.Torrent.Leechers,
+		"sid":         int(item.Torrent.Seeders),
+		"pir":         int(item.Torrent.Leechers),
 		"size":        float64(item.Torrent.Size),
-		"sizeName":    formatSize(item.Torrent.Size),
+		"sizeName":    formatSize(int64(item.Torrent.Size)),
 		"createTime":  createTime.Format(time.RFC3339Nano),
 		"name":        name,
 		"relased":     relased,
