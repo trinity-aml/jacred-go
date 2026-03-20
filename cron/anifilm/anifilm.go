@@ -4,9 +4,7 @@ import (
 	"context"
 	"fmt"
 	"html"
-	"io"
 	"log"
-	"net/http"
 	"regexp"
 	"strconv"
 	"strings"
@@ -47,7 +45,7 @@ type Parser struct {
 	Config  app.Config
 	DB      *filedb.DB
 	DataDir string
-	Client  *http.Client
+	CF      *core.CFClient
 	mu      sync.Mutex
 	working bool
 }
@@ -58,7 +56,11 @@ type ParseResult struct {
 }
 
 func New(cfg app.Config, db *filedb.DB, dataDir string) *Parser {
-	return &Parser{Config: cfg, DB: db, DataDir: dataDir, Client: &http.Client{Timeout: 30 * time.Second}}
+	cf, err := core.NewCFClient()
+	if err != nil {
+		log.Printf("anifilm: CFClient init error: %v", err)
+	}
+	return &Parser{Config: cfg, DB: db, DataDir: dataDir, CF: cf}
 }
 
 func (p *Parser) Parse(ctx context.Context, fullparse bool) (ParseResult, error) {
@@ -356,50 +358,34 @@ func (p *Parser) saveTorrents(ctx context.Context, host string, torrents []filed
 	return added, updated, skipped, failed, nil
 }
 
-func setBrowserHeaders(req *http.Request, cookie, referer string) {
-	req.Header.Set("User-Agent", "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:148.0) Gecko/20100101 Firefox/148.0")
-	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-	req.Header.Set("Accept-Language", "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7")
-	req.Header.Set("Cache-Control", "no-cache")
-	req.Header.Set("Sec-Fetch-Dest", "document")
-	req.Header.Set("Sec-Fetch-Mode", "navigate")
-	req.Header.Set("Sec-Fetch-Site", "none")
-	req.Header.Set("Upgrade-Insecure-Requests", "1")
-	if referer != "" {
-		req.Header.Set("Referer", referer)
+func (p *Parser) httpGet(_ context.Context, rawURL, referer string) (string, error) {
+	if p.CF == nil {
+		return "", fmt.Errorf("anifilm: CFClient not initialized")
 	}
-	if cookie != "" {
-		req.Header.Set("Cookie", cookie)
-	}
-}
-
-func (p *Parser) httpGet(ctx context.Context, rawURL, referer string) (string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	cookie := strings.TrimSpace(p.Config.Anifilm.Cookie)
+	body, status, err := p.CF.Get(rawURL, cookie, referer)
 	if err != nil {
 		return "", err
 	}
-	setBrowserHeaders(req, strings.TrimSpace(p.Config.Anifilm.Cookie), referer)
-	resp, err := p.Client.Do(req)
-	if err != nil {
-		return "", err
+	if status == 403 {
+		return "", fmt.Errorf("anifilm: 403 Forbidden (cookie expired?)")
 	}
-	defer resp.Body.Close()
-	b, err := io.ReadAll(resp.Body)
-	return string(b), err
+	return body, nil
 }
 
-func (p *Parser) httpDownload(ctx context.Context, rawURL, referer string) ([]byte, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+func (p *Parser) httpDownload(_ context.Context, rawURL, referer string) ([]byte, error) {
+	if p.CF == nil {
+		return nil, fmt.Errorf("anifilm: CFClient not initialized")
+	}
+	cookie := strings.TrimSpace(p.Config.Anifilm.Cookie)
+	data, status, err := p.CF.Download(rawURL, cookie, referer)
 	if err != nil {
 		return nil, err
 	}
-	setBrowserHeaders(req, strings.TrimSpace(p.Config.Anifilm.Cookie), referer)
-	resp, err := p.Client.Do(req)
-	if err != nil {
-		return nil, err
+	if status == 403 {
+		return nil, fmt.Errorf("anifilm: 403 Forbidden (cookie expired?)")
 	}
-	defer resp.Body.Close()
-	return io.ReadAll(resp.Body)
+	return data, nil
 }
 
 func asString(v any) string {
