@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"html"
 	"io"
+	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -63,11 +65,14 @@ type Parser struct {
 	Client  *http.Client
 	loc     *time.Location
 
-	mu       sync.Mutex
-	working  bool
-	allWork  bool
-	latestMu sync.Mutex
-	tasks    map[string][]Task
+	mu               sync.Mutex
+	working          bool
+	allWork          bool
+	latestMu         sync.Mutex
+	tasks            map[string][]Task
+	cookieMu         sync.Mutex
+	dynCookie        string
+	lastLoginAttempt time.Time
 }
 
 type ParseResult struct {
@@ -102,6 +107,7 @@ func (p *Parser) Parse(ctx context.Context, page int) (ParseResult, error) {
 	if strings.TrimSpace(p.Config.TorrentBy.Host) == "" {
 		return ParseResult{Status: "config missing"}, nil
 	}
+	p.ensureLogin(ctx)
 
 	res := ParseResult{Status: "ok", PerCategory: map[string]int{}}
 	for _, cat := range categories {
@@ -127,6 +133,7 @@ func (p *Parser) Parse(ctx context.Context, page int) (ParseResult, error) {
 }
 
 func (p *Parser) UpdateTasksParse(ctx context.Context) (map[string][]Task, error) {
+	p.ensureLogin(ctx)
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.tasks == nil {
@@ -165,6 +172,7 @@ func (p *Parser) UpdateTasksParse(ctx context.Context) (map[string][]Task, error
 }
 
 func (p *Parser) ParseAllTask(ctx context.Context) (string, error) {
+	p.ensureLogin(ctx)
 	p.mu.Lock()
 	if p.allWork {
 		p.mu.Unlock()
@@ -225,6 +233,7 @@ func (p *Parser) ParseLatest(ctx context.Context, pages int) (string, error) {
 		return "work", nil
 	}
 	defer p.latestMu.Unlock()
+	p.ensureLogin(ctx)
 	if pages <= 0 {
 		pages = 5
 	}
@@ -499,6 +508,13 @@ func cloneTasks(in map[string][]Task) map[string][]Task {
 }
 
 func (p *Parser) cookie() string {
+	p.cookieMu.Lock()
+	if strings.TrimSpace(p.dynCookie) != "" {
+		c := p.dynCookie
+		p.cookieMu.Unlock()
+		return c
+	}
+	p.cookieMu.Unlock()
 	if strings.TrimSpace(p.Config.TorrentBy.Cookie) != "" {
 		return strings.TrimSpace(p.Config.TorrentBy.Cookie)
 	}
@@ -507,6 +523,70 @@ func (p *Parser) cookie() string {
 		return ""
 	}
 	return strings.TrimSpace(string(b))
+}
+
+func (p *Parser) takeLogin(ctx context.Context) error {
+	p.cookieMu.Lock()
+	if time.Since(p.lastLoginAttempt) < 2*time.Minute {
+		p.cookieMu.Unlock()
+		return nil
+	}
+	p.lastLoginAttempt = time.Now()
+	p.cookieMu.Unlock()
+
+	host := strings.TrimRight(p.Config.TorrentBy.Host, "/")
+	if host == "" || strings.TrimSpace(p.Config.TorrentBy.Login.U) == "" {
+		return fmt.Errorf("torrentby: no host or login configured")
+	}
+	log.Printf("torrentby: attempting login to %s as %s", host, p.Config.TorrentBy.Login.U)
+
+	form := url.Values{}
+	form.Set("login_username", p.Config.TorrentBy.Login.U)
+	form.Set("login_password", p.Config.TorrentBy.Login.P)
+	form.Set("login", "Вход")
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, host+"/login.php", strings.NewReader(form.Encode()))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+
+	loginClient := &http.Client{
+		Timeout: 20 * time.Second,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	resp, err := loginClient.Do(req)
+	if err != nil {
+		log.Printf("torrentby: login error: %v", err)
+		return err
+	}
+	defer resp.Body.Close()
+	log.Printf("torrentby: login response status=%d", resp.StatusCode)
+
+	var parts []string
+	for _, line := range resp.Header.Values("Set-Cookie") {
+		parts = append(parts, strings.SplitN(line, ";", 2)[0])
+	}
+	cookieStr := strings.Join(parts, "; ")
+	if strings.Contains(cookieStr, "bb_") || strings.Contains(cookieStr, "sid") || strings.Contains(cookieStr, "uid") {
+		p.cookieMu.Lock()
+		p.dynCookie = cookieStr
+		p.cookieMu.Unlock()
+		log.Printf("torrentby: login OK")
+		return nil
+	}
+	log.Printf("torrentby: login FAILED — cookies: %s", cookieStr)
+	return fmt.Errorf("torrentby: login failed")
+}
+
+func (p *Parser) ensureLogin(ctx context.Context) {
+	if p.cookie() != "" {
+		return
+	}
+	_ = p.takeLogin(ctx)
 }
 
 func parseTaskTime(s string, loc *time.Location) time.Time {

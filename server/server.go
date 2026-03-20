@@ -376,7 +376,7 @@ func (s *Server) handleCronAnimelayerParse(w http.ResponseWriter, r *http.Reques
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	res, err := s.AnimelayerParser.Parse(r.Context(), parseOptionalInt(r.URL.Query(), "page", 1))
+	res, err := s.AnimelayerParser.Parse(r.Context(), parseOptionalInt(r.URL.Query(), "maxpage", 1))
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": res.Status})
 		return

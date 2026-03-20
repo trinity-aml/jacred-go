@@ -24,6 +24,19 @@ func TorrentBytesToMagnet(data []byte) string {
 	return buildTorrentMagnet(hex.EncodeToString(h[:]), name, announces)
 }
 
+// TorrentBytesToMagnetErr is like TorrentBytesToMagnet but also returns the error.
+func TorrentBytesToMagnetErr(data []byte) (string, error) {
+	infoRaw, name, announces, err := parseTorrentMeta(data)
+	if err != nil {
+		return "", err
+	}
+	if len(infoRaw) == 0 {
+		return "", errors.New("no info dict found")
+	}
+	h := sha1.Sum(infoRaw)
+	return buildTorrentMagnet(hex.EncodeToString(h[:]), name, announces), nil
+}
+
 func buildTorrentMagnet(hexHash, name string, announces []string) string {
 	if strings.TrimSpace(hexHash) == "" {
 		return ""
@@ -127,7 +140,8 @@ func torrentNameFromInfo(infoRaw []byte) string {
 
 func (p *bparser) parseAnnounceList() ([]string, error) {
 	if p.peek() != 'l' {
-		return nil, errors.New("announce-list not a list")
+		// Some torrents have announce-list as empty string "0:" or other non-list value — skip gracefully
+		return nil, p.skipValue()
 	}
 	p.i++
 	var out []string

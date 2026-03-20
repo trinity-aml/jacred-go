@@ -506,6 +506,10 @@ func (p *Parser) fetchBrowse(ctx context.Context, cat string, page int) (string,
 	if err != nil {
 		return "", err
 	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+	if cookie := strings.TrimSpace(p.Config.Bitru.Cookie); cookie != "" {
+		req.Header.Set("Cookie", cookie)
+	}
 	resp, err := p.Client.Do(req)
 	if err != nil {
 		return "", err
@@ -526,8 +530,12 @@ func (p *Parser) download(ctx context.Context, rawURL, referer string) ([]byte, 
 	if err != nil {
 		return nil, err
 	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
 	if strings.TrimSpace(referer) != "" {
 		req.Header.Set("Referer", referer)
+	}
+	if cookie := strings.TrimSpace(p.Config.Bitru.Cookie); cookie != "" {
+		req.Header.Set("Cookie", cookie)
 	}
 	resp, err := p.Client.Do(req)
 	if err != nil {

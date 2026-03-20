@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"html"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -64,7 +65,7 @@ func New(cfg app.Config, db *filedb.DB) *Parser {
 	return &Parser{Config: cfg, DB: db, Client: &http.Client{Timeout: 30 * time.Second}}
 }
 
-func (p *Parser) Parse(ctx context.Context, page int) (ParseResult, error) {
+func (p *Parser) Parse(ctx context.Context, maxpage int) (ParseResult, error) {
 	p.mu.Lock()
 	if p.working {
 		p.mu.Unlock()
@@ -80,14 +81,35 @@ func (p *Parser) Parse(ctx context.Context, page int) (ParseResult, error) {
 	if isDisabled(p.Config.DisableTrackers, trackerName) {
 		return ParseResult{Status: "disabled"}, nil
 	}
-	if page <= 0 {
-		page = 1
+	if maxpage <= 0 {
+		maxpage = 1
 	}
-	parsed, added, updated, skipped, failed, err := p.parsePage(ctx, page)
-	if err != nil {
-		return ParseResult{Status: "error", Parsed: parsed, Added: added, Updated: updated, Skipped: skipped, Failed: failed}, err
+	res := ParseResult{Status: "ok"}
+	for page := 1; page <= maxpage; page++ {
+		parsed, added, updated, skipped, failed, err := p.parsePage(ctx, page)
+		res.Parsed += parsed
+		res.Added += added
+		res.Updated += updated
+		res.Skipped += skipped
+		res.Failed += failed
+		if err != nil {
+			log.Printf("animelayer: page %d/%d error: %v", page, maxpage, err)
+			res.Status = "error"
+			return res, err
+		}
+		log.Printf("animelayer: page %d/%d parsed=%d added=%d skipped=%d failed=%d", page, maxpage, parsed, added, skipped, failed)
+		if parsed == 0 {
+			break // no more results
+		}
+		if page < maxpage && p.Config.Animelayer.ParseDelay > 0 {
+			select {
+			case <-ctx.Done():
+				return res, ctx.Err()
+			case <-time.After(time.Duration(p.Config.Animelayer.ParseDelay) * time.Millisecond):
+			}
+		}
 	}
-	return ParseResult{Status: "ok", Parsed: parsed, Added: added, Updated: updated, Skipped: skipped, Failed: failed}, nil
+	return res, nil
 }
 
 func (p *Parser) parsePage(ctx context.Context, page int) (int, int, int, int, int, error) {
@@ -101,13 +123,15 @@ func (p *Parser) parsePage(ctx context.Context, page int) (int, int, int, int, i
 	}
 	rawURL := baseHost + "/torrents/anime/"
 	if page > 1 {
-		rawURL = fmt.Sprintf("%s/torrents/anime/page/%d/", baseHost, page)
+		rawURL = fmt.Sprintf("%s/torrents/anime/?page=%d", baseHost, page)
 	}
 	body, err := p.fetchHTML(ctx, rawURL, cookie)
 	if err != nil {
+		log.Printf("animelayer: fetchHTML error page=%d url=%s err=%v", page, rawURL, err)
 		return 0, 0, 0, 0, 0, err
 	}
 	if body == "" || !strings.Contains(body, `id="wrapper"`) {
+		log.Printf("animelayer: page %d empty or no wrapper, url=%s bodyLen=%d", page, rawURL, len(body))
 		return 0, 0, 0, 0, 0, nil
 	}
 

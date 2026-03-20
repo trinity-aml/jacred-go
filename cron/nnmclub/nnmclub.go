@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"html"
 	"io"
+	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -58,11 +60,14 @@ type Parser struct {
 	Client  *http.Client
 	loc     *time.Location
 
-	mu      sync.Mutex
-	working bool
-	allWork bool
-	latest  sync.Mutex
-	tasks   map[string][]Task
+	mu               sync.Mutex
+	working          bool
+	allWork          bool
+	latest           sync.Mutex
+	tasks            map[string][]Task
+	cookieMu         sync.Mutex
+	cookie           string
+	lastLoginAttempt time.Time
 }
 
 type ParseResult struct {
@@ -81,6 +86,84 @@ func New(cfg app.Config, db *filedb.DB, dataDir string) *Parser {
 	return p
 }
 
+func (p *Parser) getCookie() string {
+	p.cookieMu.Lock()
+	defer p.cookieMu.Unlock()
+	if strings.TrimSpace(p.cookie) != "" {
+		return p.cookie
+	}
+	if strings.TrimSpace(p.Config.NNMClub.Cookie) != "" {
+		return strings.TrimSpace(p.Config.NNMClub.Cookie)
+	}
+	return ""
+}
+
+func (p *Parser) takeLogin(ctx context.Context) error {
+	p.cookieMu.Lock()
+	if time.Since(p.lastLoginAttempt) < 2*time.Minute {
+		p.cookieMu.Unlock()
+		return nil
+	}
+	p.lastLoginAttempt = time.Now()
+	p.cookieMu.Unlock()
+
+	host := strings.TrimRight(p.Config.NNMClub.Host, "/")
+	if host == "" || strings.TrimSpace(p.Config.NNMClub.Login.U) == "" {
+		return fmt.Errorf("nnmclub: no host or login configured")
+	}
+	log.Printf("nnmclub: attempting login to %s as %s", host, p.Config.NNMClub.Login.U)
+
+	form := url.Values{}
+	form.Set("username", p.Config.NNMClub.Login.U)
+	form.Set("password", p.Config.NNMClub.Login.P)
+	form.Set("autologin", "on")
+	form.Set("redirect", "")
+	form.Set("login", "\xc2\xf5\xee\xe4") // "Вход" in CP1251
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, host+"/forum/login.php", strings.NewReader(form.Encode()))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+
+	loginClient := &http.Client{
+		Timeout: 20 * time.Second,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	resp, err := loginClient.Do(req)
+	if err != nil {
+		log.Printf("nnmclub: login error: %v", err)
+		return err
+	}
+	defer resp.Body.Close()
+	log.Printf("nnmclub: login response status=%d", resp.StatusCode)
+
+	var parts []string
+	for _, line := range resp.Header.Values("Set-Cookie") {
+		parts = append(parts, strings.SplitN(line, ";", 2)[0])
+	}
+	cookieStr := strings.Join(parts, "; ")
+	if strings.Contains(cookieStr, "phpbb2mysql") || strings.Contains(cookieStr, "sid=") {
+		p.cookieMu.Lock()
+		p.cookie = cookieStr
+		p.cookieMu.Unlock()
+		log.Printf("nnmclub: login OK")
+		return nil
+	}
+	log.Printf("nnmclub: login FAILED — cookies: %s", cookieStr)
+	return fmt.Errorf("nnmclub: login failed")
+}
+
+func (p *Parser) ensureLogin(ctx context.Context) {
+	if p.getCookie() != "" {
+		return
+	}
+	_ = p.takeLogin(ctx)
+}
+
 func (p *Parser) Parse(ctx context.Context, page int) (ParseResult, error) {
 	p.mu.Lock()
 	if p.working {
@@ -94,6 +177,7 @@ func (p *Parser) Parse(ctx context.Context, page int) (ParseResult, error) {
 	if isDisabled(p.Config.DisableTrackers, trackerName) {
 		return ParseResult{Status: "disabled"}, nil
 	}
+	p.ensureLogin(ctx)
 	res := ParseResult{Status: "ok", PerCategory: map[string]int{}}
 	for _, cat := range categories {
 		items, err := p.parsePage(ctx, cat, page)
@@ -118,6 +202,7 @@ func (p *Parser) Parse(ctx context.Context, page int) (ParseResult, error) {
 }
 
 func (p *Parser) UpdateTasksParse(ctx context.Context) (map[string][]Task, error) {
+	p.ensureLogin(ctx)
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.tasks == nil {
@@ -156,6 +241,7 @@ func (p *Parser) UpdateTasksParse(ctx context.Context) (map[string][]Task, error
 }
 
 func (p *Parser) ParseAllTask(ctx context.Context) (string, error) {
+	p.ensureLogin(ctx)
 	p.mu.Lock()
 	if p.allWork {
 		p.mu.Unlock()
@@ -211,6 +297,7 @@ func (p *Parser) ParseLatest(ctx context.Context, pages int) (string, error) {
 		return "work", nil
 	}
 	defer p.latest.Unlock()
+	p.ensureLogin(ctx)
 	if pages <= 0 {
 		pages = 5
 	}
@@ -278,7 +365,7 @@ func (p *Parser) parsePage(ctx context.Context, cat string, page int) ([]filedb.
 	if err != nil {
 		return nil, err
 	}
-	if cookie := strings.TrimSpace(p.Config.NNMClub.Cookie); cookie != "" {
+	if cookie := p.getCookie(); cookie != "" {
 		req.Header.Set("Cookie", cookie)
 	}
 	resp, err := p.Client.Do(req)
@@ -303,7 +390,7 @@ func (p *Parser) fetchCategoryRoot(ctx context.Context, cat string) (string, err
 	if err != nil {
 		return "", err
 	}
-	if cookie := strings.TrimSpace(p.Config.NNMClub.Cookie); cookie != "" {
+	if cookie := p.getCookie(); cookie != "" {
 		req.Header.Set("Cookie", cookie)
 	}
 	resp, err := p.Client.Do(req)

@@ -338,15 +338,30 @@ func (p *Parser) saveTorrents(ctx context.Context, torrents []filedb.TorrentDeta
 	return added, updated, skipped, failed, nil
 }
 
+func setBrowserHeaders(req *http.Request, host, cookie, referer string) {
+	req.Header.Set("User-Agent", "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:148.0) Gecko/20100101 Firefox/148.0")
+	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+	req.Header.Set("Accept-Language", "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7")
+	req.Header.Set("Cache-Control", "no-cache")
+	req.Header.Set("Pragma", "no-cache")
+	req.Header.Set("Sec-Fetch-Dest", "document")
+	req.Header.Set("Sec-Fetch-Mode", "navigate")
+	req.Header.Set("Sec-Fetch-Site", "none")
+	req.Header.Set("Upgrade-Insecure-Requests", "1")
+	if referer != "" {
+		req.Header.Set("Referer", referer)
+	}
+	if cookie != "" {
+		req.Header.Set("Cookie", cookie)
+	}
+}
+
 func (p *Parser) httpGet(ctx context.Context, rawURL, referer string) (string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
 		return "", err
 	}
-	req.Header.Set("User-Agent", "Mozilla/5.0")
-	if referer != "" {
-		req.Header.Set("Referer", referer)
-	}
+	setBrowserHeaders(req, p.Config.Anistar.Host, strings.TrimSpace(p.Config.Anistar.Cookie), referer)
 	resp, err := p.Client.Do(req)
 	if err != nil {
 		return "", err
@@ -361,10 +376,7 @@ func (p *Parser) httpDownload(ctx context.Context, rawURL, referer string) ([]by
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("User-Agent", "Mozilla/5.0")
-	if referer != "" {
-		req.Header.Set("Referer", referer)
-	}
+	setBrowserHeaders(req, p.Config.Anistar.Host, strings.TrimSpace(p.Config.Anistar.Cookie), referer)
 	resp, err := p.Client.Do(req)
 	if err != nil {
 		return nil, err

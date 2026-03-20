@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"html"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -109,6 +110,10 @@ func (p *Parser) Parse(ctx context.Context, page int) (ParseResult, error) {
 		}
 	}
 	res := ParseResult{Status: "ok", PerCategory: map[string]int{}}
+	{
+		c := p.getCookie()
+		log.Printf("kinozal: starting parse, cookie=%q", c[:min(len(c), 40)])
+	}
 	for _, cat := range parseCats {
 		items, err := p.parsePage(ctx, cat, page, "")
 		if err != nil {
@@ -460,7 +465,8 @@ func (p *Parser) resolveMagnet(ctx context.Context, detailURL string) (string, e
 	form := url.Values{}
 	form.Set("id", id)
 	form.Set("action", "2")
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(requestHost(p.Config.Kinozal), "/")+"/get_srv_details.php?id="+id+"&action=2", bytes.NewBufferString(form.Encode()))
+	reqURL := strings.TrimRight(requestHost(p.Config.Kinozal), "/") + "/get_srv_details.php?id=" + id + "&action=2"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, bytes.NewBufferString(form.Encode()))
 	if err != nil {
 		return "", err
 	}
@@ -468,6 +474,7 @@ func (p *Parser) resolveMagnet(ctx context.Context, detailURL string) (string, e
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	resp, err := p.Client.Do(req)
 	if err != nil {
+		log.Printf("kinozal: resolveMagnet id=%s error: %v", id, err)
 		return "", err
 	}
 	defer resp.Body.Close()
@@ -475,15 +482,22 @@ func (p *Parser) resolveMagnet(ctx context.Context, detailURL string) (string, e
 	if err != nil {
 		return "", err
 	}
-	text := core.DecodeCP1251(body)
-	if text == "" {
-		text = string(body)
+	// Server may return UTF-8 or CP1251 — try raw first
+	text := string(body)
+	if !strings.Contains(text, "Инфо хеш") {
+		text = core.DecodeCP1251(body)
 	}
 	if m := hashRe.FindStringSubmatch(text); len(m) > 1 {
 		h := strings.TrimSpace(m[1])
 		if h != "" {
 			return "magnet:?xt=urn:btih:" + h, nil
 		}
+	}
+	// Log first failures for debugging
+	if len(text) < 500 {
+		log.Printf("kinozal: resolveMagnet id=%s FAILED status=%d cookie=%q body=%q", id, resp.StatusCode, cookie[:min(len(cookie), 30)], text)
+	} else {
+		log.Printf("kinozal: resolveMagnet id=%s FAILED status=%d cookie=%q bodyLen=%d", id, resp.StatusCode, cookie[:min(len(cookie), 30)], len(text))
 	}
 	return "", nil
 }
@@ -522,6 +536,7 @@ func (p *Parser) takeLogin(ctx context.Context) error {
 	}
 	p.lastLoginAttempt = time.Now()
 	p.cookieMu.Unlock()
+	log.Printf("kinozal: attempting login to %s as %s", requestHost(p.Config.Kinozal), p.Config.Kinozal.Login.U)
 	form := url.Values{}
 	form.Set("username", p.Config.Kinozal.Login.U)
 	form.Set("password", p.Config.Kinozal.Login.P)
@@ -544,6 +559,7 @@ func (p *Parser) takeLogin(ctx context.Context) error {
 		return err
 	}
 	defer resp.Body.Close()
+	log.Printf("kinozal: login response status=%d", resp.StatusCode)
 	uid, pass := "", ""
 	for _, line := range resp.Header.Values("Set-Cookie") {
 		if uid == "" && strings.Contains(line, "uid=") {
@@ -561,6 +577,9 @@ func (p *Parser) takeLogin(ctx context.Context) error {
 		p.cookieMu.Lock()
 		p.cookie = fmt.Sprintf("uid=%s; pass=%s;", uid, pass)
 		p.cookieMu.Unlock()
+		log.Printf("kinozal: login OK — uid=%s", uid)
+	} else {
+		log.Printf("kinozal: login FAILED — uid=%q pass=%q", uid, pass)
 	}
 	return nil
 }

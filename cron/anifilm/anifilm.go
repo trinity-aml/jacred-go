@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"html"
 	"io"
+	"log"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -31,14 +32,15 @@ var catPages = []struct {
 }
 
 var (
-	itemSplitRe    = regexp.MustCompile(`class="releases__item"`)
-	urlRe          = regexp.MustCompile(`(?i)<a href="/(releases/[^"]+)"`)
-	nameRuRe       = regexp.MustCompile(`(?i)<a class="releases__title-russian" [^>]+>([^<]+)</a>`)
-	nameOrigRe     = regexp.MustCompile(`(?i)<span class="releases__title-original">([^<]+)</span>`)
-	episodesRe     = regexp.MustCompile(`(?i)([0-9]+(-[0-9]+)?) из [0-9]+ эп\.,`)
-	yearRe         = regexp.MustCompile(`(?i)<a href="/releases/releases/[^"]+">([0-9]{4})</a> г\.`)
-	tidRe          = regexp.MustCompile(`(?i)href="/(releases/download-torrent/[0-9]+)">скачать</a>`)
-	cleanSpaceRe   = regexp.MustCompile(`[\n\r\t ]+`)
+	itemSplitRe  = regexp.MustCompile(`(?i)class="releases__item`)
+	urlRe        = regexp.MustCompile(`(?i)<a[^>]+href="/(releases/[^"]+)"`)
+	nameRuRe     = regexp.MustCompile(`(?i)class="releases__title-russian"[^>]*>([^<]+)</a>`)
+	nameOrigRe   = regexp.MustCompile(`(?i)class="releases__title-original"[^>]*>([^<]+)</span>`)
+	episodesRe   = regexp.MustCompile(`(?i)([0-9]+(-[0-9]+)?)\s*из\s*[0-9]+\s*эп`)
+	yearRe       = regexp.MustCompile(`(?i)href="/releases/[^"]*">([0-9]{4})</a>`)
+	yearAltRe    = regexp.MustCompile(`(?i)table-list__value[^>]*>[^<]*(\d{4})`)
+	tidRe        = regexp.MustCompile(`(?i)href="/(releases/download-torrent/[0-9]+)"[^>]*>скачать</a>`)
+	cleanSpaceRe = regexp.MustCompile(`[\n\r\t ]+`)
 )
 
 type Parser struct {
@@ -124,7 +126,7 @@ func (p *Parser) fetchPage(ctx context.Context, host, cat string, page int, crea
 	if err != nil {
 		return nil, err
 	}
-	if !strings.Contains(body, `id="ui-components"`) {
+	if !strings.Contains(body, `AniFilm`) {
 		return nil, nil
 	}
 
@@ -156,15 +158,18 @@ func (p *Parser) fetchPage(ctx context.Context, host, cat string, page int, crea
 		originalname := extract(nameOrigRe)
 		episodes := extract(episodesRe)
 
-		if urlPath == "" || name == "" || originalname == "" {
+		if urlPath == "" || name == "" {
 			continue
 		}
-		if cat != "movies" && episodes == "" {
-			continue
+		if originalname == "" {
+			originalname = name
 		}
 
 		fullURL := host + "/" + strings.TrimLeft(urlPath, "/")
-		title := name + " / " + originalname
+		title := name
+		if originalname != name {
+			title = name + " / " + originalname
+		}
 		if episodes != "" {
 			title += " (" + episodes + ")"
 		}
@@ -174,12 +179,12 @@ func (p *Parser) fetchPage(ctx context.Context, host, cat string, page int, crea
 			name = strings.TrimSpace(name[:idx])
 		}
 
-		// Year
+		// Year - try main pattern, then alternate
 		yearStr := extract(yearRe)
-		relased, _ := strconv.Atoi(yearStr)
-		if relased == 0 {
-			continue
+		if yearStr == "" {
+			yearStr = extract(yearAltRe)
 		}
+		relased, _ := strconv.Atoi(yearStr)
 
 		out = append(out, filedb.TorrentDetails{
 			"trackerName":  trackerName,
@@ -239,6 +244,11 @@ func (p *Parser) saveTorrents(ctx context.Context, host string, torrents []filed
 		// Fetch detail page to find torrent download link
 		detailHTML, err := p.httpGet(ctx, urlv, "")
 		if err != nil || detailHTML == "" {
+			if err != nil {
+				log.Printf("anifilm: detail page %s error: %v", urlv, err)
+			} else {
+				log.Printf("anifilm: detail page %s empty response", urlv)
+			}
 			failed++
 			continue
 		}
@@ -248,7 +258,7 @@ func (p *Parser) saveTorrents(ctx context.Context, host string, torrents []filed
 		var tid string
 		torrentBlocks := strings.Split(detailHTML, `<li class="release__torrents-item">`)
 		for _, block := range torrentBlocks {
-			if strings.Contains(block, " 1080p ") && strings.Contains(block, `href="/releases/download-torrent/`) {
+			if strings.Contains(block, "1080p") && strings.Contains(block, `href="/releases/download-torrent/`) {
 				if m := tidRe.FindStringSubmatch(block); len(m) > 1 {
 					tid = m[1]
 					if !strings.Contains(title, " [1080p]") {
@@ -265,6 +275,12 @@ func (p *Parser) saveTorrents(ctx context.Context, host string, torrents []filed
 			}
 		}
 		if tid == "" {
+			// Log first few failures
+			hasTorrentBlock := strings.Contains(detailHTML, "release__torrents")
+			hasDownloadLink := strings.Contains(detailHTML, "download-torrent")
+			hasCloudflare := strings.Contains(detailHTML, "cf-browser-verification") || strings.Contains(detailHTML, "challenge-platform")
+			log.Printf("anifilm: tid not found url=%s torrentBlock=%v downloadLink=%v cloudflare=%v htmlLen=%d",
+				urlv, hasTorrentBlock, hasDownloadLink, hasCloudflare, len(detailHTML))
 			failed++
 			continue
 		}
@@ -272,11 +288,21 @@ func (p *Parser) saveTorrents(ctx context.Context, host string, torrents []filed
 		// Download .torrent → magnet
 		torrentBytes, err := p.httpDownload(ctx, host+"/"+tid, urlv)
 		if err != nil || len(torrentBytes) == 0 {
+			log.Printf("anifilm: torrent download failed tid=%s err=%v size=%d", tid, err, len(torrentBytes))
 			failed++
 			continue
 		}
-		magnet := core.TorrentBytesToMagnet(torrentBytes)
+		magnet, magnetErr := core.TorrentBytesToMagnetErr(torrentBytes)
 		if magnet == "" {
+			prefix := ""
+			if len(torrentBytes) > 0 {
+				end := 80
+				if end > len(torrentBytes) {
+					end = len(torrentBytes)
+				}
+				prefix = string(torrentBytes[:end])
+			}
+			log.Printf("anifilm: magnet extraction failed tid=%s torrentSize=%d err=%v prefix=%q", tid, len(torrentBytes), magnetErr, prefix)
 			failed++
 			continue
 		}
@@ -330,15 +356,29 @@ func (p *Parser) saveTorrents(ctx context.Context, host string, torrents []filed
 	return added, updated, skipped, failed, nil
 }
 
+func setBrowserHeaders(req *http.Request, cookie, referer string) {
+	req.Header.Set("User-Agent", "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:148.0) Gecko/20100101 Firefox/148.0")
+	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+	req.Header.Set("Accept-Language", "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7")
+	req.Header.Set("Cache-Control", "no-cache")
+	req.Header.Set("Sec-Fetch-Dest", "document")
+	req.Header.Set("Sec-Fetch-Mode", "navigate")
+	req.Header.Set("Sec-Fetch-Site", "none")
+	req.Header.Set("Upgrade-Insecure-Requests", "1")
+	if referer != "" {
+		req.Header.Set("Referer", referer)
+	}
+	if cookie != "" {
+		req.Header.Set("Cookie", cookie)
+	}
+}
+
 func (p *Parser) httpGet(ctx context.Context, rawURL, referer string) (string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
 		return "", err
 	}
-	req.Header.Set("User-Agent", "Mozilla/5.0")
-	if referer != "" {
-		req.Header.Set("Referer", referer)
-	}
+	setBrowserHeaders(req, strings.TrimSpace(p.Config.Anifilm.Cookie), referer)
 	resp, err := p.Client.Do(req)
 	if err != nil {
 		return "", err
@@ -353,10 +393,7 @@ func (p *Parser) httpDownload(ctx context.Context, rawURL, referer string) ([]by
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("User-Agent", "Mozilla/5.0")
-	if referer != "" {
-		req.Header.Set("Referer", referer)
-	}
+	setBrowserHeaders(req, strings.TrimSpace(p.Config.Anifilm.Cookie), referer)
 	resp, err := p.Client.Do(req)
 	if err != nil {
 		return nil, err
