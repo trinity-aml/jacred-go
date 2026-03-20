@@ -5,8 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"html"
-	"io"
-	"net/http"
+	"log"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -79,17 +78,23 @@ type Parser struct {
 	Config  app.Config
 	DB      *filedb.DB
 	DataDir string
-	Client  *http.Client
+	CF      *core.CFClient
 
-	mu       sync.Mutex
-	working  bool
-	allWork  bool
-	latestMu sync.Mutex
-	tasks    map[string][]Task
+	mu          sync.Mutex
+	working     bool
+	allWork     bool
+	latestMu    sync.Mutex
+	tasks       map[string][]Task
+	rateMu      sync.Mutex
+	lastRequest time.Time
 }
 
 func New(cfg app.Config, db *filedb.DB, dataDir string) *Parser {
-	p := &Parser{Config: cfg, DB: db, DataDir: dataDir, Client: &http.Client{Timeout: 35 * time.Second}, tasks: map[string][]Task{}}
+	cf, err := core.NewCFClient()
+	if err != nil {
+		log.Printf("bitru: CFClient init error: %v", err)
+	}
+	p := &Parser{Config: cfg, DB: db, DataDir: dataDir, CF: cf, tasks: map[string][]Task{}}
 	_ = p.loadTasks()
 	return p
 }
@@ -497,55 +502,51 @@ func (p *Parser) saveTorrents(ctx context.Context, torrents []filedb.TorrentDeta
 	return added, updated, skipped, failed, nil
 }
 
+// rateWait enforces max 4 requests/sec (250ms between requests) to avoid 429/ban
+func (p *Parser) rateWait() {
+	p.rateMu.Lock()
+	defer p.rateMu.Unlock()
+	since := time.Since(p.lastRequest)
+	if since < 500*time.Millisecond {
+		time.Sleep(500*time.Millisecond - since)
+	}
+	p.lastRequest = time.Now()
+}
+
 func (p *Parser) fetchBrowse(ctx context.Context, cat string, page int) (string, error) {
+	if p.CF == nil {
+		return "", fmt.Errorf("bitru: CFClient not initialized")
+	}
 	if page <= 0 {
 		page = 1
 	}
 	urlv := strings.TrimRight(p.Config.Bitru.Host, "/") + "/browse.php?tmp=" + cat + "&page=" + strconv.Itoa(page)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, urlv, nil)
+	cookie := strings.TrimSpace(p.Config.Bitru.Cookie)
+	p.rateWait()
+	body, status, err := p.CF.Get(urlv, cookie, "")
 	if err != nil {
 		return "", err
 	}
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-	if cookie := strings.TrimSpace(p.Config.Bitru.Cookie); cookie != "" {
-		req.Header.Set("Cookie", cookie)
+	if status < 200 || status >= 300 {
+		return "", fmt.Errorf("bitru status %d", status)
 	}
-	resp, err := p.Client.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", fmt.Errorf("bitru status %d", resp.StatusCode)
-	}
-	b, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", err
-	}
-	return string(b), nil
+	return body, nil
 }
 
 func (p *Parser) download(ctx context.Context, rawURL, referer string) ([]byte, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if p.CF == nil {
+		return nil, fmt.Errorf("bitru: CFClient not initialized")
+	}
+	cookie := strings.TrimSpace(p.Config.Bitru.Cookie)
+	p.rateWait()
+	data, status, err := p.CF.Download(rawURL, cookie, referer)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-	if strings.TrimSpace(referer) != "" {
-		req.Header.Set("Referer", referer)
+	if status < 200 || status >= 300 {
+		return nil, fmt.Errorf("download status %d", status)
 	}
-	if cookie := strings.TrimSpace(p.Config.Bitru.Cookie); cookie != "" {
-		req.Header.Set("Cookie", cookie)
-	}
-	resp, err := p.Client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("download status %d", resp.StatusCode)
-	}
-	return io.ReadAll(resp.Body)
+	return data, nil
 }
 
 func (p *Parser) tasksPath() string { return filepath.Join(p.DataDir, "temp", "bitru_taskParse.json") }

@@ -4,8 +4,7 @@ import (
 	"context"
 	"fmt"
 	"html"
-	"io"
-	"net/http"
+	"log"
 	"regexp"
 	"strconv"
 	"strings"
@@ -33,7 +32,7 @@ var parseDelayCycle = []time.Duration{30 * time.Second, 60 * time.Second, 90 * t
 type Parser struct {
 	Config  app.Config
 	DB      *filedb.DB
-	Client  *http.Client
+	CF      *core.CFClient
 	mu      sync.Mutex
 	working bool
 	browse  sync.Mutex
@@ -47,7 +46,11 @@ type ParseResult struct {
 }
 
 func New(cfg app.Config, db *filedb.DB) *Parser {
-	return &Parser{Config: cfg, DB: db, Client: &http.Client{Timeout: 35 * time.Second}}
+	cf, err := core.NewCFClient()
+	if err != nil {
+		log.Printf("megapeer: CFClient init error: %v", err)
+	}
+	return &Parser{Config: cfg, DB: db, CF: cf}
 }
 
 func (p *Parser) Parse(ctx context.Context, page int) (ParseResult, error) {
@@ -102,8 +105,13 @@ func (p *Parser) fetchPage(ctx context.Context, cat string, page int) ([]filedb.
 }
 
 func (p *Parser) getBrowsePage(ctx context.Context, rawURL, cat string) (string, error) {
+	if p.CF == nil {
+		return "", fmt.Errorf("megapeer: CFClient not initialized")
+	}
 	p.browse.Lock()
 	defer p.browse.Unlock()
+	cookie := strings.TrimSpace(p.Config.Megapeer.Cookie)
+	referer := strings.TrimRight(requestHost(p.Config.Megapeer), "/") + "/cat/" + cat
 	for attempt := 1; attempt <= 3; attempt++ {
 		delay := p.nextDelay()
 		if p.Config.Megapeer.ParseDelay == 0 {
@@ -116,31 +124,15 @@ func (p *Parser) getBrowsePage(ctx context.Context, rawURL, cat string) (string,
 			case <-time.After(delay):
 			}
 		}
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
-		if err != nil {
-			return "", err
-		}
-		setBrowseHeaders(req, requestHost(p.Config.Megapeer), cat)
-		if strings.TrimSpace(p.Config.Megapeer.Cookie) != "" {
-			req.Header.Set("Cookie", p.Config.Megapeer.Cookie)
-		}
-		resp, err := p.Client.Do(req)
+		data, status, err := p.CF.Download(rawURL, cookie, referer)
 		if err != nil {
 			if attempt == 3 {
 				return "", err
 			}
 			continue
 		}
-		bodyBytes, readErr := io.ReadAll(resp.Body)
-		_ = resp.Body.Close()
-		if readErr != nil {
-			if attempt == 3 {
-				return "", readErr
-			}
-			continue
-		}
-		body := core.DecodeCP1251(bodyBytes)
-		if resp.StatusCode >= 200 && resp.StatusCode < 300 && strings.Contains(body, browsePageValidMarker) {
+		body := core.DecodeCP1251(data)
+		if status >= 200 && status < 300 && strings.Contains(body, browsePageValidMarker) {
 			return body, nil
 		}
 	}
@@ -150,17 +142,6 @@ func (p *Parser) getBrowsePage(ctx context.Context, rawURL, cat string) (string,
 func (p *Parser) nextDelay() time.Duration {
 	p.delayIx++
 	return parseDelayCycle[(p.delayIx-1)%len(parseDelayCycle)]
-}
-
-func setBrowseHeaders(req *http.Request, rqHost, cat string) {
-	req.Header.Set("DNT", "1")
-	req.Header.Set("Pragma", "no-cache")
-	req.Header.Set("Referer", strings.TrimRight(rqHost, "/")+"/cat/"+cat)
-	req.Header.Set("Sec-Fetch-Dest", "document")
-	req.Header.Set("Sec-Fetch-Mode", "navigate")
-	req.Header.Set("Sec-Fetch-Site", "same-origin")
-	req.Header.Set("Sec-Fetch-User", "?1")
-	req.Header.Set("Upgrade-Insecure-Requests", "1")
 }
 
 func parsePageHTML(host, cat, body string) []filedb.TorrentDetails {
@@ -293,31 +274,20 @@ func (p *Parser) saveTorrents(ctx context.Context, torrents []filedb.TorrentDeta
 }
 
 func (p *Parser) downloadMagnet(ctx context.Context, downloadID string) (string, error) {
-	if strings.TrimSpace(downloadID) == "" {
+	if strings.TrimSpace(downloadID) == "" || p.CF == nil {
 		return "", nil
 	}
 	rawURL := strings.TrimRight(p.Config.Megapeer.Host, "/") + "/download/" + strings.TrimSpace(downloadID)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	cookie := strings.TrimSpace(p.Config.Megapeer.Cookie)
+	referer := strings.TrimRight(p.Config.Megapeer.Host, "/")
+	data, status, err := p.CF.Download(rawURL, cookie, referer)
 	if err != nil {
 		return "", err
 	}
-	req.Header.Set("Referer", strings.TrimRight(p.Config.Megapeer.Host, "/"))
-	if strings.TrimSpace(p.Config.Megapeer.Cookie) != "" {
-		req.Header.Set("Cookie", p.Config.Megapeer.Cookie)
+	if status < 200 || status >= 300 {
+		return "", fmt.Errorf("download status %d", status)
 	}
-	resp, err := p.Client.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", fmt.Errorf("download status %d", resp.StatusCode)
-	}
-	b, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", err
-	}
-	return core.TorrentBytesToMagnet(b), nil
+	return core.TorrentBytesToMagnet(data), nil
 }
 
 func parseTitle(cat, title string) (string, string, int) {
