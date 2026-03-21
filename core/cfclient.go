@@ -21,7 +21,6 @@ func NewCFClient() (*CFClient, error) {
 	opts := []tls_client.HttpClientOption{
 		tls_client.WithTimeoutSeconds(30),
 		tls_client.WithClientProfile(profiles.Firefox_117),
-		tls_client.WithNotFollowRedirects(),
 		tls_client.WithInsecureSkipVerify(),
 	}
 	client, err := tls_client.NewHttpClient(tls_client.NewNoopLogger(), opts...)

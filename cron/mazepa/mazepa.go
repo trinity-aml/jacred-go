@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"html"
-	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -78,6 +78,7 @@ type Parser struct {
 	DB      *filedb.DB
 	DataDir string
 	Client  *http.Client
+	CF      *core.CFClient
 	mu      sync.Mutex
 	working bool
 	cookie  string
@@ -91,12 +92,16 @@ type ParseResult struct {
 }
 
 func New(cfg app.Config, db *filedb.DB, dataDir string) *Parser {
+	cf, err := core.NewCFClient()
+	if err != nil {
+		log.Printf("mazepa: CFClient init error: %v", err)
+	}
 	return &Parser{Config: cfg, DB: db, DataDir: dataDir, Client: &http.Client{
 		Timeout: 30 * time.Second,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			return http.ErrUseLastResponse
 		},
-	}}
+	}, CF: cf}
 }
 
 func (p *Parser) getCookie() string {
@@ -372,24 +377,17 @@ func (p *Parser) saveTorrents(torrents []filedb.TorrentDetails) (int, int, int, 
 }
 
 func (p *Parser) httpGet(ctx context.Context, rawURL string) (string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if p.CF == nil {
+		return "", fmt.Errorf("mazepa: CFClient not initialized")
+	}
+	body, status, err := p.CF.Get(rawURL, p.getCookie(), "")
 	if err != nil {
 		return "", err
 	}
-	req.Header.Set("User-Agent", "Mozilla/5.0")
-	if c := p.getCookie(); c != "" {
-		req.Header.Set("Cookie", c)
+	if status == 403 {
+		return "", fmt.Errorf("mazepa: 403 Forbidden")
 	}
-	resp, err := p.Client.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-	b, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", err
-	}
-	return string(b), nil
+	return body, nil
 }
 
 func normalizeMagnet(raw string) string {
