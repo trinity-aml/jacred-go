@@ -6,9 +6,7 @@ import (
 	"fmt"
 	"html"
 	"io"
-	"log"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -60,14 +58,11 @@ type Parser struct {
 	Client  *http.Client
 	loc     *time.Location
 
-	mu               sync.Mutex
-	working          bool
-	allWork          bool
-	latest           sync.Mutex
-	tasks            map[string][]Task
-	cookieMu         sync.Mutex
-	cookie           string
-	lastLoginAttempt time.Time
+	mu      sync.Mutex
+	working bool
+	allWork bool
+	latest  sync.Mutex
+	tasks   map[string][]Task
 }
 
 type ParseResult struct {
@@ -87,82 +82,12 @@ func New(cfg app.Config, db *filedb.DB, dataDir string) *Parser {
 }
 
 func (p *Parser) getCookie() string {
-	p.cookieMu.Lock()
-	defer p.cookieMu.Unlock()
-	if strings.TrimSpace(p.cookie) != "" {
-		return p.cookie
-	}
 	if strings.TrimSpace(p.Config.NNMClub.Cookie) != "" {
 		return strings.TrimSpace(p.Config.NNMClub.Cookie)
 	}
 	return ""
 }
 
-func (p *Parser) takeLogin(ctx context.Context) error {
-	p.cookieMu.Lock()
-	if time.Since(p.lastLoginAttempt) < 2*time.Minute {
-		p.cookieMu.Unlock()
-		return nil
-	}
-	p.lastLoginAttempt = time.Now()
-	p.cookieMu.Unlock()
-
-	host := strings.TrimRight(p.Config.NNMClub.Host, "/")
-	if host == "" || strings.TrimSpace(p.Config.NNMClub.Login.U) == "" {
-		return fmt.Errorf("nnmclub: no host or login configured")
-	}
-	log.Printf("nnmclub: attempting login to %s as %s", host, p.Config.NNMClub.Login.U)
-
-	form := url.Values{}
-	form.Set("username", p.Config.NNMClub.Login.U)
-	form.Set("password", p.Config.NNMClub.Login.P)
-	form.Set("autologin", "on")
-	form.Set("redirect", "")
-	form.Set("login", "\xc2\xf5\xee\xe4") // "Вход" in CP1251
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, host+"/forum/login.php", strings.NewReader(form.Encode()))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-
-	loginClient := &http.Client{
-		Timeout: 20 * time.Second,
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
-	}
-	resp, err := loginClient.Do(req)
-	if err != nil {
-		log.Printf("nnmclub: login error: %v", err)
-		return err
-	}
-	defer resp.Body.Close()
-	log.Printf("nnmclub: login response status=%d", resp.StatusCode)
-
-	var parts []string
-	for _, line := range resp.Header.Values("Set-Cookie") {
-		parts = append(parts, strings.SplitN(line, ";", 2)[0])
-	}
-	cookieStr := strings.Join(parts, "; ")
-	if strings.Contains(cookieStr, "phpbb2mysql") || strings.Contains(cookieStr, "sid=") {
-		p.cookieMu.Lock()
-		p.cookie = cookieStr
-		p.cookieMu.Unlock()
-		log.Printf("nnmclub: login OK")
-		return nil
-	}
-	log.Printf("nnmclub: login FAILED — cookies: %s", cookieStr)
-	return fmt.Errorf("nnmclub: login failed")
-}
-
-func (p *Parser) ensureLogin(ctx context.Context) {
-	if p.getCookie() != "" {
-		return
-	}
-	_ = p.takeLogin(ctx)
-}
 
 func (p *Parser) Parse(ctx context.Context, page int) (ParseResult, error) {
 	p.mu.Lock()
@@ -177,13 +102,14 @@ func (p *Parser) Parse(ctx context.Context, page int) (ParseResult, error) {
 	if isDisabled(p.Config.DisableTrackers, trackerName) {
 		return ParseResult{Status: "disabled"}, nil
 	}
-	p.ensureLogin(ctx)
 	res := ParseResult{Status: "ok", PerCategory: map[string]int{}}
 	for _, cat := range categories {
 		items, err := p.parsePage(ctx, cat, page)
 		if err != nil {
 			return res, err
 		}
+		// If first category returns 0 and we haven't re-logged yet — cookie may be stale
+
 		res.Fetched += len(items)
 		res.PerCategory[cat] = len(items)
 		if len(items) == 0 {
@@ -202,7 +128,6 @@ func (p *Parser) Parse(ctx context.Context, page int) (ParseResult, error) {
 }
 
 func (p *Parser) UpdateTasksParse(ctx context.Context) (map[string][]Task, error) {
-	p.ensureLogin(ctx)
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.tasks == nil {
@@ -241,7 +166,6 @@ func (p *Parser) UpdateTasksParse(ctx context.Context) (map[string][]Task, error
 }
 
 func (p *Parser) ParseAllTask(ctx context.Context) (string, error) {
-	p.ensureLogin(ctx)
 	p.mu.Lock()
 	if p.allWork {
 		p.mu.Unlock()
@@ -297,7 +221,6 @@ func (p *Parser) ParseLatest(ctx context.Context, pages int) (string, error) {
 		return "work", nil
 	}
 	defer p.latest.Unlock()
-	p.ensureLogin(ctx)
 	if pages <= 0 {
 		pages = 5
 	}
@@ -361,11 +284,13 @@ func (p *Parser) ParseLatest(ctx context.Context, pages int) (string, error) {
 
 func (p *Parser) parsePage(ctx context.Context, cat string, page int) ([]filedb.TorrentDetails, error) {
 	rawURL := strings.TrimRight(requestHost(p.Config.NNMClub), "/") + "/forum/portal.php?c=" + cat + "&start=" + strconv.Itoa(page*20)
+	cookie := p.getCookie()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
 		return nil, err
 	}
-	if cookie := p.getCookie(); cookie != "" {
+	req.Header.Set("User-Agent", "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:148.0) Gecko/20100101 Firefox/148.0")
+	if cookie != "" {
 		req.Header.Set("Cookie", cookie)
 	}
 	resp, err := p.Client.Do(req)
@@ -378,10 +303,12 @@ func (p *Parser) parsePage(ctx context.Context, cat string, page int) ([]filedb.
 		return nil, err
 	}
 	htmlBody := core.DecodeCP1251(body)
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 || !strings.Contains(htmlBody, validMarker) {
+	hasMarker := strings.Contains(htmlBody, validMarker)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 || !hasMarker {
 		return nil, nil
 	}
-	return parsePageHTML(strings.TrimRight(p.Config.NNMClub.Host, "/"), cat, htmlBody, time.Now().UTC()), nil
+	items := parsePageHTML(strings.TrimRight(p.Config.NNMClub.Host, "/"), cat, htmlBody, time.Now().UTC())
+	return items, nil
 }
 
 func (p *Parser) fetchCategoryRoot(ctx context.Context, cat string) (string, error) {
@@ -390,6 +317,7 @@ func (p *Parser) fetchCategoryRoot(ctx context.Context, cat string) (string, err
 	if err != nil {
 		return "", err
 	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:148.0) Gecko/20100101 Firefox/148.0")
 	if cookie := p.getCookie(); cookie != "" {
 		req.Header.Set("Cookie", cookie)
 	}
@@ -437,15 +365,17 @@ func parsePageHTML(host, cat, htmlBody string, now time.Time) []filedb.TorrentDe
 		if len(magnet) < 2 {
 			continue
 		}
-		createTime := parseCreateTime(match(`\| ([0-9]+ [^ ]+ [0-9]{4} [^<]+)</span> \| <span class="tit"`), "02.01.2006 15:04:05")
-		if createTime.IsZero() {
-			continue
-		}
+		dateRaw := match(`\|\s*([0-9]+ [^ ]+ [0-9]{4} [0-9:]+)</span>\s*\|\s*<span class="tit"`)
+		createTime := parseCreateTime(dateRaw, "02.01.2006 15:04:05")
 		urlPath := match(`<a class="pgenmed" href="(viewtopic\.php[^"]+)"`)
 		title := match(`>([^<]+)</a></h2></td>`)
 		sidRaw := match(`title="Раздаюших">&nbsp;([0-9]+)</span>`)
 		pirRaw := match(`title="Качают">&nbsp;([0-9]+)</span>`)
 		sizeName := match(`<span class="pcomm bold">([^<]+)</span>`)
+
+		if createTime.IsZero() {
+			continue
+		}
 		if urlPath == "" || title == "" || sidRaw == "" || pirRaw == "" || sizeName == "" {
 			continue
 		}
@@ -692,6 +622,7 @@ func replaceBadNames(s string) string {
 func parseCreateTime(v, layout string) time.Time {
 	repl := strings.NewReplacer(
 		" января ", ".01.", " февраля ", ".02.", " марта ", ".03.", " апреля ", ".04.", " мая ", ".05.", " июня ", ".06.", " июля ", ".07.", " августа ", ".08.", " сентября ", ".09.", " октября ", ".10.", " ноября ", ".11.", " декабря ", ".12.",
+		" янв ", ".01.", " фев ", ".02.", " мар ", ".03.", " апр ", ".04.", " май ", ".05.", " июн ", ".06.", " июл ", ".07.", " авг ", ".08.", " сен ", ".09.", " окт ", ".10.", " ноя ", ".11.", " дек ", ".12.",
 	)
 	line := strings.TrimSpace(strings.ToLower(v))
 	line = repl.Replace(" " + line + " ")

@@ -115,7 +115,7 @@ func setBrowserHeaders(req *http.Request, cookie, referer string) {
 		"Connection":                {"keep-alive"},
 		http.HeaderOrderKey: {
 			"user-agent", "accept", "accept-language", "accept-encoding",
-			"cookie", "referer",
+			"cookie", "referer", "content-type",
 			"sec-fetch-dest", "sec-fetch-mode", "sec-fetch-site",
 			"upgrade-insecure-requests", "connection",
 		},
@@ -126,4 +126,44 @@ func setBrowserHeaders(req *http.Request, cookie, referer string) {
 	if strings.TrimSpace(referer) != "" {
 		req.Header.Set("Referer", referer)
 	}
+}
+
+// GetWithHeaders performs GET and returns body + all Set-Cookie headers.
+func (c *CFClient) GetWithHeaders(rawURL, cookie, referer string) (body []byte, status int, setCookies []string, err error) {
+	req, err := http.NewRequest(http.MethodGet, rawURL, nil)
+	if err != nil {
+		return nil, 0, nil, err
+	}
+	setBrowserHeaders(req, cookie, referer)
+	// Direct Do (no redirect follow) to capture Set-Cookie
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, 0, nil, err
+	}
+	defer resp.Body.Close()
+	b, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, resp.StatusCode, nil, err
+	}
+	return b, resp.StatusCode, resp.Header.Values("Set-Cookie"), nil
+}
+
+// PostForm performs a POST with form data and returns body + Set-Cookie headers (no redirect follow).
+func (c *CFClient) PostForm(rawURL, cookie, referer string, formData string) (body []byte, status int, setCookies []string, err error) {
+	req, err := http.NewRequest(http.MethodPost, rawURL, strings.NewReader(formData))
+	if err != nil {
+		return nil, 0, nil, err
+	}
+	setBrowserHeaders(req, cookie, referer)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, 0, nil, err
+	}
+	defer resp.Body.Close()
+	b, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, resp.StatusCode, nil, err
+	}
+	return b, resp.StatusCode, resp.Header.Values("Set-Cookie"), nil
 }
