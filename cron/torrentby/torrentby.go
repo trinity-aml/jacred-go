@@ -2,6 +2,7 @@ package torrentby
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"html"
@@ -86,7 +87,10 @@ func New(cfg app.Config, db *filedb.DB, dataDir string) *Parser {
 	if err != nil {
 		loc = time.FixedZone("+0200", 2*3600)
 	}
-	p := &Parser{Config: cfg, DB: db, DataDir: dataDir, Client: &http.Client{Timeout: 30 * time.Second}, loc: loc, tasks: map[string][]Task{}}
+	p := &Parser{Config: cfg, DB: db, DataDir: dataDir, Client: &http.Client{
+		Timeout:   30 * time.Second,
+		Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}},
+	}, loc: loc, tasks: map[string][]Task{}}
 	_ = p.loadTasks()
 	return p
 }
@@ -553,7 +557,8 @@ func (p *Parser) takeLogin(ctx context.Context) error {
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
 
 	loginClient := &http.Client{
-		Timeout: 20 * time.Second,
+		Timeout:   20 * time.Second,
+		Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}},
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			return http.ErrUseLastResponse
 		},

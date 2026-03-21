@@ -242,7 +242,18 @@ func (p *Parser) Parse(ctx context.Context, page int) (ParseResult, error) {
 		return ParseResult{Status: "config missing"}, nil
 	}
 	res := ParseResult{Status: "ok", PerCategory: map[string]int{}}
-	for _, cat := range parseCats {
+	for i, cat := range parseCats {
+		if i > 0 {
+			delay := time.Duration(p.Config.Toloka.ParseDelay) * time.Millisecond
+			if delay <= 0 {
+				delay = 2 * time.Second
+			}
+			select {
+			case <-ctx.Done():
+				return res, ctx.Err()
+			case <-time.After(delay):
+			}
+		}
 		items, err := p.parsePage(ctx, cat, page)
 		if err != nil {
 			return res, err
@@ -586,6 +597,12 @@ func (p *Parser) saveTorrents(ctx context.Context, items []parseItem) (int, int,
 			continue
 		}
 		if strings.TrimSpace(asString(incoming["magnet"])) == "" {
+			// Rate limit: 500ms between downloads to avoid 429
+			select {
+			case <-ctx.Done():
+				return added, updated, skipped, failed, ctx.Err()
+			case <-time.After(500 * time.Millisecond):
+			}
 			magnet, err := p.downloadMagnet(ctx, item.DownloadID, cookie)
 			if err != nil {
 				failed++
@@ -673,15 +690,11 @@ func (p *Parser) takeLogin(ctx context.Context) (string, error) {
 	var sid, data string
 	for _, setCookie := range resp.Header.Values("Set-Cookie") {
 		for _, part := range strings.Split(setCookie, ",") {
-			if sid == "" {
-				if m := regexp.MustCompile(`toloka_sid=([^;]+)(;|$)`).FindStringSubmatch(part); len(m) > 1 {
-					sid = strings.TrimSpace(m[1])
-				}
+			if m := regexp.MustCompile(`toloka_sid=([^;]+)(;|$)`).FindStringSubmatch(part); len(m) > 1 {
+				sid = strings.TrimSpace(m[1])
 			}
-			if data == "" {
-				if m := regexp.MustCompile(`toloka_data=([^;]+)(;|$)`).FindStringSubmatch(part); len(m) > 1 {
-					data = strings.TrimSpace(m[1])
-				}
+			if m := regexp.MustCompile(`toloka_data=([^;]+)(;|$)`).FindStringSubmatch(part); len(m) > 1 {
+				data = strings.TrimSpace(m[1])
 			}
 		}
 	}
@@ -702,25 +715,33 @@ func (p *Parser) fetchPageHTML(ctx context.Context, cat string, page int) (strin
 		urlv = fmt.Sprintf("%s/f%s-%d", host, cat, page*45)
 	}
 	urlv += "?sort=8"
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, urlv, nil)
-	if err != nil {
-		return "", err
+	for attempt := 1; attempt <= 3; attempt++ {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, urlv, nil)
+		if err != nil {
+			return "", err
+		}
+		req.Header.Set("User-Agent", defaultUA())
+		req.Header.Set("Cookie", cookie)
+		resp, err := p.Client.Do(req)
+		if err != nil {
+			return "", err
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode == 429 && attempt < 3 {
+			select {
+			case <-ctx.Done():
+				return "", ctx.Err()
+			case <-time.After(time.Duration(attempt*5) * time.Second):
+			}
+			continue
+		}
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			return "", fmt.Errorf("toloka status %d", resp.StatusCode)
+		}
+		return string(body), nil
 	}
-	req.Header.Set("User-Agent", defaultUA())
-	req.Header.Set("Cookie", cookie)
-	resp, err := p.Client.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", fmt.Errorf("toloka status %d", resp.StatusCode)
-	}
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", err
-	}
-	return string(body), nil
+	return "", fmt.Errorf("toloka: max retries exceeded")
 }
 
 func (p *Parser) downloadMagnet(ctx context.Context, downloadID, cookie string) (string, error) {
@@ -728,26 +749,35 @@ func (p *Parser) downloadMagnet(ctx context.Context, downloadID, cookie string) 
 		return "", nil
 	}
 	host := strings.TrimRight(p.Config.Toloka.Host, "/")
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("%s/download.php?id=%s", host, url.QueryEscape(downloadID)), nil)
-	if err != nil {
-		return "", err
+	rawURL := fmt.Sprintf("%s/download.php?id=%s", host, url.QueryEscape(downloadID))
+	for attempt := 1; attempt <= 3; attempt++ {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+		if err != nil {
+			return "", err
+		}
+		req.Header.Set("User-Agent", defaultUA())
+		req.Header.Set("Cookie", cookie)
+		req.Header.Set("Referer", host)
+		resp, err := p.Client.Do(req)
+		if err != nil {
+			return "", err
+		}
+		data, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode == 429 && attempt < 3 {
+			select {
+			case <-ctx.Done():
+				return "", ctx.Err()
+			case <-time.After(time.Duration(attempt*5) * time.Second):
+			}
+			continue
+		}
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			return "", fmt.Errorf("toloka download status %d", resp.StatusCode)
+		}
+		return core.TorrentBytesToMagnet(data), nil
 	}
-	req.Header.Set("User-Agent", defaultUA())
-	req.Header.Set("Cookie", cookie)
-	req.Header.Set("Referer", host)
-	resp, err := p.Client.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", fmt.Errorf("toloka download status %d", resp.StatusCode)
-	}
-	data, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", err
-	}
-	return core.TorrentBytesToMagnet(data), nil
+	return "", fmt.Errorf("toloka download: max retries")
 }
 
 func parseTitle(cat, title string) (string, string, int) {
