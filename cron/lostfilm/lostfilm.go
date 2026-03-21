@@ -672,13 +672,26 @@ func (p *Parser) getMagnet(ctx context.Context, host, cookie, episodeURL string)
 	if err != nil || body == "" {
 		return magnetQuality{}, err
 	}
-	epID := firstSubmatch(body, `PlayEpisode\s*\(\s*['"]?(\d+)['"]?`)
+	// Prefer full combined ID like PlayEpisode('780002005') over PlayEpisode('780','2','5')
+	epID := firstSubmatch(body, `PlayEpisode\s*\(\s*['"](\d{6,})['"]`)
+	if epID == "" {
+		// Fallback: build from 3-arg form PlayEpisode('780','2','5') → 780002005
+		m := regexp.MustCompile(`PlayEpisode\s*\(\s*'(\d+)'\s*,\s*'(\d+)'\s*,\s*'(\d+)'\s*\)`).FindStringSubmatch(body)
+		if len(m) == 4 {
+			s, _ := strconv.Atoi(m[2])
+			e, _ := strconv.Atoi(m[3])
+			epID = fmt.Sprintf("%s%03d%03d", m[1], s, e)
+		}
+	}
 	if epID == "" {
 		return magnetQuality{}, nil
 	}
 	searchHTML, err := p.fetchVPageHTML(ctx, host, cookie, "", epID)
-	if err != nil || !strings.Contains(searchHTML, "inner-box--link") {
+	if err != nil {
 		return magnetQuality{}, err
+	}
+	if !strings.Contains(searchHTML, "inner-box--link") {
+		return magnetQuality{}, nil
 	}
 	list, err := p.parseVPageQualityLinks(ctx, host, cookie, searchHTML)
 	if err != nil || len(list) == 0 {
@@ -715,7 +728,22 @@ func (p *Parser) getVURLFromMoviePage(ctx context.Context, host, cookie, movieUR
 	if v := firstSubmatch(body, `href="(/V/\?[^"]+)"`); v != "" {
 		return absURL(host, v), nil
 	}
-	if id := firstSubmatch(body, `Play(?:Movie|Episode)\s*\(\s*['"]?(\d+)['"]?`); id != "" {
+	// Prefer full combined ID (6+ digits)
+	id := firstSubmatch(body, `Play(?:Movie|Episode)\s*\(\s*['"](\d{6,})['"]`)
+	if id == "" {
+		// Fallback: 3-arg form PlayEpisode('780','2','5') → 780002005
+		m := regexp.MustCompile(`Play(?:Movie|Episode)\s*\(\s*'(\d+)'\s*,\s*'(\d+)'\s*,\s*'(\d+)'\s*\)`).FindStringSubmatch(body)
+		if len(m) == 4 {
+			s, _ := strconv.Atoi(m[2])
+			e, _ := strconv.Atoi(m[3])
+			id = fmt.Sprintf("%s%03d%03d", m[1], s, e)
+		}
+	}
+	if id == "" {
+		// Last resort: single short arg
+		id = firstSubmatch(body, `Play(?:Movie|Episode)\s*\(\s*['"]?(\d+)['"]?`)
+	}
+	if id != "" {
 		searchHTML, err := p.fetchText(ctx, strings.TrimRight(host, "/")+"/v_search.php?a="+id, cookie, strings.TrimRight(host, "/")+"/")
 		if err != nil || searchHTML == "" {
 			return "", err
@@ -751,7 +779,12 @@ func (p *Parser) fetchVPageHTML(ctx context.Context, host, cookie, vPageURL, epi
 	if vPage == "" {
 		return searchHTML, nil
 	}
-	return p.fetchText(ctx, absURL(host, vPage), cookie, strings.TrimRight(host, "/")+"/")
+	finalURL := absURL(host, vPage)
+	finalHTML, err := p.fetchText(ctx, finalURL, cookie, strings.TrimRight(host, "/")+"/")
+	if err != nil {
+		return "", err
+	}
+	return finalHTML, nil
 }
 
 func (p *Parser) parseVPageQualityLinks(ctx context.Context, host, cookie, searchHTML string) ([]magnetQuality, error) {
@@ -810,7 +843,7 @@ func (p *Parser) fetchBytes(ctx context.Context, rawURL, cookie, referer string)
 	if strings.TrimSpace(referer) != "" {
 		req.Header.Set("Referer", referer)
 	}
-	req.Header.Set("User-Agent", "Mozilla/5.0")
+	req.Header.Set("User-Agent", "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:148.0) Gecko/20100101 Firefox/148.0")
 	resp, err := p.Client.Do(req)
 	if err != nil {
 		return nil, err
