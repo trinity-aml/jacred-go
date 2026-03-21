@@ -27,8 +27,6 @@ var (
 
 var categories = []string{"80", "79", "6", "5", "55", "57", "76"}
 
-var parseDelayCycle = []time.Duration{30 * time.Second, 60 * time.Second, 90 * time.Second}
-
 type Parser struct {
 	Config  app.Config
 	DB      *filedb.DB
@@ -36,7 +34,6 @@ type Parser struct {
 	mu      sync.Mutex
 	working bool
 	browse  sync.Mutex
-	delayIx int
 }
 
 type ParseResult struct {
@@ -53,7 +50,7 @@ func New(cfg app.Config, db *filedb.DB) *Parser {
 	return &Parser{Config: cfg, DB: db, CF: cf}
 }
 
-func (p *Parser) Parse(ctx context.Context, page int) (ParseResult, error) {
+func (p *Parser) Parse(ctx context.Context, maxpage int) (ParseResult, error) {
 	p.mu.Lock()
 	if p.working {
 		p.mu.Unlock()
@@ -69,25 +66,38 @@ func (p *Parser) Parse(ctx context.Context, page int) (ParseResult, error) {
 	if strings.TrimSpace(p.Config.Megapeer.Host) == "" {
 		return ParseResult{Status: "config missing"}, nil
 	}
+	if maxpage <= 0 {
+		maxpage = 1
+	}
 	res := ParseResult{Status: "ok", PerCategory: map[string]int{}}
 	for _, cat := range categories {
-		items, err := p.fetchPage(ctx, cat, page)
-		if err != nil {
-			return res, err
+		for page := 0; page < maxpage; page++ {
+			items, err := p.fetchPage(ctx, cat, page)
+			if err != nil {
+				return res, err
+			}
+			res.Fetched += len(items)
+			res.PerCategory[cat] += len(items)
+			if len(items) == 0 {
+				break // no more pages in this category
+			}
+			added, updated, skipped, failed, err := p.saveTorrents(ctx, items)
+			if err != nil {
+				return res, err
+			}
+			res.Added += added
+			res.Updated += updated
+			res.Skipped += skipped
+			res.Failed += failed
+
+			if page < maxpage-1 && p.Config.Megapeer.ParseDelay > 0 {
+				select {
+				case <-ctx.Done():
+					return res, ctx.Err()
+				case <-time.After(time.Duration(p.Config.Megapeer.ParseDelay) * time.Millisecond):
+				}
+			}
 		}
-		res.Fetched += len(items)
-		res.PerCategory[cat] = len(items)
-		if len(items) == 0 {
-			continue
-		}
-		added, updated, skipped, failed, err := p.saveTorrents(ctx, items)
-		if err != nil {
-			return res, err
-		}
-		res.Added += added
-		res.Updated += updated
-		res.Skipped += skipped
-		res.Failed += failed
 	}
 	return res, nil
 }
@@ -113,11 +123,9 @@ func (p *Parser) getBrowsePage(ctx context.Context, rawURL, cat string) (string,
 	cookie := strings.TrimSpace(p.Config.Megapeer.Cookie)
 	referer := strings.TrimRight(requestHost(p.Config.Megapeer), "/") + "/cat/" + cat
 	for attempt := 1; attempt <= 3; attempt++ {
-		delay := p.nextDelay()
-		if p.Config.Megapeer.ParseDelay == 0 {
-			delay = 0
-		}
-		if delay > 0 {
+		// Delay between attempts only (not before first)
+		if attempt > 1 {
+			delay := time.Duration(attempt) * 5 * time.Second
 			select {
 			case <-ctx.Done():
 				return "", ctx.Err()
@@ -139,11 +147,6 @@ func (p *Parser) getBrowsePage(ctx context.Context, rawURL, cat string) (string,
 	return "", nil
 }
 
-func (p *Parser) nextDelay() time.Duration {
-	p.delayIx++
-	return parseDelayCycle[(p.delayIx-1)%len(parseDelayCycle)]
-}
-
 func parsePageHTML(host, cat, body string) []filedb.TorrentDetails {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	parts := rowSplitRe.Split(body, -1)
@@ -159,7 +162,7 @@ func parsePageHTML(host, cat, body string) []filedb.TorrentDetails {
 			res = cleanupSpaceRe.ReplaceAllString(strings.ReplaceAll(res, "\u0000", " "), " ")
 			return strings.TrimSpace(strings.ReplaceAll(res, "\u00a0", " "))
 		}
-		createTime := parseCreateTime(match(`<td>([0-9]+ [^ ]+ [0-9]+)</td><td>`, 1), "02.01.06")
+		createTime := parseCreateTime(match(`<td>([0-9]+ [^ ]+ [0-9]+)</td><td[^>]*>`, 1), "02.01.06")
 		if createTime.IsZero() {
 			continue
 		}
@@ -172,13 +175,13 @@ func parsePageHTML(host, cat, body string) []filedb.TorrentDetails {
 		if title == "" || urlPath == "" {
 			continue
 		}
-		sidRaw := match(`alt="S"><font [^>]+>([0-9]+)</font>`, 1)
+		sidRaw := match(`alt="S">\s*<font [^>]+>([0-9]+)</font>`, 1)
 		if sidRaw == "" {
-			sidRaw = match(`alt="S"[^>]*>\s*([0-9]+)`, 1)
+			sidRaw = match(`alt="S"[^>]*>\s*<font[^>]*>([0-9]+)`, 1)
 		}
-		pirRaw := match(`alt="L"><font [^>]+>([0-9]+)</font>`, 1)
+		pirRaw := match(`alt="L">\s*<font [^>]+>([0-9]+)</font>`, 1)
 		if pirRaw == "" {
-			pirRaw = match(`alt="L"[^>]*>\s*([0-9]+)`, 1)
+			pirRaw = match(`alt="L"[^>]*>\s*<font[^>]*>([0-9]+)`, 1)
 		}
 		downloadID := match(`href="/?download/([0-9]+)"`, 1)
 		if downloadID == "" {

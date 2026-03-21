@@ -21,6 +21,7 @@ func NewCFClient() (*CFClient, error) {
 	opts := []tls_client.HttpClientOption{
 		tls_client.WithTimeoutSeconds(30),
 		tls_client.WithClientProfile(profiles.Firefox_117),
+		tls_client.WithNotFollowRedirects(),
 		tls_client.WithInsecureSkipVerify(),
 	}
 	client, err := tls_client.NewHttpClient(tls_client.NewNoopLogger(), opts...)
@@ -30,14 +31,46 @@ func NewCFClient() (*CFClient, error) {
 	return &CFClient{client: client}, nil
 }
 
-// Get performs an HTTP GET with browser-like headers.
+const maxRedirects = 5
+
+// doWithRedirects performs request and manually follows redirects up to maxRedirects.
+func (c *CFClient) doWithRedirects(req *http.Request, cookie string) (*http.Response, error) {
+	for i := 0; i < maxRedirects; i++ {
+		resp, err := c.client.Do(req)
+		if err != nil {
+			return nil, err
+		}
+		if resp.StatusCode < 300 || resp.StatusCode >= 400 {
+			return resp, nil
+		}
+		loc := resp.Header.Get("Location")
+		resp.Body.Close()
+		if loc == "" {
+			return resp, nil
+		}
+		// Resolve relative redirects
+		if strings.HasPrefix(loc, "/") {
+			// Extract scheme+host from original URL
+			u := req.URL
+			loc = u.Scheme + "://" + u.Host + loc
+		}
+		req, err = http.NewRequest(http.MethodGet, loc, nil)
+		if err != nil {
+			return nil, err
+		}
+		setBrowserHeaders(req, cookie, "")
+	}
+	return nil, fmt.Errorf("too many redirects")
+}
+
+// Get performs an HTTP GET with browser-like headers, following redirects.
 func (c *CFClient) Get(rawURL, cookie, referer string) (string, int, error) {
 	req, err := http.NewRequest(http.MethodGet, rawURL, nil)
 	if err != nil {
 		return "", 0, err
 	}
 	setBrowserHeaders(req, cookie, referer)
-	resp, err := c.client.Do(req)
+	resp, err := c.doWithRedirects(req, cookie)
 	if err != nil {
 		return "", 0, err
 	}
@@ -49,14 +82,14 @@ func (c *CFClient) Get(rawURL, cookie, referer string) (string, int, error) {
 	return string(b), resp.StatusCode, nil
 }
 
-// Download performs an HTTP GET and returns raw bytes.
+// Download performs an HTTP GET and returns raw bytes, following redirects.
 func (c *CFClient) Download(rawURL, cookie, referer string) ([]byte, int, error) {
 	req, err := http.NewRequest(http.MethodGet, rawURL, nil)
 	if err != nil {
 		return nil, 0, err
 	}
 	setBrowserHeaders(req, cookie, referer)
-	resp, err := c.client.Do(req)
+	resp, err := c.doWithRedirects(req, cookie)
 	if err != nil {
 		return nil, 0, err
 	}
