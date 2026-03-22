@@ -702,7 +702,6 @@ func replaceBadNames(s string) string {
 	s = strings.ReplaceAll(s, "Ванда/Вижн ", "ВандаВижн ")
 	s = strings.ReplaceAll(s, "Ё", "Е")
 	s = strings.ReplaceAll(s, "ё", "е")
-	s = strings.ReplaceAll(s, "щ", "ш")
 	return s
 }
 

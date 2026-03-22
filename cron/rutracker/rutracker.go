@@ -698,7 +698,7 @@ func requestHost(cfg app.TrackerSettings) string {
 	return strings.TrimSpace(cfg.Host)
 }
 func replaceBadNames(s string) string {
-	return strings.NewReplacer("ё", "е", "Ё", "Е", "й", "и", "Й", "И", "щ", "ш", "Щ", "Ш").Replace(s)
+	return strings.NewReplacer("Ё", "Е", "ё", "е").Replace(s)
 }
 
 var movieCats, serialCats, otherNamedCats = map[string]bool{}, map[string]bool{}, map[string]bool{}

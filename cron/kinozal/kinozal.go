@@ -783,7 +783,7 @@ func requestHost(cfg app.TrackerSettings) string {
 	return strings.TrimSpace(cfg.Host)
 }
 func replaceBadNames(s string) string {
-	return strings.NewReplacer("Ванда/Вижн ", "ВандаВижн ", "Ё", "Е", "ё", "е", "щ", "ш").Replace(s)
+	return strings.NewReplacer("Ванда/Вижн ", "ВандаВижн ", "Ё", "Е", "ё", "е").Replace(s)
 }
 func parseCreateTime(line, format string) time.Time {
 	line = strings.ToLower(strings.TrimSpace(line))

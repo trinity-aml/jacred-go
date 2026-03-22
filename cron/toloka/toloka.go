@@ -868,6 +868,5 @@ func replaceBadNames(s string) string {
 	s = strings.ReplaceAll(s, "\u00a0", " ")
 	s = strings.ReplaceAll(s, "Ё", "Е")
 	s = strings.ReplaceAll(s, "ё", "е")
-	s = strings.ReplaceAll(s, "щ", "ш")
 	return strings.TrimSpace(cleanSpaceRe.ReplaceAllString(s, " "))
 }

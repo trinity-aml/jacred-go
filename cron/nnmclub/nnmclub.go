@@ -369,7 +369,7 @@ func parsePageHTML(host, cat, htmlBody string, now time.Time) []filedb.TorrentDe
 		createTime := parseCreateTime(dateRaw, "02.01.2006 15:04:05")
 		urlPath := match(`<a class="pgenmed" href="(viewtopic\.php[^"]+)"`)
 		title := match(`>([^<]+)</a></h2></td>`)
-		sidRaw := match(`title="Раздаюших">&nbsp;([0-9]+)</span>`)
+		sidRaw := match(`title="Раздающих">&nbsp;([0-9]+)</span>`)
 		pirRaw := match(`title="Качают">&nbsp;([0-9]+)</span>`)
 		sizeName := match(`<span class="pcomm bold">([^<]+)</span>`)
 
@@ -615,8 +615,7 @@ func requestHost(cfg app.TrackerSettings) string {
 }
 
 func replaceBadNames(s string) string {
-	r := strings.NewReplacer("ё", "е", "Ё", "Е", "й", "и", "Й", "И", "щ", "ш", "Щ", "Ш")
-	return r.Replace(s)
+	return strings.NewReplacer("Ё", "Е", "ё", "е").Replace(s)
 }
 
 func parseCreateTime(v, layout string) time.Time {
