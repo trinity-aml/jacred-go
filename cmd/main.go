@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -18,6 +20,40 @@ import (
 	"jacred/tracks"
 )
 
+func setupLog(logDir string) (*os.File, error) {
+	name := time.Now().Format("2006-01-02") + ".log"
+	fp := filepath.Join(logDir, name)
+	f, err := os.OpenFile(fp, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		return nil, fmt.Errorf("open log file %s: %w", fp, err)
+	}
+	// Write to both stdout and file
+	mw := io.MultiWriter(os.Stdout, f)
+	log.SetOutput(mw)
+	log.SetFlags(log.LstdFlags)
+	return f, nil
+}
+
+func cleanOldLogs(logDir string, keepDays int) {
+	cutoff := time.Now().AddDate(0, 0, -keepDays)
+	entries, err := os.ReadDir(logDir)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		if info.ModTime().Before(cutoff) {
+			_ = os.Remove(filepath.Join(logDir, e.Name()))
+		}
+	}
+}
+
 func main() {
 	cfg, err := app.LoadConfig("init.yaml")
 	if err != nil {
@@ -27,6 +63,18 @@ func main() {
 	_ = os.MkdirAll(filepath.Join("Data", "temp"), 0o755)
 	_ = os.MkdirAll(filepath.Join("Data", "log"), 0o755)
 	_ = os.MkdirAll(filepath.Join("Data", "tracks"), 0o755)
+
+	// Log to file + stdout (if log: true in config)
+	if cfg.Log {
+		logFile, err := setupLog(filepath.Join("Data", "log"))
+		if err != nil {
+			log.Printf("warning: %v (logging to stdout only)", err)
+		} else {
+			defer logFile.Close()
+		}
+		cleanOldLogs(filepath.Join("Data", "log"), 14)
+	}
+
 	db := filedb.New(cfg, "Data")
 	if err := db.RebuildIndexes(); err != nil {
 		log.Fatal(err)
