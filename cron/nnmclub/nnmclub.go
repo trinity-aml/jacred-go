@@ -21,6 +21,21 @@ import (
 	"jacred/filedb"
 )
 
+var (
+	inlineHrefRe = regexp.MustCompile(`<a href="[^"]+">([0-9]+)</a>[^<\n\r]+<a href="[^"]+">След\.</a>`)
+	inlineMagnetRe = regexp.MustCompile(`"(magnet:[^"]+)"`)
+	inlineRe8a7a8bRe = regexp.MustCompile(`[\n\r\t\x{00A0} ]+`)
+	inlineYearRe = regexp.MustCompile(`^([^/\(\|]+) \([^\)]+\) \(([0-9]{4})(-[0-9]{4})?\)`)
+	inlineYearRe2 = regexp.MustCompile(`^([^/\(\|]+) \(([0-9]{4})(-[0-9]{4})?\)`)
+	inlineYearRe3 = regexp.MustCompile(`^([^/\(\|]+) \(([0-9]{4})\)`)
+	mp1Re = regexp.MustCompile(`(?is)\|\s*([0-9]+ [^ ]+ [0-9]{4} [0-9:]+)</span>\s*\|\s*<span class="tit"`)
+	mp2Re = regexp.MustCompile(`(?is)<a class="pgenmed" href="(viewtopic\.php[^"]+)"`)
+	mp3Re = regexp.MustCompile(`(?is)>([^<]+)</a></h2></td>`)
+	mp4Re = regexp.MustCompile(`(?is)title="Раздающих">&nbsp;([0-9]+)</span>`)
+	mp5Re = regexp.MustCompile(`(?is)title="Качают">&nbsp;([0-9]+)</span>`)
+	mp6Re = regexp.MustCompile(`(?is)<span class="pcomm bold">([^<]+)</span>`)
+)
+
 const trackerName = "nnmclub"
 const validMarker = "NNM-Club</title>"
 
@@ -139,7 +154,7 @@ func (p *Parser) UpdateTasksParse(ctx context.Context) (map[string][]Task, error
 			return nil, err
 		}
 		maxPages := 0
-		if m := regexp.MustCompile(`<a href="[^"]+">([0-9]+)</a>[^<\n\r]+<a href="[^"]+">След\.</a>`).FindStringSubmatch(htmlBody); len(m) > 1 {
+		if m := inlineHrefRe.FindStringSubmatch(htmlBody); len(m) > 1 {
 			maxPages, _ = strconv.Atoi(strings.TrimSpace(m[1]))
 		}
 		existing := p.tasks[cat]
@@ -347,31 +362,30 @@ func parsePageHTML(host, cat, htmlBody string, now time.Time) []filedb.TorrentDe
 	rows := strings.Split(replaceBadNames(htmlBody), `<table width="100%" class="pline">`)
 	out := make([]filedb.TorrentDetails, 0, len(rows))
 	for _, row := range rows[1:] {
-		match := func(pattern string, group ...int) string {
+		reFind := func(re *regexp.Regexp, group ...int) string {
 			idx := 1
 			if len(group) > 0 {
 				idx = group[0]
 			}
-			re := regexp.MustCompile(`(?is)` + pattern)
 			m := re.FindStringSubmatch(row)
 			if len(m) <= idx {
 				return ""
 			}
 			s := html.UnescapeString(strings.TrimSpace(m[idx]))
-			s = regexp.MustCompile(`[\n\r\t\x{00A0} ]+`).ReplaceAllString(s, " ")
+			s = inlineRe8a7a8bRe.ReplaceAllString(s, " ")
 			return strings.TrimSpace(s)
 		}
-		magnet := regexp.MustCompile(`"(magnet:[^"]+)"`).FindStringSubmatch(row)
+		magnet := inlineMagnetRe.FindStringSubmatch(row)
 		if len(magnet) < 2 {
 			continue
 		}
-		dateRaw := match(`\|\s*([0-9]+ [^ ]+ [0-9]{4} [0-9:]+)</span>\s*\|\s*<span class="tit"`)
+		dateRaw := reFind(mp1Re)
 		createTime := parseCreateTime(dateRaw, "02.01.2006 15:04:05")
-		urlPath := match(`<a class="pgenmed" href="(viewtopic\.php[^"]+)"`)
-		title := match(`>([^<]+)</a></h2></td>`)
-		sidRaw := match(`title="Раздающих">&nbsp;([0-9]+)</span>`)
-		pirRaw := match(`title="Качают">&nbsp;([0-9]+)</span>`)
-		sizeName := match(`<span class="pcomm bold">([^<]+)</span>`)
+		urlPath := reFind(mp2Re)
+		title := reFind(mp3Re)
+		sidRaw := reFind(mp4Re)
+		pirRaw := reFind(mp5Re)
+		sizeName := reFind(mp6Re)
 
 		if createTime.IsZero() {
 			continue
@@ -540,21 +554,21 @@ func parseTitle(cat, title, row string) (string, string, int) {
 			try(`^([^/\(\|]+) / ([^/\(\|]+) \(([0-9]{4})(-[0-9]{4})?\)`, 1, 2, 3) {
 			return name, original, relased
 		}
-		if m := regexp.MustCompile(`^([^/\(\|]+) \([^\)]+\) \(([0-9]{4})(-[0-9]{4})?\)`).FindStringSubmatch(title); len(m) > 2 {
+		if m := inlineYearRe.FindStringSubmatch(title); len(m) > 2 {
 			return strings.TrimSpace(m[1]), "", parseYear(m[2])
 		}
-		if m := regexp.MustCompile(`^([^/\(\|]+) \(([0-9]{4})(-[0-9]{4})?\)`).FindStringSubmatch(title); len(m) > 2 {
+		if m := inlineYearRe2.FindStringSubmatch(title); len(m) > 2 {
 			return strings.TrimSpace(m[1]), "", parseYear(m[2])
 		}
 	case "13":
-		if m := regexp.MustCompile(`^([^/\(\|]+) \(([0-9]{4})\)`).FindStringSubmatch(title); len(m) > 2 {
+		if m := inlineYearRe3.FindStringSubmatch(title); len(m) > 2 {
 			return strings.TrimSpace(m[1]), "", parseYear(m[2])
 		}
 	case "4":
 		if try(`^([^/\(\|]+) / [^/\(\|]+ \(([0-9]{4})(-[0-9]{4})?\)`, 1, -1, 2) {
 			return name, original, relased
 		}
-		if m := regexp.MustCompile(`^([^/\(\|]+) \(([0-9]{4})(-[0-9]{4})?\)`).FindStringSubmatch(title); len(m) > 2 {
+		if m := inlineYearRe2.FindStringSubmatch(title); len(m) > 2 {
 			return strings.TrimSpace(m[1]), "", parseYear(m[2])
 		}
 	case "1":
@@ -582,7 +596,7 @@ func parseTitle(cat, title, row string) (string, string, int) {
 				try(`^([^/\(\|]+) / ([^/\(\|]+) \(([0-9]{4})(-[0-9]{4})?\)`, 1, 2, 3) {
 				return name, original, relased
 			}
-			if m := regexp.MustCompile(`^([^/\(\|]+) \(([0-9]{4})(-[0-9]{4})?\)`).FindStringSubmatch(title); len(m) > 2 {
+			if m := inlineYearRe2.FindStringSubmatch(title); len(m) > 2 {
 				return strings.TrimSpace(m[1]), "", parseYear(m[2])
 			}
 		}
@@ -724,3 +738,4 @@ func asInt(v any) int {
 		return n
 	}
 }
+

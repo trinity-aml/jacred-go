@@ -71,6 +71,8 @@ var (
 		"чер": 6, "лип": 7, "сер": 8, "вер": 9, "жов": 10, "лис": 11, "гру": 12,
 	}
 	mazDateRe = regexp.MustCompile(`(\d{1,2})\s+(\S+)\s+(\d{4}),\s*(\d{1,2}):(\d{2})`)
+
+	inlineReB10e5aRe = regexp.MustCompile(`tr-(\d+)`)
 )
 
 type Parser struct {
@@ -225,7 +227,7 @@ func (p *Parser) parseForumPage(ctx context.Context, pageURL string, types []str
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 
 	for _, block := range rows {
-		tidM := regexp.MustCompile(`tr-(\d+)`).FindStringSubmatch(block)
+		tidM := inlineReB10e5aRe.FindStringSubmatch(block)
 		if len(tidM) < 2 {
 			continue
 		}

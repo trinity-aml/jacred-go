@@ -23,6 +23,24 @@ var (
 	rowSplitRe     = regexp.MustCompile(`class="table_fon"`)
 	cleanupSpaceRe = regexp.MustCompile(`[\n\r\t\x{00A0} ]+`)
 	firstNamePart  = regexp.MustCompile(`(\[|/|\(|\|)`)
+
+	inlineYearRe = regexp.MustCompile(`^([^/]+) / ([^/]+) / ([^/\(]+) \(([0-9]{4})\)`)
+	inlineYearRe2 = regexp.MustCompile(`^([^/\(]+) / ([^/\(]+) \(([0-9]{4})\)`)
+	inlineYearRe3 = regexp.MustCompile(`^([^/\(]+) \(([0-9]{4})\)`)
+	inlineYearRe4 = regexp.MustCompile(`^([^/]+) \[[^\]]+\] \(([0-9]{4})(\)|-)`)
+	inlineYearRe5 = regexp.MustCompile(`^([^/]+) / ([^/]+) / ([^/\[]+) \[[^\]]+\] +\(([0-9]{4})(\)|-)`)
+	inlineYearRe6 = regexp.MustCompile(`^([^/]+) / ([^/\[]+) \[[^\]]+\] +\(([0-9]{4})(\)|-)`)
+	inlineYearRe7 = regexp.MustCompile(`^([^/\[]+) \[[^\]]+\] +\(([0-9]{4})(\)|-)`)
+	mp10Re = regexp.MustCompile(`(?is)href="/?download/([0-9]+)"`)
+	mp1Re = regexp.MustCompile(`(?is)<td>([0-9]+ [^ ]+ [0-9]+)</td><td[^>]*>`)
+	mp2Re = regexp.MustCompile(`(?is)href="/(torrent/[0-9]+)`)
+	mp3Re = regexp.MustCompile(`(?is)class="url"[^>]*>([^<]+)</a>`)
+	mp4Re = regexp.MustCompile(`(?is)class="url">([^<]+)</a></td>`)
+	mp5Re = regexp.MustCompile(`(?is)<td align="right">([^<\n\r]+)`)
+	mp6Re = regexp.MustCompile(`(?is)alt="S">\s*<font [^>]+>([0-9]+)</font>`)
+	mp7Re = regexp.MustCompile(`(?is)alt="S"[^>]*>\s*<font[^>]*>([0-9]+)`)
+	mp8Re = regexp.MustCompile(`(?is)alt="L">\s*<font [^>]+>([0-9]+)</font>`)
+	mp9Re = regexp.MustCompile(`(?is)alt="L"[^>]*>\s*<font[^>]*>([0-9]+)`)
 )
 
 var categories = []string{"80", "79", "6", "5", "55", "57", "76"}
@@ -152,8 +170,7 @@ func parsePageHTML(host, cat, body string) []filedb.TorrentDetails {
 	parts := rowSplitRe.Split(body, -1)
 	out := make([]filedb.TorrentDetails, 0, len(parts))
 	for _, row := range parts[1:] {
-		match := func(pattern string, group int) string {
-			re := regexp.MustCompile(`(?is)` + pattern)
+		reFind := func(re *regexp.Regexp, group int) string {
 			m := re.FindStringSubmatch(row)
 			if len(m) <= group {
 				return ""
@@ -162,28 +179,28 @@ func parsePageHTML(host, cat, body string) []filedb.TorrentDetails {
 			res = cleanupSpaceRe.ReplaceAllString(strings.ReplaceAll(res, "\u0000", " "), " ")
 			return strings.TrimSpace(strings.ReplaceAll(res, "\u00a0", " "))
 		}
-		createTime := parseCreateTime(match(`<td>([0-9]+ [^ ]+ [0-9]+)</td><td[^>]*>`, 1), "02.01.06")
+		createTime := parseCreateTime(reFind(mp1Re, 1), "02.01.06")
 		if createTime.IsZero() {
 			continue
 		}
-		urlPath := match(`href="/(torrent/[0-9]+)`, 1)
-		title := match(`class="url"[^>]*>([^<]+)</a>`, 1)
+		urlPath := reFind(mp2Re, 1)
+		title := reFind(mp3Re, 1)
 		if title == "" {
-			title = match(`class="url">([^<]+)</a></td>`, 1)
+			title = reFind(mp4Re, 1)
 		}
-		sizeName := match(`<td align="right">([^<\n\r]+)`, 1)
+		sizeName := reFind(mp5Re, 1)
 		if title == "" || urlPath == "" {
 			continue
 		}
-		sidRaw := match(`alt="S">\s*<font [^>]+>([0-9]+)</font>`, 1)
+		sidRaw := reFind(mp6Re, 1)
 		if sidRaw == "" {
-			sidRaw = match(`alt="S"[^>]*>\s*<font[^>]*>([0-9]+)`, 1)
+			sidRaw = reFind(mp7Re, 1)
 		}
-		pirRaw := match(`alt="L">\s*<font [^>]+>([0-9]+)</font>`, 1)
+		pirRaw := reFind(mp8Re, 1)
 		if pirRaw == "" {
-			pirRaw = match(`alt="L"[^>]*>\s*<font[^>]*>([0-9]+)`, 1)
+			pirRaw = reFind(mp9Re, 1)
 		}
-		downloadID := match(`href="/?download/([0-9]+)"`, 1)
+		downloadID := reFind(mp10Re, 1)
 		if downloadID == "" {
 			continue
 		}
@@ -296,14 +313,14 @@ func (p *Parser) downloadMagnet(ctx context.Context, downloadID string) (string,
 func parseTitle(cat, title string) (string, string, int) {
 	switch cat {
 	case "80":
-		if m := regexp.MustCompile(`^([^/]+) / ([^/]+) / ([^/\(]+) \(([0-9]{4})\)`).FindStringSubmatch(title); len(m) == 5 {
+		if m := inlineYearRe.FindStringSubmatch(title); len(m) == 5 {
 			return strings.TrimSpace(m[1]), strings.TrimSpace(m[3]), atoi(m[4])
 		}
-		if m := regexp.MustCompile(`^([^/\(]+) / ([^/\(]+) \(([0-9]{4})\)`).FindStringSubmatch(title); len(m) == 4 {
+		if m := inlineYearRe2.FindStringSubmatch(title); len(m) == 4 {
 			return strings.TrimSpace(m[1]), strings.TrimSpace(m[2]), atoi(m[3])
 		}
 	case "79":
-		if m := regexp.MustCompile(`^([^/\(]+) \(([0-9]{4})\)`).FindStringSubmatch(title); len(m) == 3 {
+		if m := inlineYearRe3.FindStringSubmatch(title); len(m) == 3 {
 			return strings.TrimSpace(m[1]), "", atoi(m[2])
 		}
 	case "6":
@@ -318,32 +335,32 @@ func parseTitle(cat, title string) (string, string, int) {
 			}
 		}
 	case "5":
-		if m := regexp.MustCompile(`^([^/]+) \[[^\]]+\] \(([0-9]{4})(\)|-)`).FindStringSubmatch(title); len(m) >= 3 {
+		if m := inlineYearRe4.FindStringSubmatch(title); len(m) >= 3 {
 			return strings.TrimSpace(m[1]), "", atoi(m[2])
 		}
 	case "55", "57", "76":
 		if strings.Contains(title, " / ") {
 			if strings.Contains(title, "[") && strings.Contains(title, "]") {
-				if m := regexp.MustCompile(`^([^/]+) / ([^/]+) / ([^/\[]+) \[[^\]]+\] +\(([0-9]{4})(\)|-)`).FindStringSubmatch(title); len(m) >= 5 {
+				if m := inlineYearRe5.FindStringSubmatch(title); len(m) >= 5 {
 					return strings.TrimSpace(m[1]), strings.TrimSpace(m[3]), atoi(m[4])
 				}
-				if m := regexp.MustCompile(`^([^/]+) / ([^/\[]+) \[[^\]]+\] +\(([0-9]{4})(\)|-)`).FindStringSubmatch(title); len(m) >= 4 {
+				if m := inlineYearRe6.FindStringSubmatch(title); len(m) >= 4 {
 					return strings.TrimSpace(m[1]), strings.TrimSpace(m[2]), atoi(m[3])
 				}
 			} else {
-				if m := regexp.MustCompile(`^([^/]+) / ([^/]+) / ([^/\(]+) \(([0-9]{4})\)`).FindStringSubmatch(title); len(m) == 5 {
+				if m := inlineYearRe.FindStringSubmatch(title); len(m) == 5 {
 					return strings.TrimSpace(m[1]), strings.TrimSpace(m[3]), atoi(m[4])
 				}
-				if m := regexp.MustCompile(`^([^/\(]+) / ([^/\(]+) \(([0-9]{4})\)`).FindStringSubmatch(title); len(m) == 4 {
+				if m := inlineYearRe2.FindStringSubmatch(title); len(m) == 4 {
 					return strings.TrimSpace(m[1]), strings.TrimSpace(m[2]), atoi(m[3])
 				}
 			}
 		} else {
 			if strings.Contains(title, "[") && strings.Contains(title, "]") {
-				if m := regexp.MustCompile(`^([^/\[]+) \[[^\]]+\] +\(([0-9]{4})(\)|-)`).FindStringSubmatch(title); len(m) >= 3 {
+				if m := inlineYearRe7.FindStringSubmatch(title); len(m) >= 3 {
 					return strings.TrimSpace(m[1]), "", atoi(m[2])
 				}
-			} else if m := regexp.MustCompile(`^([^/\(]+) \(([0-9]{4})\)`).FindStringSubmatch(title); len(m) == 3 {
+			} else if m := inlineYearRe3.FindStringSubmatch(title); len(m) == 3 {
 				return strings.TrimSpace(m[1]), "", atoi(m[2])
 			}
 		}
@@ -476,3 +493,4 @@ func isDisabled(values []string, tracker string) bool {
 	}
 	return false
 }
+

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"crypto/subtle"
 	"encoding/json"
 	"fmt"
@@ -275,7 +276,7 @@ func (s *Server) handleCronAnidubParse(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	q := r.URL.Query()
-	res, err := s.AnidubParser.Parse(r.Context(), parseOptionalInt(q, "parseFrom", 0), parseOptionalInt(q, "parseTo", 0))
+	res, err := s.AnidubParser.Parse(context.Background(), parseOptionalInt(q, "parseFrom", 0), parseOptionalInt(q, "parseTo", 0))
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": res.Status})
 		return
@@ -289,7 +290,7 @@ func (s *Server) handleCronKnabenParse(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	q := r.URL.Query()
-	res, err := s.KnabenParser.Parse(r.Context(), parseOptionalInt(q, "from", 0), parseOptionalInt(q, "size", 300), parseOptionalInt(q, "pages", 1), q.Get("query"), parseOptionalInt(q, "hours", 0), defaultString(q.Get("orderBy"), "date"), q.Get("categories"))
+	res, err := s.KnabenParser.Parse(context.Background(), parseOptionalInt(q, "from", 0), parseOptionalInt(q, "size", 300), parseOptionalInt(q, "pages", 1), q.Get("query"), parseOptionalInt(q, "hours", 0), defaultString(q.Get("orderBy"), "date"), q.Get("categories"))
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": res.Status})
 		return
@@ -310,7 +311,7 @@ func (s *Server) handleCronBitruParse(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	res, err := s.BitruParser.Parse(r.Context(), parseOptionalInt(r.URL.Query(), "page", 1))
+	res, err := s.BitruParser.Parse(context.Background(), parseOptionalInt(r.URL.Query(), "page", 1))
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"status": res.Status, "error": err.Error()})
 		return
@@ -323,7 +324,7 @@ func (s *Server) handleCronBitruUpdateTasksParse(w http.ResponseWriter, r *http.
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	res, err := s.BitruParser.UpdateTasksParse(r.Context())
+	res, err := s.BitruParser.UpdateTasksParse(context.Background())
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
@@ -336,7 +337,7 @@ func (s *Server) handleCronBitruParseAllTask(w http.ResponseWriter, r *http.Requ
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	res, err := s.BitruParser.ParseAllTask(r.Context())
+	res, err := s.BitruParser.ParseAllTask(context.Background())
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
@@ -349,7 +350,7 @@ func (s *Server) handleCronBitruParseLatest(w http.ResponseWriter, r *http.Reque
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	res, err := s.BitruParser.ParseLatest(r.Context(), parseOptionalInt(r.URL.Query(), "pages", 5))
+	res, err := s.BitruParser.ParseLatest(context.Background(), parseOptionalInt(r.URL.Query(), "pages", 5))
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
@@ -363,7 +364,7 @@ func (s *Server) handleCronAnilibertyParse(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	q := r.URL.Query()
-	res, err := s.AnilibertyParser.Parse(r.Context(), parseOptionalInt(q, "parseFrom", 0), parseOptionalInt(q, "parseTo", 0))
+	res, err := s.AnilibertyParser.Parse(context.Background(), parseOptionalInt(q, "parseFrom", 0), parseOptionalInt(q, "parseTo", 0))
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": res.Status})
 		return
@@ -376,7 +377,7 @@ func (s *Server) handleCronAnimelayerParse(w http.ResponseWriter, r *http.Reques
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	res, err := s.AnimelayerParser.Parse(r.Context(), parseOptionalInt(r.URL.Query(), "maxpage", 1))
+	res, err := s.AnimelayerParser.Parse(context.Background(), parseOptionalInt(r.URL.Query(), "maxpage", 1))
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": res.Status})
 		return
@@ -390,7 +391,7 @@ func (s *Server) handleCronBitruAPIParse(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	q := r.URL.Query()
-	res, err := s.BitruAPIParser.Parse(r.Context(), parseOptionalInt(q, "limit", 100))
+	res, err := s.BitruAPIParser.Parse(context.Background(), parseOptionalInt(q, "limit", 100))
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": res.Status})
 		return
@@ -412,7 +413,7 @@ func (s *Server) handleCronBitruAPIParseFromDate(w http.ResponseWriter, r *http.
 		return
 	}
 	q := r.URL.Query()
-	res, err := s.BitruAPIParser.ParseFromDate(r.Context(), q.Get("lastnewtor"), parseOptionalInt(q, "limit", 100))
+	res, err := s.BitruAPIParser.ParseFromDate(context.Background(), q.Get("lastnewtor"), parseOptionalInt(q, "limit", 100))
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": res.Status})
 		return
@@ -433,7 +434,7 @@ func (s *Server) handleCronRutorParse(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	res, err := s.RutorParser.Parse(r.Context(), parseOptionalInt(r.URL.Query(), "page", 0))
+	res, err := s.RutorParser.Parse(context.Background(), parseOptionalInt(r.URL.Query(), "page", 0))
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": res.Status})
 		return
@@ -455,7 +456,7 @@ func (s *Server) handleCronMegapeerParse(w http.ResponseWriter, r *http.Request)
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	res, err := s.MegapeerParser.Parse(r.Context(), parseOptionalInt(r.URL.Query(), "maxpage", 1))
+	res, err := s.MegapeerParser.Parse(context.Background(), parseOptionalInt(r.URL.Query(), "maxpage", 1))
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": res.Status})
 		return
@@ -477,7 +478,7 @@ func (s *Server) handleCronTorrentByParse(w http.ResponseWriter, r *http.Request
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	res, err := s.TorrentByParser.Parse(r.Context(), parseOptionalInt(r.URL.Query(), "page", 0))
+	res, err := s.TorrentByParser.Parse(context.Background(), parseOptionalInt(r.URL.Query(), "page", 0))
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": res.Status})
 		return
@@ -499,7 +500,7 @@ func (s *Server) handleCronTorrentByUpdateTasksParse(w http.ResponseWriter, r *h
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	res, err := s.TorrentByParser.UpdateTasksParse(r.Context())
+	res, err := s.TorrentByParser.UpdateTasksParse(context.Background())
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
@@ -512,7 +513,7 @@ func (s *Server) handleCronTorrentByParseAllTask(w http.ResponseWriter, r *http.
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	textRes, err := s.TorrentByParser.ParseAllTask(r.Context())
+	textRes, err := s.TorrentByParser.ParseAllTask(context.Background())
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
@@ -525,7 +526,7 @@ func (s *Server) handleCronTorrentByParseLatest(w http.ResponseWriter, r *http.R
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	textRes, err := s.TorrentByParser.ParseLatest(r.Context(), parseOptionalInt(r.URL.Query(), "pages", 5))
+	textRes, err := s.TorrentByParser.ParseLatest(context.Background(), parseOptionalInt(r.URL.Query(), "pages", 5))
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
@@ -538,7 +539,7 @@ func (s *Server) handleCronRutrackerParse(w http.ResponseWriter, r *http.Request
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	res, err := s.RutrackerParser.Parse(r.Context(), parseOptionalInt(r.URL.Query(), "page", 0))
+	res, err := s.RutrackerParser.Parse(context.Background(), parseOptionalInt(r.URL.Query(), "page", 0))
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": res.Status})
 		return
@@ -551,7 +552,7 @@ func (s *Server) handleCronRutrackerUpdateTasksParse(w http.ResponseWriter, r *h
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	res, err := s.RutrackerParser.UpdateTasksParse(r.Context())
+	res, err := s.RutrackerParser.UpdateTasksParse(context.Background())
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
@@ -564,7 +565,7 @@ func (s *Server) handleCronRutrackerParseAllTask(w http.ResponseWriter, r *http.
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	textRes, err := s.RutrackerParser.ParseAllTask(r.Context())
+	textRes, err := s.RutrackerParser.ParseAllTask(context.Background())
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
@@ -577,7 +578,7 @@ func (s *Server) handleCronRutrackerParseLatest(w http.ResponseWriter, r *http.R
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	textRes, err := s.RutrackerParser.ParseLatest(r.Context(), parseOptionalInt(r.URL.Query(), "pages", 5))
+	textRes, err := s.RutrackerParser.ParseLatest(context.Background(), parseOptionalInt(r.URL.Query(), "pages", 5))
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
@@ -590,7 +591,7 @@ func (s *Server) handleCronKinozalParse(w http.ResponseWriter, r *http.Request) 
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	res, err := s.KinozalParser.Parse(r.Context(), parseOptionalInt(r.URL.Query(), "page", 0))
+	res, err := s.KinozalParser.Parse(context.Background(), parseOptionalInt(r.URL.Query(), "page", 0))
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": res.Status})
 		return
@@ -603,7 +604,7 @@ func (s *Server) handleCronKinozalUpdateTasksParse(w http.ResponseWriter, r *htt
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	res, err := s.KinozalParser.UpdateTasksParse(r.Context())
+	res, err := s.KinozalParser.UpdateTasksParse(context.Background())
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
@@ -616,7 +617,7 @@ func (s *Server) handleCronKinozalParseAllTask(w http.ResponseWriter, r *http.Re
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	textRes, err := s.KinozalParser.ParseAllTask(r.Context())
+	textRes, err := s.KinozalParser.ParseAllTask(context.Background())
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
@@ -629,7 +630,7 @@ func (s *Server) handleCronKinozalParseLatest(w http.ResponseWriter, r *http.Req
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	textRes, err := s.KinozalParser.ParseLatest(r.Context(), parseOptionalInt(r.URL.Query(), "pages", 5))
+	textRes, err := s.KinozalParser.ParseLatest(context.Background(), parseOptionalInt(r.URL.Query(), "pages", 5))
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
@@ -642,7 +643,7 @@ func (s *Server) handleCronTolokaParse(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	res, err := s.TolokaParser.Parse(r.Context(), parseOptionalInt(r.URL.Query(), "page", 0))
+	res, err := s.TolokaParser.Parse(context.Background(), parseOptionalInt(r.URL.Query(), "page", 0))
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": res.Status})
 		return
@@ -655,7 +656,7 @@ func (s *Server) handleCronTolokaUpdateTasksParse(w http.ResponseWriter, r *http
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	res, err := s.TolokaParser.UpdateTasksParse(r.Context())
+	res, err := s.TolokaParser.UpdateTasksParse(context.Background())
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
@@ -668,7 +669,7 @@ func (s *Server) handleCronTolokaParseAllTask(w http.ResponseWriter, r *http.Req
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	textRes, err := s.TolokaParser.ParseAllTask(r.Context())
+	textRes, err := s.TolokaParser.ParseAllTask(context.Background())
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
@@ -681,7 +682,7 @@ func (s *Server) handleCronTolokaParseLatest(w http.ResponseWriter, r *http.Requ
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	textRes, err := s.TolokaParser.ParseLatest(r.Context(), parseOptionalInt(r.URL.Query(), "pages", 5))
+	textRes, err := s.TolokaParser.ParseLatest(context.Background(), parseOptionalInt(r.URL.Query(), "pages", 5))
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
@@ -695,7 +696,7 @@ func (s *Server) handleCronSelezenParse(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	q := r.URL.Query()
-	res, err := s.SelezenParser.Parse(r.Context(), parseOptionalInt(q, "parseFrom", 0), parseOptionalInt(q, "parseTo", 0))
+	res, err := s.SelezenParser.Parse(context.Background(), parseOptionalInt(q, "parseFrom", 0), parseOptionalInt(q, "parseTo", 0))
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": res.Status})
 		return
@@ -708,7 +709,7 @@ func (s *Server) handleCronAnistarParse(w http.ResponseWriter, r *http.Request) 
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	res, err := s.AnistarParser.Parse(r.Context(), parseOptionalInt(r.URL.Query(), "limit_page", 0))
+	res, err := s.AnistarParser.Parse(context.Background(), parseOptionalInt(r.URL.Query(), "limit_page", 0))
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": res.Status})
 		return
@@ -722,7 +723,7 @@ func (s *Server) handleCronAnifilmParse(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	fullparse := parseBool(r.URL.Query().Get("fullparse"))
-	res, err := s.AnifilmParser.Parse(r.Context(), fullparse)
+	res, err := s.AnifilmParser.Parse(context.Background(), fullparse)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": res.Status})
 		return
@@ -735,7 +736,7 @@ func (s *Server) handleCronBaibakoParse(w http.ResponseWriter, r *http.Request) 
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	res, err := s.BaibakoParser.Parse(r.Context(), parseOptionalInt(r.URL.Query(), "maxpage", 10))
+	res, err := s.BaibakoParser.Parse(context.Background(), parseOptionalInt(r.URL.Query(), "maxpage", 10))
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": res.Status})
 		return
@@ -748,7 +749,7 @@ func (s *Server) handleCronLeproductionParse(w http.ResponseWriter, r *http.Requ
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	res, err := s.LeproductionParser.Parse(r.Context(), parseOptionalInt(r.URL.Query(), "limit_page", 0))
+	res, err := s.LeproductionParser.Parse(context.Background(), parseOptionalInt(r.URL.Query(), "limit_page", 0))
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": res.Status})
 		return
@@ -761,7 +762,7 @@ func (s *Server) handleCronMazepaParse(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	res, err := s.MazepaParser.Parse(r.Context())
+	res, err := s.MazepaParser.Parse(context.Background())
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": res.Status})
 		return
@@ -1021,7 +1022,7 @@ func (s *Server) handleCronNNMClubParse(w http.ResponseWriter, r *http.Request) 
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	res, err := s.NNMClubParser.Parse(r.Context(), parseOptionalInt(r.URL.Query(), "page", 0))
+	res, err := s.NNMClubParser.Parse(context.Background(), parseOptionalInt(r.URL.Query(), "page", 0))
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": res.Status})
 		return
@@ -1034,7 +1035,7 @@ func (s *Server) handleCronNNMClubUpdateTasksParse(w http.ResponseWriter, r *htt
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	res, err := s.NNMClubParser.UpdateTasksParse(r.Context())
+	res, err := s.NNMClubParser.UpdateTasksParse(context.Background())
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
@@ -1047,7 +1048,7 @@ func (s *Server) handleCronNNMClubParseAllTask(w http.ResponseWriter, r *http.Re
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	text, err := s.NNMClubParser.ParseAllTask(r.Context())
+	text, err := s.NNMClubParser.ParseAllTask(context.Background())
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
@@ -1060,7 +1061,7 @@ func (s *Server) handleCronNNMClubParseLatest(w http.ResponseWriter, r *http.Req
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	text, err := s.NNMClubParser.ParseLatest(r.Context(), parseOptionalInt(r.URL.Query(), "pages", 5))
+	text, err := s.NNMClubParser.ParseLatest(context.Background(), parseOptionalInt(r.URL.Query(), "pages", 5))
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
@@ -1124,7 +1125,7 @@ func (s *Server) handleCronLostfilmParse(w http.ResponseWriter, r *http.Request)
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	res, err := s.LostfilmParser.Parse(r.Context())
+	res, err := s.LostfilmParser.Parse(context.Background())
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": res.Status})
 		return
@@ -1138,7 +1139,7 @@ func (s *Server) handleCronLostfilmParsePages(w http.ResponseWriter, r *http.Req
 		return
 	}
 	q := r.URL.Query()
-	res, err := s.LostfilmParser.ParsePages(r.Context(), parseOptionalInt(q, "pageFrom", 1), parseOptionalInt(q, "pageTo", 1))
+	res, err := s.LostfilmParser.ParsePages(context.Background(), parseOptionalInt(q, "pageFrom", 1), parseOptionalInt(q, "pageTo", 1))
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": res.Status})
 		return
@@ -1151,7 +1152,7 @@ func (s *Server) handleCronLostfilmParseSeasonPacks(w http.ResponseWriter, r *ht
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	textRes, err := s.LostfilmParser.ParseSeasonPacks(r.Context(), r.URL.Query().Get("series"))
+	textRes, err := s.LostfilmParser.ParseSeasonPacks(context.Background(), r.URL.Query().Get("series"))
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
@@ -1164,7 +1165,7 @@ func (s *Server) handleCronLostfilmVerifyPage(w http.ResponseWriter, r *http.Req
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	items, status, err := s.LostfilmParser.VerifyPage(r.Context(), r.URL.Query().Get("series"))
+	items, status, err := s.LostfilmParser.VerifyPage(context.Background(), r.URL.Query().Get("series"))
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return

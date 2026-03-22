@@ -31,6 +31,8 @@ var (
 	downloadRe   = regexp.MustCompile(`(?is)href="([^\"]*engine/download\.php\?id=[0-9]+)"`)
 	sizeSpanRe   = regexp.MustCompile(`(?is)Размер[^:]*:\s*<span[^>]*>([^<]+)</span>`)
 	sizeInlineRe = regexp.MustCompile(`(?is)Размер[^:]*:\s*([^<]+)`)
+
+	inlineHrefClsRe = regexp.MustCompile(`<div class="story|<div class="rand|<li><a href="`)
 )
 
 type pendingTorrent struct {
@@ -138,7 +140,7 @@ func parsePageHTML(host, htmlBody string, page int, now time.Time) []pendingTorr
 	if strings.Contains(decoded, "<article") {
 		rows = strings.Split(decoded, "<article")
 	} else {
-		rows = regexp.MustCompile(`<div class="story|<div class="rand|<li><a href="`).Split(decoded, -1)
+		rows = inlineHrefClsRe.Split(decoded, -1)
 	}
 	out := make([]pendingTorrent, 0, len(rows))
 	seen := map[string]struct{}{}

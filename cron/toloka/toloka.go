@@ -56,6 +56,10 @@ var (
 	serialSlashRe   = regexp.MustCompile(`^([^/\(\[]+)/([^/\(\[]+) \([^\)]+\) \(([0-9]{4})(\)|-)`)
 	serialTriRe     = regexp.MustCompile(`^([^/\(\[]+)/[^/\(\[]+/([^/\(\[]+) \([^\)]+\) \(([0-9]{4})(\)|-)`)
 	serialRusOnlyRe = regexp.MustCompile(`^([^/\(\[]+) \([^\)]+\) \(([0-9]{4})(\)|-)`)
+
+	inlineReB76eb1Re = regexp.MustCompile(`toloka_sid=([^;]+)(;|$)`)
+	inlineReB96ce0Re = regexp.MustCompile(`(?i)Збір коштів`)
+	inlineReEbc614Re = regexp.MustCompile(`toloka_data=([^;]+)(;|$)`)
 )
 
 type Task struct {
@@ -514,7 +518,7 @@ func parsePageHTML(host, cat, htmlBody string) []parseItem {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	out := make([]parseItem, 0, len(rows))
 	for _, row := range rows[1:] {
-		if strings.TrimSpace(row) == "" || regexp.MustCompile(`(?i)Збір коштів`).MatchString(row) {
+		if strings.TrimSpace(row) == "" || inlineReB96ce0Re.MatchString(row) {
 			continue
 		}
 		createRaw := matchDecode(createTimeRe, row)
@@ -690,10 +694,10 @@ func (p *Parser) takeLogin(ctx context.Context) (string, error) {
 	var sid, data string
 	for _, setCookie := range resp.Header.Values("Set-Cookie") {
 		for _, part := range strings.Split(setCookie, ",") {
-			if m := regexp.MustCompile(`toloka_sid=([^;]+)(;|$)`).FindStringSubmatch(part); len(m) > 1 {
+			if m := inlineReB76eb1Re.FindStringSubmatch(part); len(m) > 1 {
 				sid = strings.TrimSpace(m[1])
 			}
-			if m := regexp.MustCompile(`toloka_data=([^;]+)(;|$)`).FindStringSubmatch(part); len(m) > 1 {
+			if m := inlineReEbc614Re.FindStringSubmatch(part); len(m) > 1 {
 				data = strings.TrimSpace(m[1])
 			}
 		}

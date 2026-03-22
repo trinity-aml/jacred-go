@@ -30,6 +30,14 @@ var (
 	dateRe        = regexp.MustCompile(`(\d{2}\.\d{2}\.\d{4})`)
 	newMovieRe    = regexp.MustCompile(`<a\s+class="new-movie"\s+href="(?:https?://[^"]+)?(/series/[^"]+)"[^>]*title="([^"]*)"[^>]*>([\s\S]*?)</a>`)
 	vLinkRe       = regexp.MustCompile(`href="(/V/\?[^"]+)"`)
+
+	inlineClsDateRe = regexp.MustCompile(`<div\s+class="date"[^>]*>(\d{2}\.\d{2}\.\d{4})</div>`)
+	inlineClsTitleRe = regexp.MustCompile(`<div\s+class="title"[^>]*>\s*([^<]+)\s*</div>`)
+	inlineRe30150bRe = regexp.MustCompile(`\bSD\b`)
+	inlineRe8987e7Re = regexp.MustCompile(`PlayEpisode\s*\(\s*'(\d+)'\s*,\s*'(\d+)'\s*,\s*'(\d+)'\s*\)`)
+	inlineReA2d1f6Re = regexp.MustCompile(`Play(?:Movie|Episode)\s*\(\s*'(\d+)'\s*,\s*'(\d+)'\s*,\s*'(\d+)'\s*\)`)
+	inlineReA41f09Re = regexp.MustCompile(`[?&]s=(\d+)`)
+	inlineReB39b2dRe = regexp.MustCompile(`^series/([^/]+)(?:/|$)`)
 )
 
 type Parser struct {
@@ -225,7 +233,7 @@ func (p *Parser) ParseSeasonPacks(ctx context.Context, series string) (string, e
 		if !strings.Contains(strings.ToLower(vPath), "e=999") {
 			continue
 		}
-		seasonMatch := regexp.MustCompile(`[?&]s=(\d+)`).FindStringSubmatch(vPath)
+		seasonMatch := inlineReA41f09Re.FindStringSubmatch(vPath)
 		if len(seasonMatch) < 2 {
 			continue
 		}
@@ -439,11 +447,11 @@ func (p *Parser) collectFromNewMovie(htmlBody, host string, page int) []filedb.T
 		if urlPath == "" || !strings.HasPrefix(urlPath, "series/") {
 			continue
 		}
-		titleMatch := regexp.MustCompile(`<div\s+class="title"[^>]*>\s*([^<]+)\s*</div>`).FindStringSubmatch(block)
+		titleMatch := inlineClsTitleRe.FindStringSubmatch(block)
 		if len(titleMatch) < 2 {
 			continue
 		}
-		dm := regexp.MustCompile(`<div\s+class="date"[^>]*>(\d{2}\.\d{2}\.\d{4})</div>`).FindAllStringSubmatch(block, -1)
+		dm := inlineClsDateRe.FindAllStringSubmatch(block, -1)
 		if len(dm) == 0 && page != 1 {
 			continue
 		}
@@ -676,7 +684,7 @@ func (p *Parser) getMagnet(ctx context.Context, host, cookie, episodeURL string)
 	epID := firstSubmatch(body, `PlayEpisode\s*\(\s*['"](\d{6,})['"]`)
 	if epID == "" {
 		// Fallback: build from 3-arg form PlayEpisode('780','2','5') → 780002005
-		m := regexp.MustCompile(`PlayEpisode\s*\(\s*'(\d+)'\s*,\s*'(\d+)'\s*,\s*'(\d+)'\s*\)`).FindStringSubmatch(body)
+		m := inlineRe8987e7Re.FindStringSubmatch(body)
 		if len(m) == 4 {
 			s, _ := strconv.Atoi(m[2])
 			e, _ := strconv.Atoi(m[3])
@@ -732,7 +740,7 @@ func (p *Parser) getVURLFromMoviePage(ctx context.Context, host, cookie, movieUR
 	id := firstSubmatch(body, `Play(?:Movie|Episode)\s*\(\s*['"](\d{6,})['"]`)
 	if id == "" {
 		// Fallback: 3-arg form PlayEpisode('780','2','5') → 780002005
-		m := regexp.MustCompile(`Play(?:Movie|Episode)\s*\(\s*'(\d+)'\s*,\s*'(\d+)'\s*,\s*'(\d+)'\s*\)`).FindStringSubmatch(body)
+		m := inlineReA2d1f6Re.FindStringSubmatch(body)
 		if len(m) == 4 {
 			s, _ := strconv.Atoi(m[2])
 			e, _ := strconv.Atoi(m[3])
@@ -805,7 +813,7 @@ func (p *Parser) parseVPageQualityLinks(ctx context.Context, host, cookie, searc
 		if quality == "" && strings.Contains(strings.ToLower(linkText), "mp4") {
 			quality = "720p"
 		}
-		if quality == "" && regexp.MustCompile(`\bSD\b`).MatchString(linkText) {
+		if quality == "" && inlineRe30150bRe.MatchString(linkText) {
 			quality = "SD"
 		}
 		if quality == "" {
@@ -868,7 +876,7 @@ func buildHorBreakerNameMap(htmlBody string) map[string][2]string {
 		if _, ok := out[key]; !ok {
 			out[key] = [2]string{name, original}
 		}
-		if m := regexp.MustCompile(`^series/([^/]+)(?:/|$)`).FindStringSubmatch(urlPath); len(m) > 1 {
+		if m := inlineReB39b2dRe.FindStringSubmatch(urlPath); len(m) > 1 {
 			seriesKey := "series/" + strings.TrimRight(m[1], "/")
 			if _, ok := out[seriesKey]; !ok {
 				out[seriesKey] = [2]string{name, original}

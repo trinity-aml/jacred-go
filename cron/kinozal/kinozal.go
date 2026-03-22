@@ -37,6 +37,11 @@ var (
 	movieShortRe  = regexp.MustCompile(`^([^/\(]+) / ([0-9]{4})`)
 	rusSeasonRe   = regexp.MustCompile(`^([^\(/]+) (\([^\)/]+\) )?\([0-9\-]+ сезоны?: [^\)/]+\) ([^/]+ )?/ ([0-9]{4})`)
 	rusSeriesRe   = regexp.MustCompile(`^([^\(/]+) (\([^\)/]+\) )?\([^\)/]+\) ([^/]+ )?/ ([0-9]{4})`)
+	mp1Re = regexp.MustCompile(`(?is)href="/(details.php\?id=[0-9]+)"`)
+	mp2Re = regexp.MustCompile(`(?is)class="r[0-9]+">([^<]+)</a>`)
+	mp3Re = regexp.MustCompile(`(?is)<td class='sl_s'>([0-9]+)</td>`)
+	mp4Re = regexp.MustCompile(`(?is)<td class='sl_p'>([0-9]+)</td>`)
+	mp5Re = regexp.MustCompile(`(?is)<td class='s'>([0-9\.,]+ (МБ|ГБ))</td>`)
 	forSeasonRe   = regexp.MustCompile(`^([^\(/]+) (\([^\)/]+\) )?\([0-9\-]+ сезоны?: [^\)/]+\) ([^/]+ )?/ ([^\(/]+) / ([0-9]{4})`)
 	forSeriesRe   = regexp.MustCompile(`^([^\(/]+) (\([^\)/]+\) )?\([^\)/]+\) ([^/]+ )?/ ([^\(/]+) / ([0-9]{4})`)
 	forShortRe    = regexp.MustCompile(`^([^\(/]+) / ([^\(/]+) / ([0-9]{4})`)
@@ -44,6 +49,9 @@ var (
 	tvShortRe     = regexp.MustCompile(`^([^/\(]+) (\([^\)/]+\) )?/ ([0-9]{4})`)
 	idURLRe       = regexp.MustCompile(`\?id=([0-9]+)`)
 	hashRe        = regexp.MustCompile(`<ul><li>Инфо хеш: +([^<]+)</li>`)
+
+	inlineReC4d16cRe = regexp.MustCompile(`uid=([0-9]+)`)
+	inlineReF31405Re = regexp.MustCompile(`pass=([^;]+)(;|$)`)
 )
 
 type Task struct {
@@ -334,12 +342,11 @@ func (p *Parser) parsePage(ctx context.Context, cat string, page int, arg string
 		if strings.TrimSpace(row) == "" {
 			continue
 		}
-		match := func(pattern string, idx ...int) string {
+		reFind := func(re *regexp.Regexp, idx ...int) string {
 			group := 1
 			if len(idx) > 0 {
 				group = idx[0]
 			}
-			re := regexp.MustCompile(`(?is)` + pattern)
 			m := re.FindStringSubmatch(row)
 			if len(m) <= group {
 				return ""
@@ -359,11 +366,11 @@ func (p *Parser) parsePage(ctx context.Context, cat string, page int, arg string
 		if createTime.IsZero() {
 			continue
 		}
-		urlPath := match(`href="/(details.php\?id=[0-9]+)"`)
-		title := match(`class="r[0-9]+">([^<]+)</a>`)
-		sidRaw := match(`<td class='sl_s'>([0-9]+)</td>`)
-		pirRaw := match(`<td class='sl_p'>([0-9]+)</td>`)
-		sizeName := match(`<td class='s'>([0-9\.,]+ (МБ|ГБ))</td>`)
+		urlPath := reFind(mp1Re)
+		title := reFind(mp2Re)
+		sidRaw := reFind(mp3Re)
+		pirRaw := reFind(mp4Re)
+		sizeName := reFind(mp5Re)
 		if urlPath == "" || title == "" || sidRaw == "" || pirRaw == "" || sizeName == "" {
 			continue
 		}
@@ -563,12 +570,12 @@ func (p *Parser) takeLogin(ctx context.Context) error {
 	uid, pass := "", ""
 	for _, line := range resp.Header.Values("Set-Cookie") {
 		if uid == "" && strings.Contains(line, "uid=") {
-			if m := regexp.MustCompile(`uid=([0-9]+)`).FindStringSubmatch(line); len(m) > 1 {
+			if m := inlineReC4d16cRe.FindStringSubmatch(line); len(m) > 1 {
 				uid = m[1]
 			}
 		}
 		if pass == "" && strings.Contains(line, "pass=") {
-			if m := regexp.MustCompile(`pass=([^;]+)(;|$)`).FindStringSubmatch(line); len(m) > 1 {
+			if m := inlineReF31405Re.FindStringSubmatch(line); len(m) > 1 {
 				pass = m[1]
 			}
 		}

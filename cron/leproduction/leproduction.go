@@ -46,6 +46,8 @@ var (
 	sizeLeRe      = regexp.MustCompile(`(?i)Размер:\s*<span[^>]*>\s*([0-9]+(?:[.,][0-9]+)?)\s*G[bB]\s*</span>`)
 	qualityRe     = regexp.MustCompile(`(?i)\b([0-9]{3,4}p)\b`)
 	cleanSpaceRe  = regexp.MustCompile(`\s+`)
+
+	inlineRe89769cRe = regexp.MustCompile(`\s*/\s*.*$`)
 )
 
 type Parser struct {
@@ -150,7 +152,7 @@ func (p *Parser) parsePage(ctx context.Context, pageURL, host, cat string, types
 		nameEn := extractMatch(nameEnRe, dhtml)
 		if nameRu == "" {
 			if h1 := extractMatch(h1Re, dhtml); h1 != "" {
-				nameRu = strings.TrimSpace(regexp.MustCompile(`\s*/\s*.*$`).ReplaceAllString(h1, ""))
+				nameRu = strings.TrimSpace(inlineRe89769cRe.ReplaceAllString(h1, ""))
 			}
 		}
 		if nameRu == "" {

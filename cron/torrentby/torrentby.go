@@ -31,6 +31,27 @@ var (
 	cleanupSpaceRe = regexp.MustCompile(`[\n\r\t\x{00A0} ]+`)
 	firstNamePart  = regexp.MustCompile(`(\[|/|\(|\|)`)
 	pageCountRe    = regexp.MustCompile(`href="\?page=([0-9]+)">[0-9]+</a>([\t ]+)?</center></td>`)
+
+	inlineYearRe = regexp.MustCompile(`^([^/\(]+) / [^/]+ / ([^/\(]+) \(([0-9]{4})\)`)
+	inlineYearRe10 = regexp.MustCompile(`^([^/\(]+) / [^/]+ / ([^/\(]+) \(([0-9]{4})(\)|-)`)
+	inlineYearRe11 = regexp.MustCompile(`^([^/\(]+) / ([^/\(]+) \(([0-9]{4})(\)|-)`)
+	inlineYearRe12 = regexp.MustCompile(`^([^/\[]+) \[[^\]]+\] +\(([0-9]{4})(\)|-)`)
+	inlineYearRe13 = regexp.MustCompile(`^([^/\(]+) \(([0-9]{4})(\)|-)`)
+	inlineYearRe2 = regexp.MustCompile(`^([^/\(]+) / ([^/\(]+) \(([0-9]{4})\)`)
+	inlineYearRe3 = regexp.MustCompile(`^([^/\(]+) (/ [^/\(]+)?\(([0-9]{4})\)`)
+	inlineYearRe4 = regexp.MustCompile(`^([^/\(\[]+) / [^/]+ / [^/]+ / ([^/\(\[]+) \[[^\]]+\] +\(([0-9]{4})(\)|-)`)
+	inlineYearRe5 = regexp.MustCompile(`^([^/\(\[]+) / [^/]+ / ([^/\(\[]+) \[[^\]]+\] +\(([0-9]{4})(\)|-)`)
+	inlineYearRe6 = regexp.MustCompile(`^([^/\(\[]+) / ([^/\[]+) \[[^\]]+\] +\(([0-9]{4})(\)|-)`)
+	inlineYearRe7 = regexp.MustCompile(`^([^/\(\[]+) \[[^\]]+\] +\(([0-9]{4})(\)|-)`)
+	inlineYearRe8 = regexp.MustCompile(`^([^/]+) / [^/]+ / ([^/\[]+) \[[^\]]+\] +\(([0-9]{4})(\)|-)`)
+	inlineYearRe9 = regexp.MustCompile(`^([^/]+) / ([^/\[]+) \[[^\]]+\] +\(([0-9]{4})(\)|-)`)
+	mp1Re = regexp.MustCompile(`(?is)>([0-9]{4}-[0-9]{2}-[0-9]{2})</td>`)
+	mp2Re = regexp.MustCompile(`(?is)<a name="search_select" [^>]+ href="/([0-9]+/[^"]+)"`)
+	mp3Re = regexp.MustCompile(`(?is)<a name="search_select" [^>]*>([^<]+)</a>`)
+	mp4Re = regexp.MustCompile(`(?is)<font color="green">&uarr; ([0-9]+)</font>`)
+	mp5Re = regexp.MustCompile(`(?is)<font color="red">&darr; ([0-9]+)</font>`)
+	mp6Re = regexp.MustCompile(`(?is)</td><td style="white-space:nowrap;">([^<]+)</td>`)
+	mp7Re = regexp.MustCompile(`(?is)href="(magnet:\?xt=[^"]+)"`)
 )
 
 var categories = []string{"films", "movies", "serials", "tv", "humor", "cartoons", "anime", "sport"}
@@ -355,12 +376,11 @@ func parsePageHTML(host, cat, htmlBody string, now time.Time) []filedb.TorrentDe
 		if strings.TrimSpace(row) == "" || !strings.Contains(row, "magnet:?xt=urn") {
 			continue
 		}
-		match := func(pattern string, group ...int) string {
+		reFind := func(re *regexp.Regexp, group ...int) string {
 			idx := 1
 			if len(group) > 0 {
 				idx = group[0]
 			}
-			re := regexp.MustCompile(`(?is)` + pattern)
 			m := re.FindStringSubmatch(row)
 			if len(m) <= idx {
 				return ""
@@ -369,7 +389,7 @@ func parsePageHTML(host, cat, htmlBody string, now time.Time) []filedb.TorrentDe
 			return strings.TrimSpace(strings.ReplaceAll(res, "\u0000", " "))
 		}
 
-		createTime := parseCreateTime(match(`>([0-9]{4}-[0-9]{2}-[0-9]{2})</td>`))
+		createTime := parseCreateTime(reFind(mp1Re))
 		if createTime.IsZero() {
 			if strings.Contains(row, ">Сегодня</td>") {
 				createTime = now.UTC()
@@ -380,12 +400,12 @@ func parsePageHTML(host, cat, htmlBody string, now time.Time) []filedb.TorrentDe
 		if createTime.IsZero() {
 			continue
 		}
-		urlPath := match(`<a name="search_select" [^>]+ href="/([0-9]+/[^"]+)"`)
-		title := match(`<a name="search_select" [^>]*>([^<]+)</a>`)
-		sidRaw := match(`<font color="green">&uarr; ([0-9]+)</font>`)
-		pirRaw := match(`<font color="red">&darr; ([0-9]+)</font>`)
-		sizeName := match(`</td><td style="white-space:nowrap;">([^<]+)</td>`)
-		magnet := match(`href="(magnet:\?xt=[^"]+)"`)
+		urlPath := reFind(mp2Re)
+		title := reFind(mp3Re)
+		sidRaw := reFind(mp4Re)
+		pirRaw := reFind(mp5Re)
+		sizeName := reFind(mp6Re)
+		magnet := reFind(mp7Re)
 		if urlPath == "" || title == "" || sidRaw == "" || pirRaw == "" || sizeName == "" || magnet == "" {
 			continue
 		}
@@ -610,52 +630,52 @@ func parseTaskTime(s string, loc *time.Location) time.Time {
 func parseTitle(cat, title string) (string, string, int) {
 	switch cat {
 	case "films":
-		if m := regexp.MustCompile(`^([^/\(]+) / [^/]+ / ([^/\(]+) \(([0-9]{4})\)`).FindStringSubmatch(title); len(m) == 4 {
+		if m := inlineYearRe.FindStringSubmatch(title); len(m) == 4 {
 			return strings.TrimSpace(m[1]), strings.TrimSpace(m[2]), atoi(m[3])
 		}
-		if m := regexp.MustCompile(`^([^/\(]+) / ([^/\(]+) \(([0-9]{4})\)`).FindStringSubmatch(title); len(m) == 4 {
+		if m := inlineYearRe2.FindStringSubmatch(title); len(m) == 4 {
 			return strings.TrimSpace(m[1]), strings.TrimSpace(m[2]), atoi(m[3])
 		}
 	case "movies":
-		if m := regexp.MustCompile(`^([^/\(]+) (/ [^/\(]+)?\(([0-9]{4})\)`).FindStringSubmatch(title); len(m) == 4 {
+		if m := inlineYearRe3.FindStringSubmatch(title); len(m) == 4 {
 			return strings.TrimSpace(m[1]), "", atoi(m[3])
 		}
 	case "serials":
-		if m := regexp.MustCompile(`^([^/\(\[]+) / [^/]+ / [^/]+ / ([^/\(\[]+) \[[^\]]+\] +\(([0-9]{4})(\)|-)`).FindStringSubmatch(title); len(m) >= 4 {
+		if m := inlineYearRe4.FindStringSubmatch(title); len(m) >= 4 {
 			return strings.TrimSpace(m[1]), strings.TrimSpace(m[2]), atoi(m[3])
 		}
-		if m := regexp.MustCompile(`^([^/\(\[]+) / [^/]+ / ([^/\(\[]+) \[[^\]]+\] +\(([0-9]{4})(\)|-)`).FindStringSubmatch(title); len(m) >= 4 {
+		if m := inlineYearRe5.FindStringSubmatch(title); len(m) >= 4 {
 			return strings.TrimSpace(m[1]), strings.TrimSpace(m[2]), atoi(m[3])
 		}
-		if m := regexp.MustCompile(`^([^/\(\[]+) / ([^/\[]+) \[[^\]]+\] +\(([0-9]{4})(\)|-)`).FindStringSubmatch(title); len(m) >= 4 {
+		if m := inlineYearRe6.FindStringSubmatch(title); len(m) >= 4 {
 			return strings.TrimSpace(m[1]), strings.TrimSpace(m[2]), atoi(m[3])
 		}
-		if m := regexp.MustCompile(`^([^/\(\[]+) \[[^\]]+\] +\(([0-9]{4})(\)|-)`).FindStringSubmatch(title); len(m) >= 3 {
+		if m := inlineYearRe7.FindStringSubmatch(title); len(m) >= 3 {
 			return strings.TrimSpace(m[1]), "", atoi(m[2])
 		}
 	case "cartoons", "anime", "tv", "humor", "sport":
 		if strings.Contains(title, " / ") {
 			if strings.Contains(title, "[") && strings.Contains(title, "]") {
-				if m := regexp.MustCompile(`^([^/]+) / [^/]+ / ([^/\[]+) \[[^\]]+\] +\(([0-9]{4})(\)|-)`).FindStringSubmatch(title); len(m) >= 4 {
+				if m := inlineYearRe8.FindStringSubmatch(title); len(m) >= 4 {
 					return strings.TrimSpace(m[1]), strings.TrimSpace(m[2]), atoi(m[3])
 				}
-				if m := regexp.MustCompile(`^([^/]+) / ([^/\[]+) \[[^\]]+\] +\(([0-9]{4})(\)|-)`).FindStringSubmatch(title); len(m) >= 4 {
+				if m := inlineYearRe9.FindStringSubmatch(title); len(m) >= 4 {
 					return strings.TrimSpace(m[1]), strings.TrimSpace(m[2]), atoi(m[3])
 				}
 			} else {
-				if m := regexp.MustCompile(`^([^/\(]+) / [^/]+ / ([^/\(]+) \(([0-9]{4})(\)|-)`).FindStringSubmatch(title); len(m) >= 4 {
+				if m := inlineYearRe10.FindStringSubmatch(title); len(m) >= 4 {
 					return strings.TrimSpace(m[1]), strings.TrimSpace(m[2]), atoi(m[3])
 				}
-				if m := regexp.MustCompile(`^([^/\(]+) / ([^/\(]+) \(([0-9]{4})(\)|-)`).FindStringSubmatch(title); len(m) >= 4 {
+				if m := inlineYearRe11.FindStringSubmatch(title); len(m) >= 4 {
 					return strings.TrimSpace(m[1]), strings.TrimSpace(m[2]), atoi(m[3])
 				}
 			}
 		} else {
 			if strings.Contains(title, "[") && strings.Contains(title, "]") {
-				if m := regexp.MustCompile(`^([^/\[]+) \[[^\]]+\] +\(([0-9]{4})(\)|-)`).FindStringSubmatch(title); len(m) >= 3 {
+				if m := inlineYearRe12.FindStringSubmatch(title); len(m) >= 3 {
 					return strings.TrimSpace(m[1]), "", atoi(m[2])
 				}
-			} else if m := regexp.MustCompile(`^([^/\(]+) \(([0-9]{4})(\)|-)`).FindStringSubmatch(title); len(m) >= 3 {
+			} else if m := inlineYearRe13.FindStringSubmatch(title); len(m) >= 3 {
 				return strings.TrimSpace(m[1]), "", atoi(m[2])
 			}
 		}
@@ -810,3 +830,4 @@ func asInt(v any) int {
 		return 0
 	}
 }
+
