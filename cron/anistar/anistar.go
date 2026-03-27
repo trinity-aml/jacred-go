@@ -238,22 +238,22 @@ func (p *Parser) parseDetailPage(ctx context.Context, postURL, referer, host str
 		}
 		title := titleBase + " — " + epLabel
 
-		out = append(out, filedb.TorrentDetails{
-			"trackerName":  trackerName,
-			"types":        types,
-			"url":          uniqueURL,
-			"title":        title,
-			"sid":          sid,
-			"pir":          pir,
-			"createTime":   createTime.UTC().Format(time.RFC3339Nano),
-			"updateTime":   now,
-			"name":         name,
-			"originalname": core.FirstNonEmpty(original, name),
-			"relased":      relased,
-			"_sn":          core.SearchName(name),
-			"_so":          core.SearchName(core.FirstNonEmpty(original, name)),
-			"_tid":         tid,
-		})
+		out = append(out, filedb.TorrentRecord{
+			TrackerName: trackerName,
+			Types: types,
+			URL: uniqueURL,
+			Title: title,
+			Sid: sid,
+			Pir: pir,
+			CreateTime: createTime.UTC().Format(time.RFC3339Nano),
+			UpdateTime: now,
+			Name: name,
+			OriginalName: core.FirstNonEmpty(original, name),
+			Relased: relased,
+			SearchName: core.SearchName(name),
+			SearchOrig: core.SearchName(core.FirstNonEmpty(original, name)),
+			TID: tid,
+		}.ToMap())
 	}
 	return out, nil
 }

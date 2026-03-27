@@ -188,21 +188,21 @@ func (p *Parser) fetchPage(ctx context.Context, host, cat string, page int, crea
 		}
 		relased, _ := strconv.Atoi(yearStr)
 
-		out = append(out, filedb.TorrentDetails{
-			"trackerName":  trackerName,
-			"types":        []string{"anime"},
-			"url":          fullURL,
-			"title":        title,
-			"sid":          1,
-			"pir":          0,
-			"createTime":   createTime.UTC().Format(time.RFC3339Nano),
-			"updateTime":   now,
-			"name":         name,
-			"originalname": originalname,
-			"relased":      relased,
-			"_sn":          core.SearchName(name),
-			"_so":          core.SearchName(core.FirstNonEmpty(originalname, name)),
-		})
+		out = append(out, filedb.TorrentRecord{
+			TrackerName: trackerName,
+			Types: []string{"anime"},
+			URL: fullURL,
+			Title: title,
+			Sid: 1,
+			Pir: 0,
+			CreateTime: createTime.UTC().Format(time.RFC3339Nano),
+			UpdateTime: now,
+			Name: name,
+			OriginalName: originalname,
+			Relased: relased,
+			SearchName: core.SearchName(name),
+			SearchOrig: core.SearchName(core.FirstNonEmpty(originalname, name)),
+		}.ToMap())
 	}
 	return out, nil
 }

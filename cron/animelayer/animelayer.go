@@ -174,21 +174,21 @@ func (p *Parser) parsePage(ctx context.Context, page int) (int, int, int, int, i
 		sid, _ := strconv.Atoi(matchFirst(sidRe, row))
 		pir, _ := strconv.Atoi(matchFirst(pirRe, row))
 		fullURL := strings.TrimRight(baseHost, "/") + "/" + strings.Trim(urlPath, "/") + "/"
-		torrents = append(torrents, filedb.TorrentDetails{
-			"trackerName":  trackerName,
-			"types":        []string{"anime"},
-			"url":          fullURL,
-			"title":        title,
-			"sid":          sid,
-			"pir":          pir,
-			"createTime":   createTime.UTC().Format(time.RFC3339Nano),
-			"updateTime":   time.Now().UTC().Format(time.RFC3339Nano),
-			"name":         name,
-			"originalname": original,
-			"relased":      relased,
-			"_sn":          core.SearchName(name),
-			"_so":          core.SearchName(firstNonEmpty(original, name)),
-		})
+		torrents = append(torrents, filedb.TorrentRecord{
+			TrackerName: trackerName,
+			Types: []string{"anime"},
+			URL: fullURL,
+			Title: title,
+			Sid: sid,
+			Pir: pir,
+			CreateTime: createTime.UTC().Format(time.RFC3339Nano),
+			UpdateTime: time.Now().UTC().Format(time.RFC3339Nano),
+			Name: name,
+			OriginalName: original,
+			Relased: relased,
+			SearchName: core.SearchName(name),
+			SearchOrig: core.SearchName(firstNonEmpty(original, name)),
+		}.ToMap())
 	}
 	return p.saveTorrents(ctx, cookie, torrents)
 }

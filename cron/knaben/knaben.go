@@ -370,7 +370,7 @@ func mapHit(h hit) filedb.TorrentDetails {
 	if strings.TrimSpace(h.Tracker) != "" && !strings.Contains(title, h.Tracker) {
 		title = title + " | " + strings.TrimSpace(h.Tracker)
 	}
-	res := filedb.TorrentDetails{"trackerName": trackerName, "types": types, "url": detailURL, "title": title, "sid": h.Seeders, "pir": h.Peers, "size": float64(h.Bytes), "sizeName": formatSize(h.Bytes), "createTime": createTime.Format(time.RFC3339Nano), "updateTime": updateTime.Format(time.RFC3339Nano), "magnet": strings.TrimSpace(h.MagnetURL), "name": name, "originalname": name, "relased": relased, "quality": qualityFromCategoryID(h.CategoryID)}
+	res := filedb.TorrentRecord{TrackerName: trackerName, Types: types, URL: detailURL, Title: title, Sid: h.Seeders, Pir: h.Peers, Size: float64(h.Bytes), SizeName: formatSize(h.Bytes), CreateTime: createTime.Format(time.RFC3339Nano), UpdateTime: updateTime.Format(time.RFC3339Nano), Magnet: strings.TrimSpace(h.MagnetURL), Name: name, OriginalName: name, Relased: relased, Quality: qualityFromCategoryID(h.CategoryID)}.ToMap()
 	if strings.TrimSpace(h.MagnetURL) == "" && strings.TrimSpace(h.Link) != "" {
 		res["_sn"] = strings.TrimSpace(h.Link)
 	}

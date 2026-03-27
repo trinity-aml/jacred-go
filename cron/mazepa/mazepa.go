@@ -280,25 +280,25 @@ func (p *Parser) parseForumPage(ctx context.Context, pageURL string, types []str
 			videotype = "hdr"
 		}
 
-		out = append(out, filedb.TorrentDetails{
-			"trackerName":  trackerName,
-			"types":        types,
-			"url":          fmt.Sprintf("%s/viewtopic.php?t=%s", host, tid),
-			"title":        title,
-			"name":         name,
-			"originalname": core.FirstNonEmpty(original, name),
-			"magnet":       magnet,
-			"sizeName":     sizeName,
-			"quality":      quality,
-			"videotype":    videotype,
-			"sid":          sid,
-			"pir":          pir,
-			"createTime":   createTime.UTC().Format(time.RFC3339Nano),
-			"updateTime":   now,
-			"relased":      year,
-			"_sn":          core.SearchName(name),
-			"_so":          core.SearchName(core.FirstNonEmpty(original, name)),
-		})
+		out = append(out, filedb.TorrentRecord{
+			TrackerName: trackerName,
+			Types: types,
+			URL: fmt.Sprintf("%s/viewtopic.php?t=%s", host, tid),
+			Title: title,
+			Name: name,
+			OriginalName: core.FirstNonEmpty(original, name),
+			Magnet: magnet,
+			SizeName: sizeName,
+			Quality: quality,
+			VideoType: videotype,
+			Sid: sid,
+			Pir: pir,
+			CreateTime: createTime.UTC().Format(time.RFC3339Nano),
+			UpdateTime: now,
+			Relased: year,
+			SearchName: core.SearchName(name),
+			SearchOrig: core.SearchName(core.FirstNonEmpty(original, name)),
+		}.ToMap())
 	}
 
 	sig := ""

@@ -231,23 +231,23 @@ func (p *Parser) parsePage(ctx context.Context, pageURL, host, cat string, types
 
 			url := fmt.Sprintf("%s?q=%s&id=%s", postURL, qDigits, tid)
 
-			out = append(out, filedb.TorrentDetails{
-				"trackerName":  trackerName,
-				"types":        types,
-				"url":          url,
-				"title":        title,
-				"sid":          sid,
-				"pir":          pir,
-				"createTime":   now,
-				"updateTime":   now,
-				"name":         nameRu,
-				"originalname": core.FirstNonEmpty(nameEn, nameRu),
-				"relased":      relased,
-				"magnet":       magnet,
-				"_sn":          core.SearchName(nameRu),
-				"_so":          core.SearchName(core.FirstNonEmpty(nameEn, nameRu)),
-				"_tid":         tid,
-			})
+			out = append(out, filedb.TorrentRecord{
+				TrackerName: trackerName,
+				Types: types,
+				URL: url,
+				Title: title,
+				Sid: sid,
+				Pir: pir,
+				CreateTime: now,
+				UpdateTime: now,
+				Name: nameRu,
+				OriginalName: core.FirstNonEmpty(nameEn, nameRu),
+				Relased: relased,
+				Magnet: magnet,
+				SearchName: core.SearchName(nameRu),
+				SearchOrig: core.SearchName(core.FirstNonEmpty(nameEn, nameRu)),
+				TID: tid,
+			}.ToMap())
 		}
 
 		if p.Config.Leproduction.ParseDelay > 0 {

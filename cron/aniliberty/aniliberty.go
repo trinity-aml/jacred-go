@@ -216,25 +216,25 @@ func convertTorrent(host string, it apiTorrent) (filedb.TorrentDetails, bool) {
 	if it.Type != nil {
 		videotype = strings.ToLower(strings.TrimSpace(it.Type.Value))
 	}
-	return filedb.TorrentDetails{
-		"trackerName":  trackerName,
-		"types":        determineTypes(releaseType(it.Release)),
-		"url":          urlv,
-		"title":        title,
-		"sid":          it.Seeders,
-		"pir":          it.Leechers,
-		"createTime":   createTime.UTC().Format(time.RFC3339Nano),
-		"updateTime":   updateTime.UTC().Format(time.RFC3339Nano),
-		"name":         name,
-		"originalname": original,
-		"relased":      year,
-		"magnet":       strings.TrimSpace(it.Magnet),
-		"sizeName":     formatSize(it.Size),
-		"quality":      parseQuality(valueOrEmpty(it.Quality)),
-		"videotype":    videotype,
-		"_sn":          core.SearchName(name),
-		"_so":          core.SearchName(firstNonEmpty(original, name)),
-	}, true
+	return filedb.TorrentRecord{
+		TrackerName: trackerName,
+		Types: determineTypes(releaseType(it.Release)),
+		URL: urlv,
+		Title: title,
+		Sid: it.Seeders,
+		Pir: it.Leechers,
+		CreateTime: createTime.UTC().Format(time.RFC3339Nano),
+		UpdateTime: updateTime.UTC().Format(time.RFC3339Nano),
+		Name: name,
+		OriginalName: original,
+		Relased: year,
+		Magnet: strings.TrimSpace(it.Magnet),
+		SizeName: formatSize(it.Size),
+		Quality: parseQuality(valueOrEmpty(it.Quality)),
+		VideoType: videotype,
+		SearchName: core.SearchName(name),
+		SearchOrig: core.SearchName(firstNonEmpty(original, name)),
+	}.ToMap(), true
 }
 
 func (p *Parser) saveTorrents(items []filedb.TorrentDetails) (int, int, int, int, error) {

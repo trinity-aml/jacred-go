@@ -214,23 +214,23 @@ func parsePageHTML(host, cat, body string) []filedb.TorrentDetails {
 		}
 		sid, _ := strconv.Atoi(sidRaw)
 		pir, _ := strconv.Atoi(pirRaw)
-		out = append(out, filedb.TorrentDetails{
-			"trackerName":  trackerName,
-			"types":        types,
-			"url":          strings.TrimRight(host, "/") + "/" + strings.TrimLeft(urlPath, "/"),
-			"title":        title,
-			"sid":          sid,
-			"pir":          pir,
-			"sizeName":     sizeName,
-			"createTime":   createTime.UTC().Format(time.RFC3339Nano),
-			"updateTime":   now,
-			"name":         name,
-			"originalname": original,
-			"relased":      relased,
-			"downloadId":   downloadID,
-			"_sn":          core.SearchName(name),
-			"_so":          core.SearchName(firstNonEmpty(original, name)),
-		})
+		out = append(out, filedb.TorrentRecord{
+			TrackerName: trackerName,
+			Types: types,
+			URL: strings.TrimRight(host, "/") + "/" + strings.TrimLeft(urlPath, "/"),
+			Title: title,
+			Sid: sid,
+			Pir: pir,
+			SizeName: sizeName,
+			CreateTime: createTime.UTC().Format(time.RFC3339Nano),
+			UpdateTime: now,
+			Name: name,
+			OriginalName: original,
+			Relased: relased,
+			DownloadID: downloadID,
+			SearchName: core.SearchName(name),
+			SearchOrig: core.SearchName(firstNonEmpty(original, name)),
+		}.ToMap())
 	}
 	return out
 }

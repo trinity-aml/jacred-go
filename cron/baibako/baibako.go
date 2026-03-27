@@ -240,21 +240,21 @@ func (p *Parser) fetchPage(ctx context.Context, host string, page int) ([]filedb
 		}
 		downloadURI := host + "/" + strings.TrimLeft(dm[1], "/")
 
-		out = append(out, filedb.TorrentDetails{
-			"trackerName":  trackerName,
-			"types":        []string{"serial"},
-			"url":          fullURL,
-			"title":        title,
-			"sid":          1,
-			"pir":          0,
-			"createTime":   ct.UTC().Format(time.RFC3339Nano),
-			"updateTime":   now,
-			"name":         name,
-			"originalname": core.FirstNonEmpty(original, name),
-			"_sn":          core.SearchName(name),
-			"_so":          core.SearchName(core.FirstNonEmpty(original, name)),
-			"_downloadURI": downloadURI,
-		})
+		out = append(out, filedb.TorrentRecord{
+			TrackerName: trackerName,
+			Types: []string{"serial"},
+			URL: fullURL,
+			Title: title,
+			Sid: 1,
+			Pir: 0,
+			CreateTime: ct.UTC().Format(time.RFC3339Nano),
+			UpdateTime: now,
+			Name: name,
+			OriginalName: core.FirstNonEmpty(original, name),
+			SearchName: core.SearchName(name),
+			SearchOrig: core.SearchName(core.FirstNonEmpty(original, name)),
+			DownloadURI: downloadURI,
+		}.ToMap())
 	}
 	return out, nil
 }

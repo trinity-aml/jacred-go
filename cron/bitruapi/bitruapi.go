@@ -292,20 +292,20 @@ func (p *Parser) mapToTorrentDetails(item *apiItem) filedb.TorrentDetails {
 	}
 	detailURL := strings.TrimRight(p.Config.Bitru.Host, "/") + "/details.php?id=" + strconv.FormatInt(int64(item.Torrent.ID), 10)
 	createTime := time.Unix(int64(item.Torrent.Added), 0).UTC()
-	res := filedb.TorrentDetails{
-		"trackerName": "bitru",
-		"types":       types,
-		"url":         detailURL,
-		"title":       htmlDecode(strings.TrimSpace(titlePart)),
-		"sid":         int(item.Torrent.Seeders),
-		"pir":         int(item.Torrent.Leechers),
-		"size":        float64(item.Torrent.Size),
-		"sizeName":    formatSize(int64(item.Torrent.Size)),
-		"createTime":  createTime.Format(time.RFC3339Nano),
-		"name":        name,
-		"relased":     relased,
-		"_sn":         strings.TrimSpace(item.Torrent.File),
-	}
+	res := filedb.TorrentRecord{
+		TrackerName: "bitru",
+		Types: types,
+		URL: detailURL,
+		Title: htmlDecode(strings.TrimSpace(titlePart)),
+		Sid: int(item.Torrent.Seeders),
+		Pir: int(item.Torrent.Leechers),
+		Size: float64(item.Torrent.Size),
+		SizeName: formatSize(int64(item.Torrent.Size)),
+		CreateTime: createTime.Format(time.RFC3339Nano),
+		Name: name,
+		Relased: relased,
+		SearchName: strings.TrimSpace(item.Torrent.File),
+	}.ToMap()
 	if originalname != "" {
 		res["originalname"] = originalname
 	}

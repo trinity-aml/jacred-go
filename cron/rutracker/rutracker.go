@@ -404,7 +404,7 @@ func (p *Parser) parsePage(ctx context.Context, cat string, page int) ([]filedb.
 		if len(types) == 0 || strings.TrimSpace(name) == "" {
 			continue
 		}
-		out = append(out, filedb.TorrentDetails{"trackerName": trackerName, "types": types, "url": strings.TrimRight(p.Config.Rutracker.Host, "/") + "/forum/viewtopic.php?t=" + id, "title": title, "sid": sid, "pir": pir, "sizeName": sizeName, "createTime": createTime, "name": name, "originalname": original, "relased": year})
+		out = append(out, filedb.TorrentRecord{TrackerName: trackerName, Types: types, URL: strings.TrimRight(p.Config.Rutracker.Host, "/") + "/forum/viewtopic.php?t=" + id, Title: title, Sid: sid, Pir: pir, SizeName: sizeName, CreateTime: createTime.UTC().Format(time.RFC3339Nano), Name: name, OriginalName: original, Relased: year}.ToMap())
 	}
 	return out, nil
 }

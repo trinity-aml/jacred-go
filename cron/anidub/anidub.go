@@ -182,19 +182,19 @@ func parsePageHTML(host, htmlBody string, page int, now time.Time) []pendingTorr
 		if strings.TrimSpace(original) == "" {
 			original = name
 		}
-		out = append(out, pendingTorrent{Torrent: filedb.TorrentDetails{
-			"trackerName":  trackerName,
-			"types":        determineTypes(urlPath),
-			"url":          fullURL,
-			"title":        title,
-			"sid":          1,
-			"createTime":   createTime.UTC().Format(time.RFC3339Nano),
-			"updateTime":   now.UTC().Format(time.RFC3339Nano),
-			"name":         name,
-			"originalname": original,
-			"_sn":          core.SearchName(name),
-			"_so":          core.SearchName(firstNonEmpty(original, name)),
-		}, DownloadURI: fullURL})
+		out = append(out, pendingTorrent{Torrent: filedb.TorrentRecord{
+			TrackerName: trackerName,
+			Types: determineTypes(urlPath),
+			URL: fullURL,
+			Title: title,
+			Sid: 1,
+			CreateTime: createTime.UTC().Format(time.RFC3339Nano),
+			UpdateTime: now.UTC().Format(time.RFC3339Nano),
+			Name: name,
+			OriginalName: original,
+			SearchName: core.SearchName(name),
+			SearchOrig: core.SearchName(firstNonEmpty(original, name)),
+		}.ToMap(), DownloadURI: fullURL})
 	}
 	return out
 }
