@@ -25,7 +25,6 @@ var (
 	detailsURLRe  = regexp.MustCompile(`(?i)<a href="/?(details\.php\?id=[0-9]+)[^"]+">([^<]+)</a>`)
 	downloadRe    = regexp.MustCompile(`(?i)href="/?(download\.php\?id=([0-9]+))"`)
 	createTimeRe  = regexp.MustCompile(`(?i)<small>Загружена: ([0-9]+ [^ ]+ [0-9]{4}) в [^<]+</small>`)
-	qualityRe     = regexp.MustCompile(`(?i)(1080p|720p)`)
 	nameOrigRe    = regexp.MustCompile(`([^/\(]+)[^/]+/([^/\(]+)`)
 	firstPartRe   = regexp.MustCompile(`(\[|/|\(|\|)`)
 	sessidRe      = regexp.MustCompile(`PHPSESSID=([^;]+)`)
@@ -155,7 +154,7 @@ func (p *Parser) Parse(ctx context.Context, maxpage int) (ParseResult, error) {
 		}
 		res.Fetched += len(items)
 		if len(items) == 0 {
-			continue
+			break // no more pages
 		}
 		added, updated, skipped, failed, err := p.saveTorrents(ctx, host, items)
 		if err != nil {
@@ -194,9 +193,6 @@ func (p *Parser) fetchPage(ctx context.Context, host string, page int) ([]filedb
 		}
 		ct := parseCreateTime(createTimeStr, "02.01.2006")
 		if ct.IsZero() {
-			if page != 0 {
-				continue
-			}
 			ct = time.Now().UTC()
 		}
 
@@ -212,7 +208,7 @@ func (p *Parser) fetchPage(ctx context.Context, host string, page int) ([]filedb
 		title = strings.ReplaceAll(title, "(Оновлюється)", "")
 		title = strings.TrimRight(strings.TrimSpace(title), "/ ")
 
-		if urlPath == "" || title == "" || !qualityRe.MatchString(title) {
+		if urlPath == "" || title == "" {
 			continue
 		}
 		fullURL := host + "/" + strings.TrimLeft(urlPath, "/")
