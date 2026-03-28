@@ -48,9 +48,9 @@ var (
 	mp1Re = regexp.MustCompile(`(?is)>([0-9]{4}-[0-9]{2}-[0-9]{2})</td>`)
 	mp2Re = regexp.MustCompile(`(?is)<a name="search_select" [^>]+ href="/([0-9]+/[^"]+)"`)
 	mp3Re = regexp.MustCompile(`(?is)<a name="search_select" [^>]*>([^<]+)</a>`)
-	mp4Re = regexp.MustCompile(`(?is)<font color="green">&uarr; ([0-9]+)</font>`)
-	mp5Re = regexp.MustCompile(`(?is)<font color="red">&darr; ([0-9]+)</font>`)
-	mp6Re = regexp.MustCompile(`(?is)</td><td style="white-space:nowrap;">([^<]+)</td>`)
+	mp4Re = regexp.MustCompile(`(?is)<font color="green">(?:&uarr;|↑)\s*([0-9]+)</font>`)
+	mp5Re = regexp.MustCompile(`(?is)<font color="red">(?:&darr;|↓)\s*([0-9]+)</font>`)
+	mp6Re = regexp.MustCompile(`(?is)<td style="white-space:nowrap;?">([0-9][^<]+)</td>`)
 	mp7Re = regexp.MustCompile(`(?is)href="(magnet:\?xt=[^"]+)"`)
 )
 
@@ -85,6 +85,7 @@ type Parser struct {
 	DB      *filedb.DB
 	DataDir string
 	Client  *http.Client
+	CF      *core.CFClient
 	loc     *time.Location
 
 	mu               sync.Mutex
@@ -108,10 +109,11 @@ func New(cfg app.Config, db *filedb.DB, dataDir string) *Parser {
 	if err != nil {
 		loc = time.FixedZone("+0200", 2*3600)
 	}
+	cf, _ := core.NewCFClientWithConfig(cfg.CFClient.Profile, cfg.CFClient.UserAgent)
 	p := &Parser{Config: cfg, DB: db, DataDir: dataDir, Client: &http.Client{
 		Timeout:   30 * time.Second,
 		Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}},
-	}, loc: loc, tasks: map[string][]Task{}}
+	}, CF: cf, loc: loc, tasks: map[string][]Task{}}
 	_ = p.loadTasks()
 	return p
 }
@@ -323,11 +325,44 @@ func (p *Parser) ParseLatest(ctx context.Context, pages int) (string, error) {
 
 func (p *Parser) parsePage(ctx context.Context, cat string, page int) ([]filedb.TorrentDetails, error) {
 	baseURL := strings.TrimRight(requestHost(p.Config.TorrentBy), "/")
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("%s/%s/?page=%d", baseURL, cat, page), nil)
+	rawURL := fmt.Sprintf("%s/%s/?page=%d", baseURL, cat, page)
+	cookie := p.cookie()
+	body, err := p.httpGet(ctx, rawURL, cookie)
 	if err != nil {
 		return nil, err
 	}
-	if cookie := p.cookie(); cookie != "" {
+	if len(body) == 0 {
+		return nil, nil
+	}
+	normalized := replaceBadNames(html.UnescapeString(string(body)))
+	return parsePageHTML(strings.TrimRight(p.Config.TorrentBy.Host, "/"), cat, normalized, time.Now().UTC()), nil
+}
+
+func (p *Parser) fetchCategoryRoot(ctx context.Context, cat string) (string, error) {
+	baseURL := strings.TrimRight(requestHost(p.Config.TorrentBy), "/")
+	rawURL := baseURL + "/" + cat + "/"
+	cookie := p.cookie()
+	body, err := p.httpGet(ctx, rawURL, cookie)
+	if err != nil {
+		return "", err
+	}
+	return string(body), nil
+}
+
+// httpGet tries CFClient first, falls back to standard Client.
+func (p *Parser) httpGet(ctx context.Context, rawURL, cookie string) ([]byte, error) {
+	if p.CF != nil {
+		data, status, err := p.CF.Download(rawURL, cookie, "")
+		if err == nil && status >= 200 && status < 300 {
+			return data, nil
+		}
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36")
+	if cookie != "" {
 		req.Header.Set("Cookie", cookie)
 	}
 	resp, err := p.Client.Do(req)
@@ -342,32 +377,7 @@ func (p *Parser) parsePage(ctx context.Context, cat string, page int) ([]filedb.
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("torrentby status %d", resp.StatusCode)
 	}
-	normalized := replaceBadNames(html.UnescapeString(string(body)))
-	return parsePageHTML(strings.TrimRight(p.Config.TorrentBy.Host, "/"), cat, normalized, time.Now().UTC()), nil
-}
-
-func (p *Parser) fetchCategoryRoot(ctx context.Context, cat string) (string, error) {
-	baseURL := strings.TrimRight(requestHost(p.Config.TorrentBy), "/")
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/"+cat+"/", nil)
-	if err != nil {
-		return "", err
-	}
-	if cookie := p.cookie(); cookie != "" {
-		req.Header.Set("Cookie", cookie)
-	}
-	resp, err := p.Client.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", err
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", fmt.Errorf("torrentby status %d", resp.StatusCode)
-	}
-	return string(body), nil
+	return body, nil
 }
 
 func parsePageHTML(host, cat, htmlBody string, now time.Time) []filedb.TorrentDetails {
@@ -565,11 +575,11 @@ func (p *Parser) takeLogin(ctx context.Context) error {
 	log.Printf("torrentby: attempting login to %s as %s", host, p.Config.TorrentBy.Login.U)
 
 	form := url.Values{}
-	form.Set("login_username", p.Config.TorrentBy.Login.U)
-	form.Set("login_password", p.Config.TorrentBy.Login.P)
+	form.Set("username", p.Config.TorrentBy.Login.U)
+	form.Set("password", p.Config.TorrentBy.Login.P)
 	form.Set("login", "Вход")
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, host+"/login.php", strings.NewReader(form.Encode()))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, host+"/login/", strings.NewReader(form.Encode()))
 	if err != nil {
 		return err
 	}
@@ -593,10 +603,11 @@ func (p *Parser) takeLogin(ctx context.Context) error {
 
 	var parts []string
 	for _, line := range resp.Header.Values("Set-Cookie") {
-		parts = append(parts, strings.SplitN(line, ";", 2)[0])
+		part := strings.SplitN(line, ";", 2)[0]
+		parts = append(parts, part)
 	}
 	cookieStr := strings.Join(parts, "; ")
-	if strings.Contains(cookieStr, "bb_") || strings.Contains(cookieStr, "sid") || strings.Contains(cookieStr, "uid") {
+	if strings.Contains(cookieStr, "uid=") && strings.Contains(cookieStr, "pass=") {
 		p.cookieMu.Lock()
 		p.dynCookie = cookieStr
 		p.cookieMu.Unlock()
