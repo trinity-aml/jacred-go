@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"html"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -183,7 +184,9 @@ func (p *Parser) parseRange(ctx context.Context, pageFrom, pageTo int) (ParseRes
 		res.Failed += pageRes.Failed
 		res.FromCache += pageRes.FromCache
 		res.WithoutMag += pageRes.WithoutMag
+		log.Printf("lostfilm: page %d/%d fetched=%d added=%d skipped=%d failed=%d withoutMag=%d", page, pageTo, pageRes.Fetched, pageRes.Added, pageRes.Skipped, pageRes.Failed, pageRes.WithoutMag)
 	}
+	log.Printf("lostfilm: done fetched=%d added=%d skipped=%d failed=%d", res.Fetched, res.Added, res.Skipped, res.Failed)
 	return res, nil
 }
 

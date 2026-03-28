@@ -208,6 +208,7 @@ func (p *Parser) Parse(ctx context.Context, page int) (ParseResult, error) {
 		}
 	}
 	log.Printf("rutracker: parse done, fetched=%d added=%d updated=%d skipped=%d duplicates=%d failed=%d", res.Fetched, res.Added, res.Updated, res.Skipped, res.Duplicates, res.Failed)
+	log.Printf("rutracker: done fetched=%d added=%d skipped=%d failed=%d", res.Fetched, res.Added, res.Skipped, res.Failed)
 	return res, nil
 }
 

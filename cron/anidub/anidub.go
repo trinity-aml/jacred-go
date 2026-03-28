@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"html"
 	"io"
+	"log"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -113,6 +114,7 @@ func (p *Parser) Parse(ctx context.Context, parseFrom, parseTo int) (ParseResult
 		res.Skipped += skipped
 		res.Failed += failed
 	}
+	log.Printf("anidub: done parsed=%d added=%d skipped=%d failed=%d", res.Parsed, res.Added, res.Skipped, res.Failed)
 	return res, nil
 }
 

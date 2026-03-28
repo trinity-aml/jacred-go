@@ -109,6 +109,7 @@ func (p *Parser) Parse(ctx context.Context, maxpage int) (ParseResult, error) {
 			}
 		}
 	}
+	log.Printf("animelayer: done parsed=%d added=%d skipped=%d failed=%d", res.Parsed, res.Added, res.Skipped, res.Failed)
 	return res, nil
 }
 

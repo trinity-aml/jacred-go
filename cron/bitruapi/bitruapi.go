@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -184,6 +185,7 @@ func (p *Parser) parseInternal(ctx context.Context, lastnewtor string, limit int
 		return res, err
 	}
 	_ = p.writeLastNewTor(torrents)
+	log.Printf("bitruapi: done fetched=%d added=%d skipped=%d failed=%d", res.Fetched, res.Added, res.Skipped, res.Failed)
 	return res, nil
 }
 

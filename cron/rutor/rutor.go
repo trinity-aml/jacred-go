@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"html"
 	"io"
+	"log"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -115,7 +116,9 @@ func (p *Parser) Parse(ctx context.Context, page int) (ParseResult, error) {
 		res.Updated += updated
 		res.Skipped += skipped
 		res.Failed += failed
+		log.Printf("rutor: cat=%s fetched=%d added=%d skipped=%d failed=%d", cat, len(items), added, skipped, failed)
 	}
+	log.Printf("rutor: done fetched=%d added=%d skipped=%d failed=%d", res.Fetched, res.Added, res.Skipped, res.Failed)
 	return res, nil
 }
 

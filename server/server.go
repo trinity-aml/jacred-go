@@ -709,7 +709,11 @@ func (s *Server) handleCronAnistarParse(w http.ResponseWriter, r *http.Request) 
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	res, err := s.AnistarParser.Parse(context.Background(), parseOptionalInt(r.URL.Query(), "limit_page", 0))
+	lp := parseOptionalInt(r.URL.Query(), "limit_page", 0)
+	if lp == 0 {
+		lp = parseOptionalInt(r.URL.Query(), "limitPage", 0)
+	}
+	res, err := s.AnistarParser.Parse(context.Background(), lp)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": res.Status})
 		return

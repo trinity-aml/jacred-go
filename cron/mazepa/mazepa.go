@@ -206,6 +206,7 @@ func (p *Parser) Parse(ctx context.Context) (ParseResult, error) {
 			}
 		}
 	}
+	log.Printf("mazepa: done fetched=%d added=%d skipped=%d failed=%d", res.Fetched, res.Added, res.Skipped, res.Failed)
 	return res, nil
 }
 

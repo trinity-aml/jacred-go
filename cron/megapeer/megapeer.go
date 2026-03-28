@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"html"
 	"io"
+	"log"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -106,6 +107,7 @@ func (p *Parser) Parse(ctx context.Context, maxpage int) (ParseResult, error) {
 			res.Updated += updated
 			res.Skipped += skipped
 			res.Failed += failed
+			log.Printf("megapeer: cat=%s page %d/%d fetched=%d added=%d skipped=%d failed=%d", cat, page+1, maxpage, len(items), added, skipped, failed)
 
 			if page < maxpage-1 && p.Config.Megapeer.ParseDelay > 0 {
 				select {
@@ -116,6 +118,7 @@ func (p *Parser) Parse(ctx context.Context, maxpage int) (ParseResult, error) {
 			}
 		}
 	}
+	log.Printf("megapeer: done fetched=%d added=%d skipped=%d failed=%d", res.Fetched, res.Added, res.Skipped, res.Failed)
 	return res, nil
 }
 

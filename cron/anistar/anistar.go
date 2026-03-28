@@ -125,6 +125,7 @@ func (p *Parser) Parse(ctx context.Context, limitPage int) (ParseResult, error) 
 			}
 		}
 	}
+	log.Printf("anistar: done fetched=%d added=%d skipped=%d failed=%d", res.Fetched, res.Added, res.Skipped, res.Failed)
 	return res, nil
 }
 

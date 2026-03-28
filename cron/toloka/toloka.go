@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"html"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -275,7 +276,9 @@ func (p *Parser) Parse(ctx context.Context, page int) (ParseResult, error) {
 		res.Updated += u
 		res.Skipped += s
 		res.Failed += f
+		log.Printf("toloka: cat=%s fetched=%d added=%d skipped=%d failed=%d", cat, len(items), a, s, f)
 	}
+	log.Printf("toloka: done fetched=%d added=%d skipped=%d failed=%d", res.Fetched, res.Added, res.Skipped, res.Failed)
 	return res, nil
 }
 

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -148,6 +149,7 @@ func (p *Parser) Parse(ctx context.Context, from, size, pages int, query string,
 		return res, nil
 	}
 	res.Added, res.Updated, res.Skipped, res.Failed, _ = p.saveTorrents(ctx, all)
+	log.Printf("knaben: done fetched=%d added=%d skipped=%d failed=%d", res.Fetched, res.Added, res.Skipped, res.Failed)
 	return res, nil
 }
 

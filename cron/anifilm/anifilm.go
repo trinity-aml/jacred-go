@@ -119,6 +119,7 @@ func (p *Parser) Parse(ctx context.Context, fullparse bool) (ParseResult, error)
 			res.Failed += f
 		}
 	}
+	log.Printf("anifilm: done fetched=%d added=%d skipped=%d failed=%d", res.Fetched, res.Added, res.Skipped, res.Failed)
 	return res, nil
 }
 

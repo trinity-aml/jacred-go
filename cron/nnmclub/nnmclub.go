@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"html"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -138,7 +139,9 @@ func (p *Parser) Parse(ctx context.Context, page int) (ParseResult, error) {
 		res.Updated += updated
 		res.Skipped += skipped
 		res.Failed += failed
+		log.Printf("nnmclub: cat=%s fetched=%d added=%d skipped=%d failed=%d", cat, len(items), added, skipped, failed)
 	}
+	log.Printf("nnmclub: done fetched=%d added=%d skipped=%d failed=%d", res.Fetched, res.Added, res.Skipped, res.Failed)
 	return res, nil
 }
 

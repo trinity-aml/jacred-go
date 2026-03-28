@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -140,6 +141,7 @@ func (p *Parser) Parse(ctx context.Context, parseFrom, parseTo int) (ParseResult
 			break
 		}
 	}
+	log.Printf("aniliberty: done parsed=%d added=%d skipped=%d failed=%d", res.Parsed, res.Added, res.Skipped, res.Failed)
 	return res, nil
 }
 
