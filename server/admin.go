@@ -1,9 +1,11 @@
 package server
 
 import (
+	"context"
 	"crypto/md5"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net"
 	"net/url"
 	"net/http"
@@ -912,4 +914,147 @@ func (s *Server) handleSyncTracks(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleSyncTracksCheck(w http.ResponseWriter, r *http.Request) {
 	writeBareNotFound(w)
+}
+
+// RunStatsLoop periodically generates Data/temp/stats.json.
+func (s *Server) RunStatsLoop(ctx context.Context) {
+	interval := time.Duration(s.Config.TimeStatsUpdate) * time.Minute
+	if interval <= 0 {
+		interval = 90 * time.Minute
+	}
+	// Generate once at startup (after 30s delay)
+	select {
+	case <-ctx.Done():
+		return
+	case <-time.After(30 * time.Second):
+	}
+	s.generateStatsFile()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(interval):
+			s.generateStatsFile()
+		}
+	}
+}
+
+func (s *Server) generateStatsFile() {
+	if !s.Config.OpenStats {
+		return
+	}
+	start := time.Now()
+	today := todayLocalMidnightUTC()
+
+	type trackerStat struct {
+		LastNewTor  time.Time
+		NewTor      int
+		Update      int
+		Check       int
+		AllTorrents int
+		TrkConfirm  int
+		TrkWait     int
+		TrkError    int
+	}
+
+	trackers := map[string]*trackerStat{}
+
+	for _, item := range s.DB.OrderedMasterEntries() {
+		bucket, err := s.DB.OpenRead(item.Key)
+		if err != nil {
+			continue
+		}
+		for _, t := range bucket {
+			if t == nil {
+				continue
+			}
+			name := strings.TrimSpace(asString(t["trackerName"]))
+			if name == "" {
+				continue
+			}
+			st, ok := trackers[name]
+			if !ok {
+				st = &trackerStat{}
+				trackers[name] = st
+			}
+			st.AllTorrents++
+
+			ct := filedbTime(t, "createTime")
+			ut := filedbTime(t, "updateTime")
+
+			if ct.After(st.LastNewTor) {
+				st.LastNewTor = ct
+			}
+			if !ct.Before(today) {
+				st.NewTor++
+			}
+			if !ut.Before(today) {
+				st.Update++
+			}
+
+			// Tracks stats
+			magnet := strings.TrimSpace(asString(t["magnet"]))
+			if magnet != "" {
+				if t["ffprobe"] != nil {
+					st.TrkConfirm++
+				} else {
+					st.TrkWait++
+				}
+			}
+		}
+	}
+
+	// Build output array sorted by alltorrents desc
+	type tracksInfo struct {
+		Wait    int `json:"wait"`
+		Confirm int `json:"confirm"`
+		Skip    int `json:"skip"`
+	}
+	type statsEntry struct {
+		TrackerName string     `json:"trackerName"`
+		LastNewTor  string     `json:"lastnewtor"`
+		NewTor      int        `json:"newtor"`
+		Update      int        `json:"update"`
+		Check       int        `json:"check"`
+		AllTorrents int        `json:"alltorrents"`
+		Tracks      tracksInfo `json:"tracks"`
+	}
+
+	entries := make([]statsEntry, 0, len(trackers))
+	for name, st := range trackers {
+		lastNew := ""
+		if !st.LastNewTor.IsZero() {
+			lastNew = st.LastNewTor.Format("02.01.2006")
+		}
+		entries = append(entries, statsEntry{
+			TrackerName: name,
+			LastNewTor:  lastNew,
+			NewTor:      st.NewTor,
+			Update:      st.Update,
+			Check:       st.Check,
+			AllTorrents: st.AllTorrents,
+			Tracks: tracksInfo{
+				Wait:    st.TrkWait,
+				Confirm: st.TrkConfirm,
+				Skip:    st.TrkError,
+			},
+		})
+	}
+
+	sort.Slice(entries, func(i, j int) bool {
+		return entries[i].AllTorrents > entries[j].AllTorrents
+	})
+
+	data, err := json.MarshalIndent(entries, "", "  ")
+	if err != nil {
+		log.Printf("stats: marshal error: %v", err)
+		return
+	}
+
+	statsPath := filepath.Join(s.DB.DataDir, "temp", "stats.json")
+	if err := os.WriteFile(statsPath, data, 0o644); err != nil {
+		log.Printf("stats: write error: %v", err)
+		return
+	}
+	log.Printf("stats: generated in %dms, trackers=%d", time.Since(start).Milliseconds(), len(trackers))
 }

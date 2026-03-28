@@ -99,6 +99,7 @@ func main() {
 	go background.RunTrackersCron(ctx, db, "Data", "wwwroot", cfg.Evercache.Enable && cfg.Evercache.ValidHour <= 0)
 
 	srv := server.New(cfg, db, tracksDB, "wwwroot")
+	go srv.RunStatsLoop(ctx)
 	addr := ":" + strconv.Itoa(cfg.ListenPort)
 
 	httpServer := &http.Server{
