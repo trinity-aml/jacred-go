@@ -25,6 +25,7 @@ func parseYAMLIntoConfig(text string, cfg *Config) {
 	inTrackerLogin := false
 	inTracksInterval := false
 	inEvercache := false
+	inCFClient := false
 	currentListTarget := ""
 
 	for _, rawLine := range lines {
@@ -42,6 +43,7 @@ func parseYAMLIntoConfig(text string, cfg *Config) {
 			inTrackerLogin = false
 			inTracksInterval = false
 			inEvercache = false
+			inCFClient = false
 			currentListTarget = ""
 			if section == "globalproxy" {
 				cfg.GlobalProxy = nil
@@ -129,6 +131,17 @@ func parseYAMLIntoConfig(text string, cfg *Config) {
 			}
 			continue
 		}
+		if section == "cfclient" && indent == 2 && strings.Contains(trimmed, ":") {
+			inCFClient = true
+			k, v := splitKV(trimmed)
+			switch k {
+			case "profile":
+				cfg.CFClient.Profile = unquote(v)
+			case "useragent":
+				cfg.CFClient.UserAgent = unquote(v)
+			}
+			continue
+		}
 
 		if indent == 0 && strings.Contains(trimmed, ":") {
 			k, v := splitKV(trimmed)
@@ -146,6 +159,10 @@ func parseYAMLIntoConfig(text string, cfg *Config) {
 				inEvercache = true
 				continue
 			}
+			if k == "cfclient" {
+				inCFClient = true
+				continue
+			}
 		}
 
 		if indent == 2 && strings.HasPrefix(trimmed, "- ") {
@@ -161,6 +178,7 @@ func parseYAMLIntoConfig(text string, cfg *Config) {
 		}
 		_ = inTracksInterval
 		_ = inEvercache
+		_ = inCFClient
 	}
 }
 

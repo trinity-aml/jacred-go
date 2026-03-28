@@ -90,7 +90,7 @@ type Parser struct {
 }
 
 func New(cfg app.Config, db *filedb.DB, dataDir string) *Parser {
-	cf, err := core.NewCFClient()
+	cf, err := core.NewCFClientWithConfig(cfg.CFClient.Profile, cfg.CFClient.UserAgent)
 	if err != nil {
 		log.Printf("bitru: CFClient init error: %v", err)
 	}

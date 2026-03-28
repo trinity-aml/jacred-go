@@ -37,6 +37,11 @@ type TrackerSettings struct {
 	Login      LoginSettings `json:"login"`
 }
 
+type CFClientConfig struct {
+	Profile   string `json:"profile"`   // TLS profile: chrome_144, firefox_117, chrome_133, etc.
+	UserAgent string `json:"useragent"` // Custom User-Agent string
+}
+
 type Config struct {
 	ListenIP           string               `json:"listenip"`
 	ListenPort         int                  `json:"listenport"`
@@ -70,6 +75,7 @@ type Config struct {
 	TimeStatsUpdate    int                  `json:"timeStatsUpdate"`
 	TimeSync           int                  `json:"timeSync"`
 	TimeSyncSpidr      int                  `json:"timeSyncSpidr"`
+	CFClient           CFClientConfig       `json:"cfclient"`
 	Rutor              TrackerSettings      `json:"Rutor"`
 	Megapeer           TrackerSettings      `json:"Megapeer"`
 	TorrentBy          TrackerSettings      `json:"TorrentBy"`
@@ -117,6 +123,7 @@ func DefaultConfig() Config {
 		TimeStatsUpdate:    90,
 		TimeSync:           60,
 		TimeSyncSpidr:      60,
+		CFClient:           CFClientConfig{Profile: "chrome_146", UserAgent: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36"},
 		Rutor:              TrackerSettings{Host: "http://rutor.info", ReqMinute: 8, ParseDelay: 7000},
 		Megapeer:           TrackerSettings{Host: "http://megapeer.vip", ReqMinute: 8, ParseDelay: 7000},
 		TorrentBy:          TrackerSettings{Host: "https://torrent.by", ReqMinute: 8, ParseDelay: 7000},

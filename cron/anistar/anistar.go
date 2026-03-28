@@ -57,7 +57,7 @@ type ParseResult struct {
 }
 
 func New(cfg app.Config, db *filedb.DB, dataDir string) *Parser {
-	cf, err := core.NewCFClient()
+	cf, err := core.NewCFClientWithConfig(cfg.CFClient.Profile, cfg.CFClient.UserAgent)
 	if err != nil {
 		log.Printf("anistar: CFClient init error: %v, falling back to nil", err)
 	}
