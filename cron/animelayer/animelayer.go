@@ -14,6 +14,8 @@ import (
 	"sync"
 	"time"
 
+	"path/filepath"
+
 	"jacred/app"
 	"jacred/core"
 	"jacred/filedb"
@@ -197,6 +199,7 @@ func (p *Parser) parsePage(ctx context.Context, page int) (int, int, int, int, i
 func (p *Parser) saveTorrents(ctx context.Context, cookie string, torrents []filedb.TorrentDetails) (int, int, int, int, int, error) {
 	parsedCount := len(torrents)
 	addedCount, updatedCount, skippedCount, failedCount := 0, 0, 0, 0
+	plog := core.NewParserLog(trackerName, filepath.Join(p.DB.DataDir, "log"))
 	bucketCache := map[string]map[string]filedb.TorrentDetails{}
 	changed := map[string]time.Time{}
 
@@ -239,8 +242,10 @@ func (p *Parser) saveTorrents(ctx context.Context, cookie string, torrents []fil
 		bucket[urlv] = merged
 		changed[key] = fileTime(merged)
 		if exists {
+			plog.WriteUpdated(urlv, asString(t["title"]))
 			updatedCount++
 		} else {
+			plog.WriteAdded(urlv, asString(t["title"]))
 			addedCount++
 		}
 	}

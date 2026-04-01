@@ -437,6 +437,7 @@ func parseSizeBytes(v string) float64 {
 
 func (p *Parser) saveTorrents(ctx context.Context, torrents []filedb.TorrentDetails) (int, int, int, int, error) {
 	added, updated, skipped, failed := 0, 0, 0, 0
+	plog := core.NewParserLog(trackerName, filepath.Join(p.DB.DataDir, "log"))
 	bucketCache := map[string]map[string]filedb.TorrentDetails{}
 	changed := map[string]time.Time{}
 	for _, incoming := range torrents {
@@ -478,6 +479,7 @@ func (p *Parser) saveTorrents(ctx context.Context, torrents []filedb.TorrentDeta
 			magnet = core.TorrentBytesToMagnet(b)
 		}
 		if strings.TrimSpace(magnet) == "" {
+			plog.WriteFailed(urlv, asString(incoming["title"]))
 			failed++
 			continue
 		}
@@ -486,8 +488,10 @@ func (p *Parser) saveTorrents(ctx context.Context, torrents []filedb.TorrentDeta
 		bucket[urlv] = merged
 		changed[key] = fileTime(merged)
 		if exists {
+			plog.WriteUpdated(urlv, asString(incoming["title"]))
 			updated++
 		} else {
+			plog.WriteAdded(urlv, asString(incoming["title"]))
 			added++
 		}
 	}

@@ -413,6 +413,7 @@ func (p *Parser) parsePage(ctx context.Context, cat string, page int) ([]filedb.
 func (p *Parser) saveTorrents(ctx context.Context, torrents []filedb.TorrentDetails, seenURLs map[string]struct{}) (int, int, int, int, int, error) {
 	added, updated, skipped, duplicates, failed := 0, 0, 0, 0, 0
 	skipCached, skipSame, skipEmpty := 0, 0, 0
+	plog := core.NewParserLog(trackerName, filepath.Join(p.DB.DataDir, "log"))
 	bucketCache := map[string]map[string]filedb.TorrentDetails{}
 	changed := map[string]time.Time{}
 	if seenURLs == nil {
@@ -469,6 +470,7 @@ func (p *Parser) saveTorrents(ctx context.Context, torrents []filedb.TorrentDeta
 			}
 		}
 		if strings.TrimSpace(asString(incoming["magnet"])) == "" {
+			plog.WriteFailed(urlv, asString(incoming["title"]))
 			failed++
 			continue
 		}
@@ -480,8 +482,10 @@ func (p *Parser) saveTorrents(ctx context.Context, torrents []filedb.TorrentDeta
 		bucket[urlv] = mergeTorrent(existing, exists, incoming)
 		changed[key] = fileTime(bucket[urlv])
 		if exists {
+			plog.WriteUpdated(urlv, asString(incoming["title"]))
 			updated++
 		} else {
+			plog.WriteAdded(urlv, asString(incoming["title"]))
 			added++
 		}
 	}

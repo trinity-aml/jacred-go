@@ -11,6 +11,8 @@ import (
 	"sync"
 	"time"
 
+	"path/filepath"
+
 	"jacred/app"
 	"jacred/core"
 	"jacred/filedb"
@@ -261,6 +263,7 @@ func (p *Parser) parseDetailPage(ctx context.Context, postURL, referer, host str
 
 func (p *Parser) saveTorrents(ctx context.Context, torrents []filedb.TorrentDetails, host string) (int, int, int, int, error) {
 	added, updated, skipped, failed := 0, 0, 0, 0
+	plog := core.NewParserLog(trackerName, filepath.Join(p.DB.DataDir, "log"))
 	bucketCache := map[string]map[string]filedb.TorrentDetails{}
 	changed := map[string]time.Time{}
 
@@ -304,6 +307,7 @@ func (p *Parser) saveTorrents(ctx context.Context, torrents []filedb.TorrentDeta
 			}
 		}
 		if strings.TrimSpace(asString(incoming["magnet"])) == "" {
+			plog.WriteFailed(urlv, asString(incoming["title"]))
 			failed++
 			continue
 		}
@@ -326,8 +330,10 @@ func (p *Parser) saveTorrents(ctx context.Context, torrents []filedb.TorrentDeta
 		bucket[urlv] = out
 		changed[key] = time.Now().UTC()
 		if exists {
+			plog.WriteUpdated(urlv, asString(incoming["title"]))
 			updated++
 		} else {
+			plog.WriteAdded(urlv, asString(incoming["title"]))
 			added++
 		}
 	}

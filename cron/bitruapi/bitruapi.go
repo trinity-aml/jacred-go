@@ -320,6 +320,7 @@ func (p *Parser) mapToTorrentDetails(item *apiItem) filedb.TorrentDetails {
 
 func (p *Parser) saveTorrentsAndMagnets(ctx context.Context, torrents []filedb.TorrentDetails) (int, int, int, int, error) {
 	added, updated, skipped, failed := 0, 0, 0, 0
+	plog := core.NewParserLog("bitruapi", filepath.Join(p.DB.DataDir, "log"))
 	bucketCache := map[string]map[string]filedb.TorrentDetails{}
 	changed := map[string]time.Time{}
 	for _, incoming := range torrents {
@@ -377,8 +378,10 @@ func (p *Parser) saveTorrentsAndMagnets(ctx context.Context, torrents []filedb.T
 		bucket[urlv] = merged
 		changed[key] = fileTime(merged)
 		if exists {
+			plog.WriteUpdated(urlv, asString(incoming["title"]))
 			updated++
 		} else {
+			plog.WriteAdded(urlv, asString(incoming["title"]))
 			added++
 		}
 	}

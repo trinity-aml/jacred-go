@@ -65,7 +65,52 @@ func (db *DB) SaveChangesToFile() error {
 		_ = gz.Close()
 		return err
 	}
-	return gz.Close()
+	if err := gz.Close(); err != nil {
+		return err
+	}
+	db.dailyBackup(path)
+	return nil
+}
+
+// dailyBackup creates masterDb_DD-MM-YYYY.bz if it doesn't exist today,
+// and removes backups older than 3 days.
+func (db *DB) dailyBackup(masterPath string) {
+	today := time.Now().Format("02-01-2006")
+	backupName := "masterDb_" + today + ".bz"
+	backupPath := filepath.Join(filepath.Dir(masterPath), backupName)
+
+	if _, err := os.Stat(backupPath); os.IsNotExist(err) {
+		src, err := os.Open(masterPath)
+		if err == nil {
+			dst, err := os.Create(backupPath)
+			if err == nil {
+				_, _ = dst.ReadFrom(src)
+				dst.Close()
+			}
+			src.Close()
+		}
+	}
+
+	// Remove backups older than 3 days
+	cutoff := time.Now().AddDate(0, 0, -3)
+	entries, err := os.ReadDir(filepath.Dir(masterPath))
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		name := e.Name()
+		if !strings.HasPrefix(name, "masterDb_") || !strings.HasSuffix(name, ".bz") || name == "masterDb.bz" {
+			continue
+		}
+		dateStr := strings.TrimSuffix(strings.TrimPrefix(name, "masterDb_"), ".bz")
+		t, err := time.Parse("02-01-2006", dateStr)
+		if err != nil {
+			continue
+		}
+		if t.Before(cutoff) {
+			_ = os.Remove(filepath.Join(filepath.Dir(masterPath), name))
+		}
+	}
 }
 
 func (db *DB) FindCorrupt(sampleSize int) map[string]any {

@@ -100,6 +100,8 @@ func main() {
 
 	srv := server.New(cfg, db, tracksDB, "wwwroot")
 	go srv.RunStatsLoop(ctx)
+	go background.RunSyncCron(ctx, cfg, db)
+	go background.RunSyncSpidr(ctx, cfg, db)
 	addr := ":" + strconv.Itoa(cfg.ListenPort)
 
 	httpServer := &http.Server{
