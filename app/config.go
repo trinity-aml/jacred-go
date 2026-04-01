@@ -312,6 +312,12 @@ func setConfigKV(cfg *Config, k, v string) {
 		cfg.LogParsers = parseBool(v)
 	case "logFdb":
 		cfg.LogFdb = parseBool(v)
+	case "logFdbRetentionDays":
+		cfg.LogFdbRetentionDays = parseInt(v)
+	case "logFdbMaxSizeMb":
+		cfg.LogFdbMaxSizeMb = parseInt(v)
+	case "logFdbMaxFiles":
+		cfg.LogFdbMaxFiles = parseInt(v)
 	case "fdbPathLevels":
 		cfg.FDBPathLevels = parseInt(v)
 	case "openstats":

@@ -52,7 +52,15 @@ func (db *DB) PathDb(key string) string {
 	return filepath.Join(db.DataDir, "fdb", md5key[:1], md5key)
 }
 func (db *DB) OpenRead(key string) (map[string]TorrentDetails, error) {
-	return db.openReadPath(db.PathDb(key))
+	path := db.PathDb(key)
+	if cached := db.ecGet(path); cached != nil {
+		return cached, nil
+	}
+	bucket, err := db.openReadPath(path)
+	if err == nil {
+		db.ecPut(path, bucket)
+	}
+	return bucket, err
 }
 func (db *DB) openReadPath(path string) (map[string]TorrentDetails, error) {
 	f, err := os.Open(path)

@@ -52,6 +52,9 @@ type Config struct {
 	Log                bool                 `json:"log"`
 	LogParsers         bool                 `json:"logParsers"`
 	LogFdb             bool                 `json:"logFdb"`
+	LogFdbRetentionDays int                 `json:"logFdbRetentionDays"`
+	LogFdbMaxSizeMb    int                  `json:"logFdbMaxSizeMb"`
+	LogFdbMaxFiles     int                  `json:"logFdbMaxFiles"`
 	FDBPathLevels      int                  `json:"fdbPathLevels"`
 	OpenStats          bool                 `json:"openstats"`
 	OpenSync           bool                 `json:"opensync"`
@@ -124,8 +127,9 @@ func DefaultConfig() Config {
 		TimeSync:           60,
 		TimeSyncSpidr:      60,
 		CFClient:           CFClientConfig{Profile: "chrome_146", UserAgent: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36"},
-		Rutor:              TrackerSettings{Host: "http://rutor.info", ReqMinute: 8, ParseDelay: 7000},
-		Megapeer:           TrackerSettings{Host: "http://megapeer.vip", ReqMinute: 8, ParseDelay: 7000},
+		LogFdbRetentionDays: 7,
+		Rutor:              TrackerSettings{Host: "https://rutor.is", ReqMinute: 8, ParseDelay: 7000},
+		Megapeer:           TrackerSettings{Host: "https://megapeer.vip", ReqMinute: 8, ParseDelay: 7000},
 		TorrentBy:          TrackerSettings{Host: "https://torrent.by", ReqMinute: 8, ParseDelay: 7000},
 		Kinozal:            TrackerSettings{Host: "https://kinozal.tv", ReqMinute: 8, ParseDelay: 7000},
 		NNMClub:            TrackerSettings{Host: "https://nnmclub.to", ReqMinute: 8, ParseDelay: 7000},
