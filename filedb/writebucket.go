@@ -57,6 +57,9 @@ func (db *DB) saveBucketInternal(key string, bucket map[string]TorrentDetails, u
 	if updatedAt.IsZero() {
 		updatedAt = time.Now().UTC()
 	}
+	for _, t := range bucket {
+		UpdateFullDetails(t)
+	}
 	path := db.PathDb(key)
 	if err := writeBucket(path, bucket); err != nil {
 		return err

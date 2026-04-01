@@ -274,6 +274,13 @@ func (p *Parser) saveTorrents(ctx context.Context, torrents []filedb.TorrentDeta
 			continue
 		}
 		existing, exists := bucket[urlv]
+		if !exists {
+			if oldURL, found := filedb.FindByTrackerID(bucket, trackerName, urlv); found {
+				existing = bucket[oldURL]
+				delete(bucket, oldURL)
+				exists = true
+			}
+		}
 		if exists && strings.TrimSpace(asString(existing["title"])) == strings.TrimSpace(asString(incoming["title"])) {
 			skipped++
 			continue

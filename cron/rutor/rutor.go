@@ -245,6 +245,13 @@ func (p *Parser) saveTorrents(torrents []filedb.TorrentDetails) (int, int, int, 
 			continue
 		}
 		existing, exists := bucket[urlv]
+		if !exists {
+			if oldURL, found := filedb.FindByTrackerID(bucket, trackerName, urlv); found {
+				existing = bucket[oldURL]
+				delete(bucket, oldURL)
+				exists = true
+			}
+		}
 		if exists && samePrimary(existing, incoming) {
 			skipped++
 			continue

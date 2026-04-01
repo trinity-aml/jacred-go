@@ -550,6 +550,46 @@ func fileTime(t filedb.TorrentDetails) time.Time {
 	return time.Now().UTC()
 }
 
+// CleanTitleForSearch strips quality tags, season/episode markers, and release group suffixes.
+// Port of C# BitruApiController.CleanTitleForSearch.
+func CleanTitleForSearch(title string) string {
+	if strings.TrimSpace(title) == "" {
+		return title
+	}
+	t := strings.TrimSpace(title)
+	if m := bitruYearBracketRe.FindStringIndex(t); m != nil && m[0] > 0 {
+		t = t[:m[0]]
+	}
+	t = bitruSxxExxRe.ReplaceAllString(t, "")
+	t = bitruSeasonWordRe.ReplaceAllString(t, "")
+	t = bitruSeasonWordRe2.ReplaceAllString(t, "")
+	t = bitruQualityRe.ReplaceAllString(t, "")
+	t = bitruSourceRe.ReplaceAllString(t, "")
+	t = bitruCodecRe.ReplaceAllString(t, "")
+	t = bitruBracketsRe.ReplaceAllString(t, " ")
+	t = bitruMultiSpaceRe.ReplaceAllString(t, " ")
+	t = strings.TrimRight(strings.TrimSpace(t), " /|-")
+	t = bitruReleaseGroupRe.ReplaceAllString(t, "")
+	t = strings.TrimRight(strings.TrimSpace(t), " -")
+	if strings.TrimSpace(t) == "" {
+		return title
+	}
+	return t
+}
+
+var (
+	bitruYearBracketRe  = regexp.MustCompile(`[(\[]\d{4}[)\]]`)
+	bitruSxxExxRe       = regexp.MustCompile(`(?i)\b(S\d{1,2}E\d{1,2}|S\d{1,2}E?\d{0,2}|E\d{1,2}|\d{1,2}x\d{1,2})\b`)
+	bitruSeasonWordRe   = regexp.MustCompile(`(?i)\s*\d{1,2}(-\d{1,2})?\s*сезон\s*.*$`)
+	bitruSeasonWordRe2  = regexp.MustCompile(`(?i)\b(Сезон|Season)\s*\d{1,2}\b.*$`)
+	bitruQualityRe      = regexp.MustCompile(`(?i)\b(2160p|1080p|720p|480p)\b`)
+	bitruSourceRe       = regexp.MustCompile(`(?i)\b(WEB[-\s]?DL|WEB[-\s]?Rip|BDRip|BDRemux|HDRip|BluRay|BRRip|DVDRip|HDTV)\b`)
+	bitruCodecRe        = regexp.MustCompile(`(?i)\b(x264|x265|h\.?264|h\.?265|hevc|avc|aac|ac3|dts)\b`)
+	bitruBracketsRe     = regexp.MustCompile(`[\[\]|]`)
+	bitruMultiSpaceRe   = regexp.MustCompile(`\s{2,}`)
+	bitruReleaseGroupRe = regexp.MustCompile(`(?i)[.\s]+-\s*[A-Za-z0-9][A-Za-z0-9.-]*$`)
+)
+
 func htmlDecode(s string) string {
 	return strings.NewReplacer("&amp;", "&", "&quot;", "\"", "&#39;", "'", "&lt;", "<", "&gt;", ">", "&nbsp;", " ").Replace(s)
 }

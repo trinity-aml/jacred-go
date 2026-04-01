@@ -17,7 +17,11 @@ import (
 	"sync/atomic"
 	"time"
 
+	"regexp"
+
 	"jacred/core"
+	"jacred/cron/bitruapi"
+	"jacred/cron/knaben"
 	"jacred/filedb"
 	"jacred/tracks"
 )
@@ -907,6 +911,506 @@ func firstNonEmpty(vals ...string) string {
 	}
 	return ""
 }
+
+func (s *Server) handleDevResetCheckTime(w http.ResponseWriter, r *http.Request) {
+	if !isLocalRequest(r) {
+		writeJSON(w, http.StatusOK, map[string]any{"badip": true})
+		return
+	}
+	yesterday := time.Now().UTC().AddDate(0, 0, -1).Format(time.RFC3339Nano)
+	for _, item := range s.DB.OrderedMasterEntries() {
+		bucket, err := s.DB.OpenReadOrEmpty(item.Key)
+		if err != nil {
+			continue
+		}
+		changed := false
+		for url, t := range bucket {
+			if t == nil {
+				delete(bucket, url)
+				changed = true
+				continue
+			}
+			t["checkTime"] = yesterday
+			bucket[url] = t
+			changed = true
+		}
+		if changed {
+			_ = s.DB.SaveBucket(item.Key, bucket, time.Now().UTC())
+		}
+	}
+	_ = s.DB.SaveChangesToFile()
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+func (s *Server) handleDevUpdateDetails(w http.ResponseWriter, r *http.Request) {
+	if !isLocalRequest(r) {
+		writeJSON(w, http.StatusOK, map[string]any{"badip": true})
+		return
+	}
+	updated := 0
+	for _, item := range s.DB.OrderedMasterEntries() {
+		bucket, err := s.DB.OpenReadOrEmpty(item.Key)
+		if err != nil {
+			continue
+		}
+		changed := false
+		for url, t := range bucket {
+			if t == nil {
+				delete(bucket, url)
+				changed = true
+				continue
+			}
+			filedb.UpdateFullDetails(t)
+			t["updateTime"] = time.Now().UTC().Format(time.RFC3339Nano)
+			bucket[url] = t
+			changed = true
+			updated++
+		}
+		if changed {
+			_ = s.DB.SaveBucket(item.Key, bucket, time.Now().UTC())
+		}
+	}
+	_ = s.DB.SaveChangesToFile()
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "updated": updated})
+}
+
+func (s *Server) handleDevFixKnabenNames(w http.ResponseWriter, r *http.Request) {
+	if !isLocalRequest(r) {
+		writeJSON(w, http.StatusOK, map[string]any{"badip": true})
+		return
+	}
+	processed, updated, migrated := 0, 0, 0
+	for _, item := range s.DB.OrderedMasterEntries() {
+		bucket, unlock, err := s.DB.OpenReadOrEmptyLocked(item.Key)
+		if err != nil {
+			continue
+		}
+		type migration struct {
+			url    string
+			t      filedb.TorrentDetails
+			newKey string
+		}
+		var toMigrate []migration
+		bucketChanged := false
+		for url, t := range bucket {
+			if t == nil {
+				delete(bucket, url)
+				bucketChanged = true
+				continue
+			}
+			if asString(t["trackerName"]) != "knaben" {
+				continue
+			}
+			processed++
+			source := firstNonEmpty(asString(t["title"]), asString(t["name"]))
+			if source == "" {
+				continue
+			}
+			newName, newRelased := knaben.ParseNameAndYear(source)
+			if newName == "" {
+				continue
+			}
+			suffix := ""
+			if m := knabenSuffixRe.FindString(source); m != "" {
+				suffix = m
+			}
+			newTitle := knaben.BuildTitleForFileDB(strings.TrimRight(source, " ")) + suffix
+			nameChanged := newName != asString(t["name"]) || newName != asString(t["originalname"])
+			relasedChanged := newRelased != asInt(t["relased"])
+			titleChanged := newTitle != asString(t["title"])
+			if !nameChanged && !relasedChanged && !titleChanged {
+				continue
+			}
+			t["name"] = newName
+			t["originalname"] = newName
+			t["relased"] = newRelased
+			t["title"] = newTitle
+			t["_sn"] = core.SearchName(newName)
+			t["_so"] = core.SearchName(newName)
+			bucket[url] = t
+			bucketChanged = true
+			updated++
+			newKey := s.DB.KeyDb(newName, newName)
+			if newKey != "" && newKey != item.Key && strings.Contains(newKey, ":") {
+				toMigrate = append(toMigrate, migration{url, t, newKey})
+			}
+		}
+		for _, m := range toMigrate {
+			delete(bucket, m.url)
+			_ = s.DB.MigrateTorrentToNewKey(m.t, m.newKey)
+			migrated++
+		}
+		if bucketChanged {
+			_ = s.DB.SaveBucketUnlocked(item.Key, bucket, time.Now().UTC())
+		}
+		unlock()
+	}
+	_ = s.DB.SaveChangesToFile()
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "processed": processed, "updated": updated, "migrated": migrated})
+}
+
+func (s *Server) handleDevFixBitruNames(w http.ResponseWriter, r *http.Request) {
+	if !isLocalRequest(r) {
+		writeJSON(w, http.StatusOK, map[string]any{"badip": true})
+		return
+	}
+	processed, updated, migrated := 0, 0, 0
+	for _, item := range s.DB.OrderedMasterEntries() {
+		bucket, unlock, err := s.DB.OpenReadOrEmptyLocked(item.Key)
+		if err != nil {
+			continue
+		}
+		type migration struct {
+			url    string
+			t      filedb.TorrentDetails
+			newKey string
+		}
+		var toMigrate []migration
+		bucketChanged := false
+		for url, t := range bucket {
+			if t == nil {
+				delete(bucket, url)
+				bucketChanged = true
+				continue
+			}
+			if asString(t["trackerName"]) != "bitru" {
+				continue
+			}
+			processed++
+			name := strings.TrimSpace(asString(t["name"]))
+			orig := strings.TrimSpace(asString(t["originalname"]))
+			newName := strings.TrimSpace(bitruapi.CleanTitleForSearch(name))
+			newOrig := strings.TrimSpace(bitruapi.CleanTitleForSearch(orig))
+			if newName == "" {
+				newName = name
+			}
+			if newOrig == "" {
+				newOrig = orig
+			}
+			if newOrig == "" {
+				newOrig = newName
+			}
+			if newName == name && newOrig == orig {
+				continue
+			}
+			t["name"] = newName
+			t["originalname"] = newOrig
+			t["_sn"] = core.SearchName(newName)
+			t["_so"] = core.SearchName(newOrig)
+			bucket[url] = t
+			bucketChanged = true
+			updated++
+			newKey := s.DB.KeyDb(newName, newOrig)
+			if newKey != "" && newKey != item.Key && strings.Contains(newKey, ":") {
+				toMigrate = append(toMigrate, migration{url, t, newKey})
+			}
+		}
+		for _, m := range toMigrate {
+			delete(bucket, m.url)
+			_ = s.DB.MigrateTorrentToNewKey(m.t, m.newKey)
+			migrated++
+		}
+		if bucketChanged {
+			_ = s.DB.SaveBucketUnlocked(item.Key, bucket, time.Now().UTC())
+		}
+		unlock()
+	}
+	_ = s.DB.SaveChangesToFile()
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "processed": processed, "updated": updated, "migrated": migrated})
+}
+
+func (s *Server) handleDevRemoveBucket(w http.ResponseWriter, r *http.Request) {
+	if !isLocalRequest(r) {
+		writeJSON(w, http.StatusOK, map[string]any{"badip": true})
+		return
+	}
+	key := strings.TrimSpace(r.URL.Query().Get("key"))
+	if key == "" || !strings.Contains(key, ":") {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "key required, format: name:originalname"})
+		return
+	}
+	migrateName := strings.TrimSpace(r.URL.Query().Get("migrateName"))
+	migrateOrig := strings.TrimSpace(r.URL.Query().Get("migrateOriginalname"))
+	doMigrate := migrateName != "" && migrateOrig != ""
+	newKey := ""
+	if doMigrate {
+		newKey = s.DB.KeyDb(migrateName, migrateOrig)
+	}
+
+	bucket, unlock, err := s.DB.OpenReadOrEmptyLocked(key)
+	if err != nil {
+		unlock()
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	removedCount, migratedCount := 0, 0
+	for url, t := range bucket {
+		if t == nil || !doMigrate {
+			delete(bucket, url)
+			removedCount++
+			continue
+		}
+		t["name"] = migrateName
+		t["originalname"] = migrateOrig
+		t["_sn"] = core.SearchName(migrateName)
+		t["_so"] = core.SearchName(migrateOrig)
+		delete(bucket, url)
+		_ = s.DB.MigrateTorrentToNewKey(t, newKey)
+		migratedCount++
+	}
+	_ = s.DB.SaveBucketUnlocked(key, bucket, time.Now().UTC())
+	unlock()
+	_ = s.DB.SaveChangesToFile()
+	resp := map[string]any{"ok": true, "key": key, "removed": removedCount, "migrated": migratedCount}
+	if doMigrate {
+		resp["newKey"] = newKey
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func (s *Server) handleDevFixEmptySearchFields(w http.ResponseWriter, r *http.Request) {
+	if !isLocalRequest(r) {
+		writeJSON(w, http.StatusOK, map[string]any{"badip": true})
+		return
+	}
+	snFixed, soFixed, migratedCount := 0, 0, 0
+	for _, item := range s.DB.OrderedMasterEntries() {
+		bucket, unlock, err := s.DB.OpenReadOrEmptyLocked(item.Key)
+		if err != nil {
+			continue
+		}
+		type migration struct {
+			url    string
+			t      filedb.TorrentDetails
+			newKey string
+		}
+		var toMigrate []migration
+		bucketChanged := false
+		for url, t := range bucket {
+			if t == nil {
+				delete(bucket, url)
+				bucketChanged = true
+				continue
+			}
+			sn := asString(t["_sn"])
+			so := asString(t["_so"])
+			if strings.TrimSpace(sn) == "" {
+				name := firstNonEmpty(asString(t["name"]), asString(t["title"]))
+				if name != "" {
+					t["_sn"] = core.SearchName(name)
+					snFixed++
+					bucketChanged = true
+				}
+			}
+			if strings.TrimSpace(so) == "" {
+				orig := firstNonEmpty(asString(t["originalname"]), asString(t["name"]), asString(t["title"]))
+				if orig != "" {
+					t["_so"] = core.SearchName(orig)
+					soFixed++
+					bucketChanged = true
+				}
+			}
+			bucket[url] = t
+			newKey := s.DB.KeyDb(asString(t["name"]), asString(t["originalname"]))
+			if newKey != "" && newKey != item.Key && strings.Contains(newKey, ":") {
+				toMigrate = append(toMigrate, migration{url, t, newKey})
+			}
+		}
+		for _, m := range toMigrate {
+			delete(bucket, m.url)
+			_ = s.DB.MigrateTorrentToNewKey(m.t, m.newKey)
+			migratedCount++
+			bucketChanged = true
+		}
+		if bucketChanged {
+			_ = s.DB.SaveBucketUnlocked(item.Key, bucket, time.Now().UTC())
+		}
+		unlock()
+	}
+	_ = s.DB.SaveChangesToFile()
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "snFixed": snFixed, "soFixed": soFixed, "migrated": migratedCount})
+}
+
+var reBtih = regexp.MustCompile(`(?i)urn:btih:([a-fA-F0-9]{40})`)
+
+func (s *Server) handleDevMigrateAnilibertyUrls(w http.ResponseWriter, r *http.Request) {
+	if !isLocalRequest(r) {
+		writeJSON(w, http.StatusOK, map[string]any{"badip": true})
+		return
+	}
+	processed, totalUpdated, skipped, totalErrors := 0, 0, 0, 0
+	var errors []string
+	for _, item := range s.DB.OrderedMasterEntries() {
+		bucket, err := s.DB.OpenReadOrEmpty(item.Key)
+		if err != nil {
+			continue
+		}
+		type update struct{ oldURL, newURL string; t filedb.TorrentDetails }
+		var toUpdate []update
+		for url, t := range bucket {
+			if t == nil || asString(t["trackerName"]) != "aniliberty" {
+				continue
+			}
+			processed++
+			if strings.Contains(url, "?hash=") {
+				skipped++
+				continue
+			}
+			m := reBtih.FindStringSubmatch(asString(t["magnet"]))
+			if len(m) < 2 {
+				totalErrors++
+				errors = append(errors, "no hash for: "+url)
+				continue
+			}
+			sep := "?"
+			if strings.Contains(url, "?") {
+				sep = "&"
+			}
+			toUpdate = append(toUpdate, update{url, url + sep + "hash=" + m[1], t})
+		}
+		if len(toUpdate) == 0 {
+			continue
+		}
+		for _, u := range toUpdate {
+			delete(bucket, u.oldURL)
+			u.t["url"] = u.newURL
+			bucket[u.newURL] = u.t
+			totalUpdated++
+		}
+		_ = s.DB.SaveBucket(item.Key, bucket, time.Now().UTC())
+	}
+	_ = s.DB.SaveChangesToFile()
+	resp := map[string]any{"ok": true, "totalProcessed": processed, "totalUpdated": totalUpdated, "totalSkipped": skipped, "totalErrors": totalErrors}
+	if len(errors) > 0 {
+		if len(errors) > 10 {
+			errors = errors[:10]
+		}
+		resp["errors"] = errors
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func (s *Server) handleDevRemoveDuplicateAniliberty(w http.ResponseWriter, r *http.Request) {
+	if !isLocalRequest(r) {
+		writeJSON(w, http.StatusOK, map[string]any{"badip": true})
+		return
+	}
+	type entry struct {
+		bucketKey  string
+		url        string
+		t          filedb.TorrentDetails
+		updateTime time.Time
+	}
+	hashMap := map[string][]entry{}
+	for _, item := range s.DB.OrderedMasterEntries() {
+		bucket, err := s.DB.OpenReadOrEmpty(item.Key)
+		if err != nil {
+			continue
+		}
+		for url, t := range bucket {
+			if t == nil || asString(t["trackerName"]) != "aniliberty" {
+				continue
+			}
+			m := reBtih.FindStringSubmatch(asString(t["magnet"]))
+			if len(m) < 2 {
+				continue
+			}
+			hash := strings.ToLower(m[1])
+			ut := filedb.TorrentTime(t, "updateTime")
+			hashMap[hash] = append(hashMap[hash], entry{item.Key, url, t, ut})
+		}
+	}
+	totalRemoved := 0
+	for _, group := range hashMap {
+		if len(group) <= 1 {
+			continue
+		}
+		// sort newest first
+		sort.Slice(group, func(i, j int) bool {
+			if group[i].updateTime.Equal(group[j].updateTime) {
+				return group[i].url < group[j].url
+			}
+			return group[i].updateTime.After(group[j].updateTime)
+		})
+		for _, e := range group[1:] {
+			bucket, err := s.DB.OpenReadOrEmpty(e.bucketKey)
+			if err != nil {
+				continue
+			}
+			if _, ok := bucket[e.url]; ok {
+				delete(bucket, e.url)
+				_ = s.DB.SaveBucket(e.bucketKey, bucket, time.Now().UTC())
+				totalRemoved++
+			}
+		}
+	}
+	_ = s.DB.SaveChangesToFile()
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "totalRemoved": totalRemoved})
+}
+
+var reAnimelayerID = regexp.MustCompile(`(?i)/([a-fA-F0-9]+)(?:[/?]|$)`)
+
+func (s *Server) handleDevFixAnimelayerDuplicates(w http.ResponseWriter, r *http.Request) {
+	if !isLocalRequest(r) {
+		writeJSON(w, http.StatusOK, map[string]any{"badip": true})
+		return
+	}
+	totalFixed, totalRemoved := 0, 0
+	for _, item := range s.DB.OrderedMasterEntries() {
+		bucket, err := s.DB.OpenReadOrEmpty(item.Key)
+		if err != nil {
+			continue
+		}
+		// Normalize http→https for animelayer, collect by hex ID
+		type aEntry struct{ url string; t filedb.TorrentDetails }
+		idMap := map[string][]aEntry{}
+		bucketChanged := false
+		for url, t := range bucket {
+			if t == nil || asString(t["trackerName"]) != "animelayer" {
+				continue
+			}
+			newURL := url
+			if strings.HasPrefix(url, "http://") {
+				newURL = "https://" + url[7:]
+			}
+			if newURL != url {
+				delete(bucket, url)
+				t["url"] = newURL
+				bucket[newURL] = t
+				totalFixed++
+				bucketChanged = true
+			}
+			m := reAnimelayerID.FindStringSubmatch(newURL)
+			if len(m) < 2 {
+				continue
+			}
+			id := strings.ToLower(m[1])
+			idMap[id] = append(idMap[id], aEntry{newURL, t})
+		}
+		for _, group := range idMap {
+			if len(group) <= 1 {
+				continue
+			}
+			sort.Slice(group, func(i, j int) bool {
+				ti := filedb.TorrentTime(group[i].t, "updateTime")
+				tj := filedb.TorrentTime(group[j].t, "updateTime")
+				return ti.After(tj)
+			})
+			for _, e := range group[1:] {
+				delete(bucket, e.url)
+				totalRemoved++
+				bucketChanged = true
+			}
+		}
+		if bucketChanged {
+			_ = s.DB.SaveBucket(item.Key, bucket, time.Now().UTC())
+		}
+	}
+	_ = s.DB.SaveChangesToFile()
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "urlsFixed": totalFixed, "duplicatesRemoved": totalRemoved})
+}
+
+var knabenSuffixRe = regexp.MustCompile(`\s+\|\s+[^|]+$`)
 
 func (s *Server) handleSyncTracks(w http.ResponseWriter, r *http.Request) {
 	writeBareNotFound(w)

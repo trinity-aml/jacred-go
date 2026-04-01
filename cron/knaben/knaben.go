@@ -437,6 +437,12 @@ func qualityFromCategoryID(ids []int) int {
 	}
 	return 480
 }
+// ParseNameAndYear is the exported version of parseNameAndYear for use by server/admin.go.
+func ParseNameAndYear(title string) (string, int) { return parseNameAndYear(title) }
+
+// BuildTitleForFileDB is the exported version of buildTitleForFileDB.
+func BuildTitleForFileDB(title string) string { return buildTitleForFileDB(title) }
+
 func parseNameAndYear(title string) (string, int) {
 	title = strings.TrimSpace(title)
 	if title == "" {

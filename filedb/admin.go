@@ -42,6 +42,44 @@ func (db *DB) OrderedMasterEntries() []MasterEntry {
 	return out
 }
 
+// MigrateTorrentToNewKey adds a torrent entry to a different bucket identified by newKey.
+// The caller is responsible for removing the entry from the original bucket.
+func (db *DB) MigrateTorrentToNewKey(t TorrentDetails, newKey string) error {
+	if newKey == "" || !strings.Contains(newKey, ":") {
+		return nil
+	}
+	bucket, err := db.OpenReadOrEmpty(newKey)
+	if err != nil {
+		return err
+	}
+	url := asString(t["url"])
+	if url == "" {
+		return nil
+	}
+	bucket[url] = t
+	return db.SaveBucket(newKey, bucket, torrentTime(t, "updateTime"))
+}
+
+// RemoveKeyFromMasterDb removes a key from masterDb and fastdb indexes without touching the bucket file.
+func (db *DB) RemoveKeyFromMasterDb(key string) {
+	db.mu.Lock()
+	delete(db.masterDb, key)
+	for part, keys := range db.fastdb {
+		filtered := keys[:0]
+		for _, k := range keys {
+			if k != key {
+				filtered = append(filtered, k)
+			}
+		}
+		if len(filtered) == 0 {
+			delete(db.fastdb, part)
+		} else {
+			db.fastdb[part] = filtered
+		}
+	}
+	db.mu.Unlock()
+}
+
 func (db *DB) SaveChangesToFile() error {
 	db.mu.RLock()
 	master := make(map[string]TorrentInfo, len(db.masterDb))

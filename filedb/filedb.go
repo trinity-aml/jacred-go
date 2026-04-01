@@ -354,6 +354,9 @@ func matchSerialAndYear(t TorrentDetails, isSerial, year int) bool {
 	}
 	return true
 }
+// TorrentTime is the exported version of torrentTime.
+func TorrentTime(t TorrentDetails, key string) time.Time { return torrentTime(t, key) }
+
 func torrentTime(t TorrentDetails, key string) time.Time {
 	raw, ok := t[key]
 	if !ok || raw == nil {
