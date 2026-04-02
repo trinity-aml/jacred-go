@@ -22,6 +22,7 @@ Collects torrent metadata from 20 Russian/Ukrainian trackers into a unified flat
 ## Quick Start
 
 ```bash
+# Build for current platform
 go build -o ./Dist/jacred ./cmd
 ./Dist/jacred
 # Listens on :9117 by default
@@ -35,6 +36,34 @@ curl http://127.0.0.1:9117/cron/rutor/parse
 # Search
 curl "http://127.0.0.1:9117/api/v1.0/torrents?search=Interstellar"
 ```
+
+## Build for all platforms
+
+```bash
+chmod +x build_all.sh
+./build_all.sh
+```
+
+Builds binaries for all supported platforms into `Dist/` and creates a release archive:
+
+```
+Dist/
+  jacred-linux-amd64
+  jacred-linux-arm64
+  jacred-linux-arm
+  jacred-linux-386
+  jacred-darwin-amd64
+  jacred-darwin-arm64
+  jacred-windows-amd64.exe
+  jacred-windows-arm64.exe
+  jacred-windows-386.exe
+  jacred-freebsd-amd64
+  jacred-freebsd-arm64
+
+jacred-{version}-{gitSHA}.tar.gz   ← binaries + wwwroot + init.yaml + init.yaml.example
+```
+
+Requires Go 1.21+. All binaries are statically linked (`CGO_ENABLED=0`), no external dependencies.
 
 ---
 
