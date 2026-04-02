@@ -30,31 +30,32 @@ var (
 	rowSplitRe     = regexp.MustCompile(`<tr class="ttable_col`)
 	cleanupSpaceRe = regexp.MustCompile(`[\n\r\t\x{00A0} ]+`)
 	firstNamePart  = regexp.MustCompile(`(\[|/|\(|\|)`)
-	pageCountRe    = regexp.MustCompile(`href="\?page=([0-9]+)">[0-9]+</a>([\t ]+)?</center></td>`)
+	pageAllRe      = regexp.MustCompile(`href="\?page=([0-9]+)"`)
+	pageDotRe      = regexp.MustCompile(`href="\?page=([0-9]+)"><span[^>]*>\s*\.\.\.\s*</span>`)
 
-	inlineYearRe = regexp.MustCompile(`^([^/\(]+) / [^/]+ / ([^/\(]+) \(([0-9]{4})\)`)
+	inlineYearRe   = regexp.MustCompile(`^([^/\(]+) / [^/]+ / ([^/\(]+) \(([0-9]{4})\)`)
 	inlineYearRe10 = regexp.MustCompile(`^([^/\(]+) / [^/]+ / ([^/\(]+) \(([0-9]{4})(\)|-)`)
 	inlineYearRe11 = regexp.MustCompile(`^([^/\(]+) / ([^/\(]+) \(([0-9]{4})(\)|-)`)
 	inlineYearRe12 = regexp.MustCompile(`^([^/\[]+) \[[^\]]+\] +\(([0-9]{4})(\)|-)`)
 	inlineYearRe13 = regexp.MustCompile(`^([^/\(]+) \(([0-9]{4})(\)|-)`)
-	inlineYearRe2 = regexp.MustCompile(`^([^/\(]+) / ([^/\(]+) \(([0-9]{4})\)`)
-	inlineYearRe3 = regexp.MustCompile(`^([^/\(]+) (/ [^/\(]+)?\(([0-9]{4})\)`)
-	inlineYearRe4 = regexp.MustCompile(`^([^/\(\[]+) / [^/]+ / [^/]+ / ([^/\(\[]+) \[[^\]]+\] +\(([0-9]{4})(\)|-)`)
-	inlineYearRe5 = regexp.MustCompile(`^([^/\(\[]+) / [^/]+ / ([^/\(\[]+) \[[^\]]+\] +\(([0-9]{4})(\)|-)`)
-	inlineYearRe6 = regexp.MustCompile(`^([^/\(\[]+) / ([^/\[]+) \[[^\]]+\] +\(([0-9]{4})(\)|-)`)
-	inlineYearRe7 = regexp.MustCompile(`^([^/\(\[]+) \[[^\]]+\] +\(([0-9]{4})(\)|-)`)
-	inlineYearRe8 = regexp.MustCompile(`^([^/]+) / [^/]+ / ([^/\[]+) \[[^\]]+\] +\(([0-9]{4})(\)|-)`)
-	inlineYearRe9 = regexp.MustCompile(`^([^/]+) / ([^/\[]+) \[[^\]]+\] +\(([0-9]{4})(\)|-)`)
-	mp1Re = regexp.MustCompile(`(?is)>([0-9]{4}-[0-9]{2}-[0-9]{2})</td>`)
-	mp2Re = regexp.MustCompile(`(?is)<a name="search_select" [^>]+ href="/([0-9]+/[^"]+)"`)
-	mp3Re = regexp.MustCompile(`(?is)<a name="search_select" [^>]*>([^<]+)</a>`)
-	mp4Re = regexp.MustCompile(`(?is)<font color="green">(?:&uarr;|↑)\s*([0-9]+)</font>`)
-	mp5Re = regexp.MustCompile(`(?is)<font color="red">(?:&darr;|↓)\s*([0-9]+)</font>`)
-	mp6Re = regexp.MustCompile(`(?is)<td style="white-space:nowrap;?">([0-9][^<]+)</td>`)
-	mp7Re = regexp.MustCompile(`(?is)href="(magnet:\?xt=[^"]+)"`)
+	inlineYearRe2  = regexp.MustCompile(`^([^/\(]+) / ([^/\(]+) \(([0-9]{4})\)`)
+	inlineYearRe3  = regexp.MustCompile(`^([^/\(]+) (/ [^/\(]+)?\(([0-9]{4})\)`)
+	inlineYearRe4  = regexp.MustCompile(`^([^/\(\[]+) / [^/]+ / [^/]+ / ([^/\(\[]+) \[[^\]]+\] +\(([0-9]{4})(\)|-)`)
+	inlineYearRe5  = regexp.MustCompile(`^([^/\(\[]+) / [^/]+ / ([^/\(\[]+) \[[^\]]+\] +\(([0-9]{4})(\)|-)`)
+	inlineYearRe6  = regexp.MustCompile(`^([^/\(\[]+) / ([^/\[]+) \[[^\]]+\] +\(([0-9]{4})(\)|-)`)
+	inlineYearRe7  = regexp.MustCompile(`^([^/\(\[]+) \[[^\]]+\] +\(([0-9]{4})(\)|-)`)
+	inlineYearRe8  = regexp.MustCompile(`^([^/]+) / [^/]+ / ([^/\[]+) \[[^\]]+\] +\(([0-9]{4})(\)|-)`)
+	inlineYearRe9  = regexp.MustCompile(`^([^/]+) / ([^/\[]+) \[[^\]]+\] +\(([0-9]{4})(\)|-)`)
+	mp1Re          = regexp.MustCompile(`(?is)>([0-9]{4}-[0-9]{2}-[0-9]{2})</td>`)
+	mp2Re          = regexp.MustCompile(`(?is)<a name="search_select" [^>]+ href="/([0-9]+/[^"]+)"`)
+	mp3Re          = regexp.MustCompile(`(?is)<a name="search_select" [^>]*>([^<]+)</a>`)
+	mp4Re          = regexp.MustCompile(`(?is)<font color="green">(?:&uarr;|↑)\s*([0-9]+)</font>`)
+	mp5Re          = regexp.MustCompile(`(?is)<font color="red">(?:&darr;|↓)\s*([0-9]+)</font>`)
+	mp6Re          = regexp.MustCompile(`(?is)<td style="white-space:nowrap;?">([0-9][^<]+)</td>`)
+	mp7Re          = regexp.MustCompile(`(?is)href="(magnet:\?xt=[^"]+)"`)
 )
 
-var categories = []string{"films", "movies", "serials", "tv", "humor", "cartoons", "anime", "sport"}
+var categories = []string{"films", "movies", "serials", "series", "tv", "humor", "cartoons", "anime", "sport"}
 
 type Task struct {
 	UpdateTime string `json:"updateTime"`
@@ -163,26 +164,63 @@ func (p *Parser) Parse(ctx context.Context, page int) (ParseResult, error) {
 
 func (p *Parser) UpdateTasksParse(ctx context.Context) (map[string][]Task, error) {
 	p.ensureLogin(ctx)
+
+	// Discover max page per category by following "..." pagination links.
+	// Done WITHOUT holding p.mu to avoid deadlock (fetches call cookie()).
+	type catMax struct {
+		cat     string
+		maxPage int
+	}
+	var results []catMax
+	for _, cat := range categories {
+		maxPage := 0
+		// Follow "..." links until we reach the last pagination group.
+		fetchNext := -1 // -1 = fetch root; >=0 = fetch ?page=N
+		for {
+			var (
+				htmlBody string
+				err      error
+			)
+			if fetchNext < 0 {
+				htmlBody, err = p.fetchCategoryRoot(ctx, cat)
+			} else {
+				htmlBody, err = p.fetchCategoryPage(ctx, cat, fetchNext)
+			}
+			if err != nil {
+				break
+			}
+			for _, m := range pageAllRe.FindAllStringSubmatch(htmlBody, -1) {
+				if n, err2 := strconv.Atoi(m[1]); err2 == nil && n > maxPage {
+					maxPage = n
+				}
+			}
+			// If there is a "..." link, follow it to discover more pages.
+			if m := pageDotRe.FindStringSubmatch(htmlBody); len(m) > 1 {
+				next, err2 := strconv.Atoi(m[1])
+				if err2 != nil || next <= fetchNext {
+					break
+				}
+				fetchNext = next
+			} else {
+				break
+			}
+		}
+		results = append(results, catMax{cat, maxPage})
+	}
+
+	// Merge results into tasks under lock.
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.tasks == nil {
 		p.tasks = map[string][]Task{}
 	}
-	for _, cat := range categories {
-		htmlBody, err := p.fetchCategoryRoot(ctx, cat)
-		if err != nil {
-			return nil, err
-		}
-		maxPages := 0
-		if m := pageCountRe.FindStringSubmatch(htmlBody); len(m) > 1 {
-			maxPages, _ = strconv.Atoi(strings.TrimSpace(m[1]))
-		}
-		existing := p.tasks[cat]
+	for _, cm := range results {
+		existing := p.tasks[cm.cat]
 		pages := map[int]Task{}
 		for _, t := range existing {
 			pages[t.Page] = t
 		}
-		for page := 0; page <= maxPages; page++ {
+		for page := 0; page <= cm.maxPage; page++ {
 			if _, ok := pages[page]; !ok {
 				pages[page] = Task{Page: page, UpdateTime: "0001-01-01T00:00:00"}
 			}
@@ -192,7 +230,7 @@ func (p *Parser) UpdateTasksParse(ctx context.Context) (map[string][]Task, error
 			merged = append(merged, t)
 		}
 		sort.Slice(merged, func(i, j int) bool { return merged[i].Page < merged[j].Page })
-		p.tasks[cat] = merged
+		p.tasks[cm.cat] = merged
 	}
 	if err := p.saveTasksLocked(); err != nil {
 		return nil, err
@@ -351,6 +389,17 @@ func (p *Parser) fetchCategoryRoot(ctx context.Context, cat string) (string, err
 	return string(body), nil
 }
 
+func (p *Parser) fetchCategoryPage(ctx context.Context, cat string, page int) (string, error) {
+	baseURL := strings.TrimRight(requestHost(p.Config.TorrentBy), "/")
+	rawURL := fmt.Sprintf("%s/%s/?page=%d", baseURL, cat, page)
+	cookie := p.cookie()
+	body, err := p.httpGet(ctx, rawURL, cookie)
+	if err != nil {
+		return "", err
+	}
+	return string(body), nil
+}
+
 // httpGet tries CFClient first, falls back to standard Client.
 func (p *Parser) httpGet(ctx context.Context, rawURL, cookie string) ([]byte, error) {
 	if p.CF != nil {
@@ -433,21 +482,21 @@ func parsePageHTML(host, cat, htmlBody string, now time.Time) []filedb.TorrentDe
 		sid, _ := strconv.Atoi(sidRaw)
 		pir, _ := strconv.Atoi(pirRaw)
 		out = append(out, filedb.TorrentRecord{
-			TrackerName: trackerName,
-			Types: types,
-			URL: strings.TrimRight(host, "/") + "/" + strings.TrimLeft(urlPath, "/"),
-			Title: title,
-			Sid: sid,
-			Pir: pir,
-			SizeName: sizeName,
-			Magnet: magnet,
-			CreateTime: createTime.UTC().Format(time.RFC3339Nano),
-			UpdateTime: now.UTC().Format(time.RFC3339Nano),
-			Name: name,
+			TrackerName:  trackerName,
+			Types:        types,
+			URL:          strings.TrimRight(host, "/") + "/" + strings.TrimLeft(urlPath, "/"),
+			Title:        title,
+			Sid:          sid,
+			Pir:          pir,
+			SizeName:     sizeName,
+			Magnet:       magnet,
+			CreateTime:   createTime.UTC().Format(time.RFC3339Nano),
+			UpdateTime:   now.UTC().Format(time.RFC3339Nano),
+			Name:         name,
 			OriginalName: original,
-			Relased: relased,
-			SearchName: core.SearchName(name),
-			SearchOrig: core.SearchName(firstNonEmpty(original, name)),
+			Relased:      relased,
+			SearchName:   core.SearchName(name),
+			SearchOrig:   core.SearchName(firstNonEmpty(original, name)),
 		}.ToMap())
 	}
 	return out
@@ -853,4 +902,3 @@ func asInt(v any) int {
 		return 0
 	}
 }
-
