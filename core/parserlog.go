@@ -11,15 +11,20 @@ import (
 // ParserLog writes structured per-tracker log entries to Data/log/{tracker}.log.
 // Each line: "2006-01-02 15:04:05 | action  | url | title"
 type ParserLog struct {
-	path string
-	mu   sync.Mutex
+	path     string
+	disabled bool
+	mu       sync.Mutex
 }
 
 var parserLogMu sync.Mutex
 var parserLogs = map[string]*ParserLog{}
 
-// NewParserLog returns a ParserLog for the given tracker, writing to logDir/{tracker}.log.
-func NewParserLog(tracker, logDir string) *ParserLog {
+// NewParserLog returns a ParserLog for the given tracker.
+// If enabled is false, all write operations are no-ops.
+func NewParserLog(tracker, logDir string, enabled bool) *ParserLog {
+	if !enabled {
+		return &ParserLog{disabled: true}
+	}
 	key := filepath.Join(logDir, tracker+".log")
 	parserLogMu.Lock()
 	defer parserLogMu.Unlock()
@@ -48,6 +53,9 @@ func (l *ParserLog) WriteFailed(url, title string) {
 }
 
 func (l *ParserLog) write(action, url, title string) {
+	if l.disabled {
+		return
+	}
 	ts := time.Now().Format("2006-01-02 15:04:05")
 	line := fmt.Sprintf("%s | %s | %s | %s\n", ts, action, url, title)
 	l.mu.Lock()

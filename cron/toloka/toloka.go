@@ -572,7 +572,7 @@ func parsePageHTML(host, cat, htmlBody string) []parseItem {
 
 func (p *Parser) saveTorrents(ctx context.Context, items []parseItem) (int, int, int, int, error) {
 	added, updated, skipped, failed := 0, 0, 0, 0
-	plog := core.NewParserLog(trackerName, filepath.Join(p.DB.DataDir, "log"))
+	plog := core.NewParserLog(trackerName, filepath.Join(p.DB.DataDir, "log"), p.Config.Toloka.Log)
 	bucketCache := map[string]map[string]filedb.TorrentDetails{}
 	changed := map[string]time.Time{}
 	cookie, err := p.ensureCookie(ctx)

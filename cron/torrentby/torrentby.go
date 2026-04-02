@@ -504,7 +504,7 @@ func parsePageHTML(host, cat, htmlBody string, now time.Time) []filedb.TorrentDe
 
 func (p *Parser) saveTorrents(torrents []filedb.TorrentDetails) (int, int, int, int, error) {
 	added, updated, skipped, failed := 0, 0, 0, 0
-	plog := core.NewParserLog(trackerName, filepath.Join(p.DataDir, "log"))
+	plog := core.NewParserLog(trackerName, filepath.Join(p.DataDir, "log"), p.Config.TorrentBy.Log)
 	bucketCache := map[string]map[string]filedb.TorrentDetails{}
 	changed := map[string]time.Time{}
 	for _, incoming := range torrents {
