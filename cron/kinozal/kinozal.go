@@ -492,7 +492,7 @@ func (p *Parser) resolveMagnet(ctx context.Context, detailURL string) (string, e
 		return "", err
 	}
 	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 5<<20))
 	if err != nil {
 		return "", err
 	}
@@ -528,7 +528,7 @@ func (p *Parser) fetchBrowse(ctx context.Context, cat string, page int, arg stri
 		return "", err
 	}
 	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 5<<20))
 	if err != nil {
 		return "", err
 	}

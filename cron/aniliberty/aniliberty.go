@@ -309,7 +309,7 @@ func (p *Parser) fetch(ctx context.Context, urlv string) ([]byte, error) {
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("http status %d", resp.StatusCode)
 	}
-	return io.ReadAll(resp.Body)
+	return io.ReadAll(io.LimitReader(resp.Body, 5<<20))
 }
 
 func determineTypes(typeValue string) []string {

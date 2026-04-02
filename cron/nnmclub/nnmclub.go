@@ -316,7 +316,7 @@ func (p *Parser) parsePage(ctx context.Context, cat string, page int) ([]filedb.
 		return nil, err
 	}
 	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 5<<20))
 	if err != nil {
 		return nil, err
 	}
@@ -344,7 +344,7 @@ func (p *Parser) fetchCategoryRoot(ctx context.Context, cat string) (string, err
 		return "", err
 	}
 	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 5<<20))
 	if err != nil {
 		return "", err
 	}

@@ -1,0 +1,133 @@
+listenip: any
+listenport: 9117
+log: true
+openstats: true
+opensync: true
+web: true
+timeStatsUpdate: 90
+
+evercache:
+  enable: true
+  validHour: 1
+  maxOpenWriteTask: 2000
+  dropCacheTake: 200
+
+cfclient:
+  profile: "chrome_146"
+
+Rutor:
+  host: "https://rutor.is"
+  parseDelay: 7000
+  reqMinute: 8
+
+Megapeer:
+  host: "https://megapeer.vip"
+  parseDelay: 3000
+  reqMinute: 10
+
+TorrentBy:
+  host: "https://torrent.by"
+  parseDelay: 5000
+  reqMinute: 8
+
+Kinozal:
+  host: "https://kinozal.tv"
+  parseDelay: 7000
+  reqMinute: 6
+  login:
+    u: ""
+    p: ""
+
+NNMClub:
+  host: "https://nnmclub.to"
+  cookie: ""
+  parseDelay: 5000
+  reqMinute: 8
+
+Bitru:
+  host: "https://bitru.org"
+  parseDelay: 3000
+  reqMinute: 10
+
+Bitruapi:
+  host: "https://bitru.org"
+  parseDelay: 0
+  reqMinute: 30
+
+Toloka:
+  host: "https://toloka.to"
+  parseDelay: 5000
+  reqMinute: 6
+  login:
+    u: ""
+    p: ""
+
+Mazepa:
+  host: "https://mazepa.to"
+  parseDelay: 10000
+  reqMinute: 6
+  login:
+    u: ""
+    p: ""
+
+Rutracker:
+  host: "https://rutracker.org"
+  parseDelay: 8000
+  reqMinute: 6
+  login:
+    u: ""
+    p: ""
+
+Selezen:
+  host: "https://use.selezen.club"
+  parseDelay: 3000
+  reqMinute: 10
+
+Lostfilm:
+  host: "https://www.lostfilm.tv"
+  cookie: ""
+  parseDelay: 3000
+  reqMinute: 10
+
+Animelayer:
+  host: "https://animelayer.ru"
+  parseDelay: 3000
+  reqMinute: 10
+
+Anidub:
+  host: "https://tr.anidub.com"
+  parseDelay: 2000
+  reqMinute: 15
+
+Aniliberty:
+  host: "https://aniliberty.top"
+  parseDelay: 1000
+  reqMinute: 20
+
+Knaben:
+  host: "https://api.knaben.org"
+  parseDelay: 0
+  reqMinute: 30
+
+Anistar:
+  host: "https://anistar.org"
+  parseDelay: 3000
+  reqMinute: 10
+
+Anifilm:
+  host: "https://anifilm.pro"
+  parseDelay: 3000
+  reqMinute: 10
+
+Leproduction:
+  host: "https://www.le-production.tv"
+  parseDelay: 3000
+  reqMinute: 10
+
+Baibako:
+  host: "http://baibako.tv"
+  parseDelay: 5000
+  reqMinute: 8
+  login:
+    u: ""
+    p: ""

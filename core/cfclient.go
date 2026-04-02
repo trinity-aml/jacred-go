@@ -118,7 +118,7 @@ func (c *CFClient) Get(rawURL, cookie, referer string) (string, int, error) {
 		return "", 0, err
 	}
 	defer resp.Body.Close()
-	b, err := io.ReadAll(resp.Body)
+	b, err := io.ReadAll(io.LimitReader(resp.Body, 5<<20))
 	if err != nil {
 		return "", resp.StatusCode, err
 	}
@@ -137,7 +137,7 @@ func (c *CFClient) Download(rawURL, cookie, referer string) ([]byte, int, error)
 		return nil, 0, err
 	}
 	defer resp.Body.Close()
-	b, err := io.ReadAll(resp.Body)
+	b, err := io.ReadAll(io.LimitReader(resp.Body, 5<<20))
 	if err != nil {
 		return nil, resp.StatusCode, err
 	}
@@ -206,7 +206,7 @@ func (c *CFClient) GetWithHeaders(rawURL, cookie, referer string) (body []byte, 
 		return nil, 0, nil, err
 	}
 	defer resp.Body.Close()
-	b, err := io.ReadAll(resp.Body)
+	b, err := io.ReadAll(io.LimitReader(resp.Body, 5<<20))
 	if err != nil {
 		return nil, resp.StatusCode, nil, err
 	}
@@ -226,7 +226,7 @@ func (c *CFClient) PostForm(rawURL, cookie, referer string, formData string) (bo
 		return nil, 0, nil, err
 	}
 	defer resp.Body.Close()
-	b, err := io.ReadAll(resp.Body)
+	b, err := io.ReadAll(io.LimitReader(resp.Body, 5<<20))
 	if err != nil {
 		return nil, resp.StatusCode, nil, err
 	}

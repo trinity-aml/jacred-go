@@ -441,7 +441,7 @@ func (p *Parser) httpGet(ctx context.Context, rawURL, referer string) (string, e
 		return "", err
 	}
 	defer resp.Body.Close()
-	b, err := io.ReadAll(resp.Body)
+	b, err := io.ReadAll(io.LimitReader(resp.Body, 5<<20))
 	return string(b), err
 }
 

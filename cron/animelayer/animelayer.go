@@ -353,7 +353,7 @@ func (p *Parser) fetchHTML(ctx context.Context, rawURL, cookie string) (string, 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return "", nil
 	}
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 5<<20))
 	if err != nil {
 		return "", err
 	}
@@ -378,7 +378,7 @@ func (p *Parser) downloadTorrent(ctx context.Context, rawURL, cookie string) ([]
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, nil
 	}
-	return io.ReadAll(resp.Body)
+	return io.ReadAll(io.LimitReader(resp.Body, 5<<20))
 }
 
 func ensureHTTPS(host string) string {

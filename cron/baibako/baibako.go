@@ -345,7 +345,7 @@ func (p *Parser) httpGet(ctx context.Context, rawURL string) (string, error) {
 		return "", err
 	}
 	defer resp.Body.Close()
-	b, err := io.ReadAll(resp.Body)
+	b, err := io.ReadAll(io.LimitReader(resp.Body, 5<<20))
 	if err != nil {
 		return "", err
 	}
@@ -370,7 +370,7 @@ func (p *Parser) httpDownload(ctx context.Context, rawURL, referer string) ([]by
 		return nil, err
 	}
 	defer resp.Body.Close()
-	return io.ReadAll(resp.Body)
+	return io.ReadAll(io.LimitReader(resp.Body, 5<<20))
 }
 
 func parseCreateTime(raw, layout string) time.Time {

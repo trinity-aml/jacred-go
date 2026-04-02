@@ -2,18 +2,20 @@ package rutor
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"html"
 	"io"
 	"log"
 	"net/http"
+	"os"
+	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
-
-	"path/filepath"
 
 	"jacred/app"
 	"jacred/core"
@@ -37,6 +39,9 @@ var (
 	sizeNameRe   = regexp.MustCompile(`(?i)<td align="right">([^<]+)</td>`)
 	magnetRe     = regexp.MustCompile(`(?i)href="(magnet:\?xt=[^"]+)"`)
 
+	// pagination: finds page numbers in browse links, e.g. href="/browse/12/1/0/0"
+	browsePagesRe = regexp.MustCompile(`href="/browse/([0-9]+)/[0-9]+/0/0"`)
+
 	// parseTitle patterns
 	movieFullRe       = regexp.MustCompile(`^([^/]+) / ([^/]+) / ([^/\(]+) \(([0-9]{4})\)`)
 	movieShortRe      = regexp.MustCompile(`^([^/\(]+) / ([^/\(]+) \(([0-9]{4})\)`)
@@ -56,12 +61,43 @@ var (
 
 var categories = []string{"1", "5", "4", "16", "12", "6", "7", "10", "17", "13", "15"}
 
+type Task struct {
+	UpdateTime string `json:"updateTime"`
+	Page       int    `json:"page"`
+}
+
+func (t Task) UpdatedToday() bool {
+	if strings.TrimSpace(t.UpdateTime) == "" {
+		return false
+	}
+	tm, _ := time.Parse(time.RFC3339, t.UpdateTime)
+	if tm.IsZero() {
+		tm, _ = time.Parse("2006-01-02T15:04:05", t.UpdateTime)
+	}
+	if tm.IsZero() {
+		return false
+	}
+	now := time.Now()
+	y1, m1, d1 := tm.Date()
+	y2, m2, d2 := now.Date()
+	return y1 == y2 && m1 == m2 && d1 == d2
+}
+
+func (t *Task) MarkToday() {
+	now := time.Now()
+	t.UpdateTime = time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.Local).Format(time.RFC3339)
+}
+
 type Parser struct {
 	Config  app.Config
 	DB      *filedb.DB
+	DataDir string
 	Client  *http.Client
 	mu      sync.Mutex
 	working bool
+	allWork bool
+	latestMu sync.Mutex
+	tasks   map[string][]Task
 }
 
 type ParseResult struct {
@@ -70,8 +106,10 @@ type ParseResult struct {
 	PerCategory                              map[string]int
 }
 
-func New(cfg app.Config, db *filedb.DB) *Parser {
-	return &Parser{Config: cfg, DB: db, Client: &http.Client{Timeout: 25 * time.Second}}
+func New(cfg app.Config, db *filedb.DB, dataDir string) *Parser {
+	p := &Parser{Config: cfg, DB: db, DataDir: dataDir, Client: &http.Client{Timeout: 25 * time.Second}, tasks: map[string][]Task{}}
+	_ = p.loadTasks()
+	return p
 }
 
 func (p *Parser) Parse(ctx context.Context, page int) (ParseResult, error) {
@@ -126,23 +164,11 @@ func (p *Parser) Parse(ctx context.Context, page int) (ParseResult, error) {
 
 func (p *Parser) fetchPage(ctx context.Context, cat string, page int) ([]filedb.TorrentDetails, error) {
 	host := strings.TrimRight(p.Config.Rutor.Host, "/")
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("%s/browse/%d/%s/0/0", host, page, cat), nil)
+	htmlBody, err := p.fetchPageRaw(ctx, cat, page)
 	if err != nil {
 		return nil, err
 	}
-	resp, err := p.Client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("rutor status %d", resp.StatusCode)
-	}
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-	return parsePageHTML(host, cat, string(body)), nil
+	return parsePageHTML(host, cat, htmlBody), nil
 }
 
 func parsePageHTML(host, cat, htmlBody string) []filedb.TorrentDetails {
@@ -277,6 +303,224 @@ func (p *Parser) saveTorrents(torrents []filedb.TorrentDetails) (int, int, int, 
 		}
 	}
 	return added, updated, skipped, failed, nil
+}
+
+func (p *Parser) UpdateTasksParse(ctx context.Context) (map[string][]Task, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.tasks == nil {
+		p.tasks = map[string][]Task{}
+	}
+	for _, cat := range categories {
+		htmlBody, err := p.fetchPageRaw(ctx, cat, 0)
+		if err != nil {
+			continue
+		}
+		maxPage := 0
+		for _, m := range browsePagesRe.FindAllStringSubmatch(htmlBody, -1) {
+			if n, err := strconv.Atoi(m[1]); err == nil && n > maxPage {
+				maxPage = n
+			}
+		}
+		existing := p.tasks[cat]
+		pages := map[int]Task{}
+		for _, t := range existing {
+			pages[t.Page] = t
+		}
+		for pg := 0; pg <= maxPage; pg++ {
+			if _, ok := pages[pg]; !ok {
+				pages[pg] = Task{Page: pg, UpdateTime: "0001-01-01T00:00:00"}
+			}
+		}
+		merged := make([]Task, 0, len(pages))
+		for _, t := range pages {
+			merged = append(merged, t)
+		}
+		sort.Slice(merged, func(i, j int) bool { return merged[i].Page < merged[j].Page })
+		p.tasks[cat] = merged
+	}
+	if err := p.saveTasksLocked(); err != nil {
+		return nil, err
+	}
+	return cloneTasks(p.tasks), nil
+}
+
+func (p *Parser) ParseAllTask(ctx context.Context) (string, error) {
+	p.mu.Lock()
+	if p.allWork {
+		p.mu.Unlock()
+		return "work", nil
+	}
+	p.allWork = true
+	snapshot := cloneTasks(p.tasks)
+	p.mu.Unlock()
+	defer func() { p.mu.Lock(); p.allWork = false; p.mu.Unlock() }()
+
+	for cat, list := range snapshot {
+		for _, task := range list {
+			if task.UpdatedToday() {
+				continue
+			}
+			if p.Config.Rutor.ParseDelay > 0 {
+				select {
+				case <-ctx.Done():
+					return "", ctx.Err()
+				case <-time.After(time.Duration(p.Config.Rutor.ParseDelay) * time.Millisecond):
+				}
+			}
+			items, err := p.fetchPage(ctx, cat, task.Page)
+			if err != nil {
+				return "", err
+			}
+			if len(items) > 0 {
+				if _, _, _, _, err := p.saveTorrents(items); err != nil {
+					return "", err
+				}
+				p.mu.Lock()
+				if list2, ok := p.tasks[cat]; ok {
+					for i := range list2 {
+						if list2[i].Page == task.Page {
+							list2[i].MarkToday()
+						}
+					}
+					p.tasks[cat] = list2
+				}
+				if err := p.saveTasksLocked(); err != nil {
+					p.mu.Unlock()
+					return "", err
+				}
+				p.mu.Unlock()
+			}
+		}
+	}
+	return "ok", nil
+}
+
+func (p *Parser) ParseLatest(ctx context.Context, pages int) (string, error) {
+	if !p.latestMu.TryLock() {
+		return "work", nil
+	}
+	defer p.latestMu.Unlock()
+	if pages <= 0 {
+		pages = 5
+	}
+	p.mu.Lock()
+	snapshot := cloneTasks(p.tasks)
+	p.mu.Unlock()
+	if len(snapshot) == 0 {
+		if _, err := p.UpdateTasksParse(ctx); err != nil {
+			return "", err
+		}
+		p.mu.Lock()
+		snapshot = cloneTasks(p.tasks)
+		p.mu.Unlock()
+	}
+	var lines []string
+	for cat, list := range snapshot {
+		sort.Slice(list, func(i, j int) bool { return list[i].Page < list[j].Page })
+		if len(list) > pages {
+			list = list[:pages]
+		}
+		for _, task := range list {
+			if p.Config.Rutor.ParseDelay > 0 {
+				select {
+				case <-ctx.Done():
+					return "", ctx.Err()
+				case <-time.After(time.Duration(p.Config.Rutor.ParseDelay) * time.Millisecond):
+				}
+			}
+			items, err := p.fetchPage(ctx, cat, task.Page)
+			if err != nil {
+				return "", err
+			}
+			if len(items) == 0 {
+				continue
+			}
+			if _, _, _, _, err := p.saveTorrents(items); err != nil {
+				return "", err
+			}
+			p.mu.Lock()
+			if list2, ok := p.tasks[cat]; ok {
+				for i := range list2 {
+					if list2[i].Page == task.Page {
+						list2[i].MarkToday()
+					}
+				}
+				p.tasks[cat] = list2
+			}
+			if err := p.saveTasksLocked(); err != nil {
+				p.mu.Unlock()
+				return "", err
+			}
+			p.mu.Unlock()
+			lines = append(lines, fmt.Sprintf("%s - %d", cat, task.Page))
+		}
+	}
+	if len(lines) == 0 {
+		return "ok", nil
+	}
+	return strings.Join(lines, "\n") + "\n", nil
+}
+
+func (p *Parser) fetchPageRaw(ctx context.Context, cat string, page int) (string, error) {
+	host := strings.TrimRight(p.Config.Rutor.Host, "/")
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("%s/browse/%d/%s/0/0", host, page, cat), nil)
+	if err != nil {
+		return "", err
+	}
+	resp, err := p.Client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 5<<20)) // 5 MB max
+	if err != nil {
+		return "", err
+	}
+	return string(body), nil
+}
+
+func (p *Parser) loadTasks() error {
+	path := filepath.Join(p.DataDir, "temp", "rutor_taskParse.json")
+	b, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			p.tasks = map[string][]Task{}
+			return nil
+		}
+		return err
+	}
+	var raw map[string][]Task
+	if err := json.Unmarshal(b, &raw); err != nil {
+		return err
+	}
+	p.tasks = raw
+	return nil
+}
+
+func (p *Parser) saveTasksLocked() error {
+	if p.tasks == nil {
+		p.tasks = map[string][]Task{}
+	}
+	path := filepath.Join(p.DataDir, "temp", "rutor_taskParse.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	b, err := json.Marshal(p.tasks)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, b, 0o644)
+}
+
+func cloneTasks(src map[string][]Task) map[string][]Task {
+	out := make(map[string][]Task, len(src))
+	for k, list := range src {
+		vv := make([]Task, len(list))
+		copy(vv, list)
+		out[k] = vv
+	}
+	return out
 }
 
 func parseTitle(cat, title string) (string, string, int) {

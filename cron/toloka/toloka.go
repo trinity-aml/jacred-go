@@ -736,7 +736,7 @@ func (p *Parser) fetchPageHTML(ctx context.Context, cat string, page int) (strin
 		if err != nil {
 			return "", err
 		}
-		body, _ := io.ReadAll(resp.Body)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 5<<20))
 		resp.Body.Close()
 		if resp.StatusCode == 429 && attempt < 3 {
 			select {
@@ -772,7 +772,7 @@ func (p *Parser) downloadMagnet(ctx context.Context, downloadID, cookie string) 
 		if err != nil {
 			return "", err
 		}
-		data, _ := io.ReadAll(resp.Body)
+		data, _ := io.ReadAll(io.LimitReader(resp.Body, 5<<20))
 		resp.Body.Close()
 		if resp.StatusCode == 429 && attempt < 3 {
 			select {

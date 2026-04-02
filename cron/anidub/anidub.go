@@ -344,7 +344,7 @@ func (p *Parser) fetchText(ctx context.Context, urlv string) (string, error) {
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return "", nil
 	}
-	b, err := io.ReadAll(resp.Body)
+	b, err := io.ReadAll(io.LimitReader(resp.Body, 5<<20))
 	if err != nil {
 		return "", err
 	}
@@ -368,7 +368,7 @@ func (p *Parser) download(ctx context.Context, urlv, referer string) ([]byte, er
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, nil
 	}
-	return io.ReadAll(resp.Body)
+	return io.ReadAll(io.LimitReader(resp.Body, 5<<20))
 }
 
 func extractReleased(htmlBody string) int {

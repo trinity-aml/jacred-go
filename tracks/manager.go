@@ -157,7 +157,7 @@ func (m *Manager) doJSON(ctx context.Context, method, rawURL string, payload any
 	if err != nil {
 		return nil, nil, err
 	}
-	data, readErr := io.ReadAll(resp.Body)
+	data, readErr := io.ReadAll(io.LimitReader(resp.Body, 5<<20))
 	_ = resp.Body.Close()
 	return resp, data, readErr
 }
@@ -279,7 +279,7 @@ func (m *Manager) AnalyzeWithExternalAPI(ctx context.Context, tsuri, infohash st
 		return nil, 0, err
 	}
 	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 5<<20))
 	if err != nil {
 		return nil, resp.StatusCode, err
 	}

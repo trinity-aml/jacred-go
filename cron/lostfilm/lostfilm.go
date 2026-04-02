@@ -868,7 +868,7 @@ func (p *Parser) fetchBytes(ctx context.Context, rawURL, cookie, referer string)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("status %d", resp.StatusCode)
 	}
-	return io.ReadAll(resp.Body)
+	return io.ReadAll(io.LimitReader(resp.Body, 5<<20))
 }
 
 func buildHorBreakerNameMap(htmlBody string) map[string][2]string {

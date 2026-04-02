@@ -1,0 +1,318 @@
+# jacred-go configuration example
+# Copy to init.yaml and fill in credentials for trackers you want to use.
+# Trackers without credentials can still be parsed for publicly available data.
+
+# ── Server ────────────────────────────────────────────────────────────────────
+
+listenip: "127.0.0.1"     # "any" to listen on all interfaces (0.0.0.0)
+listenport: 9117
+
+# API key for /api/v1.0/* and /api/v2.0/* endpoints (Jackett/Sonarr/Radarr).
+# Leave empty to disable authentication.
+apikey: ""
+
+# Key for /dev/* and /cron/* endpoints when accessed from a LAN IP.
+# If empty, these endpoints are accessible from any local/private IP without a key.
+devkey: ""
+
+# ── Database ──────────────────────────────────────────────────────────────────
+
+# Directory nesting depth for bucket files under Data/fdb/
+# 2 (default) creates Data/fdb/ab/cdef…  — recommended for large databases
+# 1 creates Data/fdb/a/abcd…
+fdbPathLevels: 2
+
+# Merge duplicate entries for the same title from different trackers
+mergeduplicates: true
+mergenumduplicates: true
+
+# ── Logging ───────────────────────────────────────────────────────────────────
+
+log: true           # General application log to stdout
+logParsers: false   # Verbose per-request debug log for parsers
+logFdb: false       # Log every FileDB read/write operation
+
+# Per-tracker parse logs written to Data/log/<tracker>.log
+logFdbRetentionDays: 7    # Delete log files older than N days (0 = keep forever)
+logFdbMaxSizeMb: 100      # Max total size of all log files in MB (0 = unlimited)
+logFdbMaxFiles: 0         # Max number of log files per tracker (0 = unlimited)
+
+# ── API access ────────────────────────────────────────────────────────────────
+
+openstats: true       # Enable /stats/* endpoints without API key
+opensync: true        # Enable /sync/fdb/torrents (V2 protocol) without API key
+opensync_v1: false    # Enable /sync/torrents (V1 legacy protocol) without API key
+web: true             # Serve index.html and stats.html
+
+# ── Stats ─────────────────────────────────────────────────────────────────────
+
+timeStatsUpdate: 90   # Rebuild Data/temp/stats.json every N seconds
+
+# ── In-memory bucket cache (Evercache) ────────────────────────────────────────
+# Keeps recently opened buckets in memory to reduce disk reads.
+
+evercache:
+  enable: true
+  validHour: 1          # Cache TTL in hours (0 = never expire)
+  maxOpenWriteTask: 2000 # Max number of buckets held in memory
+  dropCacheTake: 200    # How many buckets to evict when limit is reached
+
+# ── CloudFlare TLS client ─────────────────────────────────────────────────────
+# Used by: Megapeer, TorrentBy, Bitru, Mazepa, Anistar, Anifilm
+# Available profiles: chrome_146, chrome_133, chrome_144, firefox_117
+
+cfclient:
+  profile: "chrome_146"
+  useragent: ""   # Leave empty to use the profile's default User-Agent
+
+# ── Multi-instance sync ───────────────────────────────────────────────────────
+# Pull torrent data from another jacred instance running elsewhere.
+
+syncapi: ""           # URL of remote instance, e.g. "http://192.168.1.10:9117"
+timeSync: 60          # Sync interval in seconds
+timeSyncSpidr: 60     # Spider (metadata-only) sync interval in seconds
+syncsport: true       # Include sport torrents in sync
+syncspidr: true       # Enable spider mode (only url/sid/pir, lighter payload)
+
+# Sync only these trackers from the remote (empty list = sync all)
+synctrackers: []
+#  - "Rutor"
+#  - "Kinozal"
+#  - "NNMClub"
+
+# Never sync these trackers even if listed on the remote
+disable_trackers: []
+#  - "Mazepa"
+
+# ── Tracker sections ──────────────────────────────────────────────────────────
+# Each section is optional — defaults are used if omitted.
+# parseDelay: milliseconds between requests within a single parse call.
+#   For trackers with many categories (Rutor=11, Kinozal=25, Rutracker=64+)
+#   this prevents rate-limit bans. Set to 0 to disable.
+# reqMinute: soft limit on requests per minute (0 = no limit).
+
+# ── Rutor ─────────────────────────────────────────────────────────────────────
+# Client: standard HTTP  |  Auth: not required
+# Parses 11 categories per page call. parseDelay applies between categories.
+# Supports: parse?page=N, updatetasksparse, parsealltask, parselatest?pages=N
+
+Rutor:
+  host: "https://rutor.is"
+  parseDelay: 7000    # ms between category requests (11 categories per parse)
+  reqMinute: 8
+
+# ── Megapeer ──────────────────────────────────────────────────────────────────
+# Client: CFClient (CloudFlare bypass)  |  Auth: not required
+# Supports: parse?maxpage=N
+
+Megapeer:
+  host: "https://megapeer.vip"
+  parseDelay: 3000
+  reqMinute: 10
+
+# ── TorrentBy ─────────────────────────────────────────────────────────────────
+# Client: CFClient  |  Auth: not required
+# Supports: parse?page=N, updatetasksparse, parsealltask, parselatest?pages=N
+
+TorrentBy:
+  host: "https://torrent.by"
+  parseDelay: 5000
+  reqMinute: 8
+
+# ── Kinozal ───────────────────────────────────────────────────────────────────
+# Client: standard HTTP  |  Auth: LOGIN REQUIRED for magnet links
+# Without credentials torrents are fetched but magnets won't be resolved.
+# Parses 25 categories × year range. parseDelay critical to avoid bans.
+# Supports: parse?page=N, updatetasksparse, parsealltask, parselatest?pages=N
+
+Kinozal:
+  host: "https://kinozal.tv"
+  parseDelay: 7000
+  reqMinute: 6
+  login:
+    u: ""   # your kinozal.tv username
+    p: ""   # your kinozal.tv password
+
+# ── NNMClub ───────────────────────────────────────────────────────────────────
+# Client: standard HTTP  |  Auth: COOKIE REQUIRED for magnet links
+# Without cookie only metadata is available (no magnet).
+# Parses 10 categories. Supports task-based parsing.
+
+NNMClub:
+  host: "https://nnmclub.to"
+  cookie: ""    # Paste full cookie string from browser: "bb_session=…; bb_data=…"
+  parseDelay: 5000
+  reqMinute: 8
+
+# ── Bitru ─────────────────────────────────────────────────────────────────────
+# Client: CFClient  |  Auth: not required
+# Supports: parse?page=N, updatetasksparse, parsealltask, parselatest?pages=N
+
+Bitru:
+  host: "https://bitru.org"
+  parseDelay: 3000
+  reqMinute: 10
+
+# ── BitruAPI ──────────────────────────────────────────────────────────────────
+# Client: standard HTTP  |  Auth: not required (public API)
+# API-based, no page scraping. parse?limit=N or parsefromdate?lastnewtor=YYYY-MM-DD
+
+Bitruapi:
+  host: "https://bitru.org"
+  parseDelay: 0
+  reqMinute: 30
+
+# ── Toloka ────────────────────────────────────────────────────────────────────
+# Client: standard HTTP  |  Auth: login recommended (required for full access)
+# Supports task-based parsing.
+
+Toloka:
+  host: "https://toloka.to"
+  parseDelay: 5000
+  reqMinute: 6
+  login:
+    u: ""   # your toloka.to username
+    p: ""   # your toloka.to password
+
+# ── Mazepa ────────────────────────────────────────────────────────────────────
+# Client: CFClient  |  Auth: login optional
+# Parses 47+ categories. High parseDelay recommended.
+
+Mazepa:
+  host: "https://mazepa.to"
+  parseDelay: 10000   # many categories — be conservative
+  reqMinute: 6
+  login:
+    u: ""
+    p: ""
+
+# ── Rutracker ─────────────────────────────────────────────────────────────────
+# Client: standard HTTP  |  Auth: LOGIN REQUIRED
+# Without login the site returns nothing useful.
+# Parses 64+ categories × year range. Very long full parse — use parselatest daily.
+# Supports: parse?page=N, updatetasksparse, parsealltask, parselatest?pages=N
+
+Rutracker:
+  host: "https://rutracker.org"
+  parseDelay: 8000    # strict rate limits — do not lower this
+  reqMinute: 6
+  login:
+    u: ""   # your rutracker.org username
+    p: ""   # your rutracker.org password
+
+# ── Selezen ───────────────────────────────────────────────────────────────────
+# Client: standard HTTP  |  Auth: login optional
+# Supports: parse?parseFrom=N&parseTo=M
+
+Selezen:
+  host: "https://use.selezen.club"
+  parseDelay: 3000
+  reqMinute: 10
+  login:
+    u: ""
+    p: ""
+
+# ── Lostfilm ──────────────────────────────────────────────────────────────────
+# Client: standard HTTP  |  Auth: cookie optional (required for HD quality links)
+# Multiple parse modes: parse, parsepages, parseseasonpacks, verifypage
+
+Lostfilm:
+  host: "https://www.lostfilm.tv"
+  cookie: ""    # optional: "lf_session=…"
+  parseDelay: 3000
+  reqMinute: 10
+
+# ── Animelayer ────────────────────────────────────────────────────────────────
+# Client: standard HTTP  |  Auth: login optional
+# Supports: parse?maxpage=N
+
+Animelayer:
+  host: "https://animelayer.ru"
+  parseDelay: 3000
+  reqMinute: 10
+  login:
+    u: ""
+    p: ""
+
+# ── Anidub ────────────────────────────────────────────────────────────────────
+# Client: standard HTTP  |  Auth: not required
+# Supports: parse?parseFrom=N&parseTo=M
+
+Anidub:
+  host: "https://tr.anidub.com"
+  parseDelay: 2000
+  reqMinute: 15
+
+# ── Aniliberty ────────────────────────────────────────────────────────────────
+# Client: standard HTTP  |  Auth: not required (public RSS/API)
+# Supports: parse?parseFrom=N&parseTo=M  (response includes lastPage)
+# Note: section key is "Aniliberty" but "Anilibria" is also accepted
+
+Aniliberty:
+  host: "https://aniliberty.top"
+  parseDelay: 1000
+  reqMinute: 20
+
+# ── Knaben ────────────────────────────────────────────────────────────────────
+# Client: standard HTTP  |  Auth: not required (public JSON API)
+# API-based search — parseDelay not used between requests.
+# parse?from=0&size=300&pages=1&query=…&hours=24&orderBy=date&categories=…
+
+Knaben:
+  host: "https://api.knaben.org"
+  parseDelay: 0
+  reqMinute: 30
+
+# ── Anistar ───────────────────────────────────────────────────────────────────
+# Client: CFClient  |  Auth: not required
+# Supports: parse?limit_page=N  (0 = all pages, default 0)
+
+Anistar:
+  host: "https://anistar.org"
+  parseDelay: 3000
+  reqMinute: 10
+
+# ── Anifilm ───────────────────────────────────────────────────────────────────
+# Client: CFClient  |  Auth: not required
+# Supports: parse?fullparse=false (incremental) or fullparse=true (all pages)
+
+Anifilm:
+  host: "https://anifilm.pro"
+  parseDelay: 3000
+  reqMinute: 10
+
+# ── Leproduction ──────────────────────────────────────────────────────────────
+# Client: standard HTTP  |  Auth: not required
+# Supports: parse?limit_page=N  (0 = all pages, default 0)
+
+Leproduction:
+  host: "https://www.le-production.tv"
+  parseDelay: 3000
+  reqMinute: 10
+
+# ── Baibako ───────────────────────────────────────────────────────────────────
+# Client: standard HTTP  |  Auth: LOGIN REQUIRED
+# Without credentials returns no useful data.
+# Supports: parse?maxpage=N  (default 10)
+
+Baibako:
+  host: "http://baibako.tv"
+  parseDelay: 5000
+  reqMinute: 8
+  login:
+    u: ""   # your baibako.tv username
+    p: ""   # your baibako.tv password
+
+# ── Proxy ─────────────────────────────────────────────────────────────────────
+# Route specific tracker requests through a proxy.
+# Set useproxy: true on the tracker section to activate.
+# "pattern" is a regex matched against the tracker host URL.
+
+# globalproxy:
+#   - pattern: "\.onion"
+#     list:
+#       - "socks5://127.0.0.1:9050"
+#     useAuth: false
+#     BypassOnLocal: true
+#     username: ""
+#     password: ""

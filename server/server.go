@@ -80,7 +80,7 @@ func New(cfg app.Config, db *filedb.DB, tracksDB *tracks.DB, wwwroot string) *Se
 		tracksDB = tracks.New("Data")
 		_ = tracksDB.Load()
 	}
-	return &Server{Config: cfg, DB: db, WWWRoot: wwwroot, Version: VersionInfo{Version: "dev", GitSha: "unknown", GitBranch: "unknown", BuildDate: time.Now().UTC().Format("2006-01-02 15:04:05 UTC")}, KnabenParser: knaben.New(cfg, db), AnidubParser: anidub.New(cfg, db), AnilibertyParser: aniliberty.New(cfg, db), AnimelayerParser: animelayer.New(cfg, db), AnistarParser: anistar.New(cfg, db, "Data"), AnifilmParser: anifilm.New(cfg, db, "Data"), BaibakoParser: baibako.New(cfg, db, "Data"), BitruParser: bitru.New(cfg, db, "Data"), BitruAPIParser: bitruapi.New(cfg, db, "Data"), RutorParser: rutor.New(cfg, db), MegapeerParser: megapeer.New(cfg, db), TorrentByParser: torrentby.New(cfg, db, "Data"), NNMClubParser: nnmclub.New(cfg, db, "Data"), LostfilmParser: lostfilm.New(cfg, db), RutrackerParser: rutracker.New(cfg, db, "Data"), KinozalParser: kinozal.New(cfg, db, "Data"), TolokaParser: toloka.New(cfg, db, "Data"), SelezenParser: selezen.New(cfg, db), LeproductionParser: leproduction.New(cfg, db, "Data"), MazepaParser: mazepa.New(cfg, db, "Data"), TracksDB: tracksDB}
+	return &Server{Config: cfg, DB: db, WWWRoot: wwwroot, Version: VersionInfo{Version: "dev", GitSha: "unknown", GitBranch: "unknown", BuildDate: time.Now().UTC().Format("2006-01-02 15:04:05 UTC")}, KnabenParser: knaben.New(cfg, db), AnidubParser: anidub.New(cfg, db), AnilibertyParser: aniliberty.New(cfg, db), AnimelayerParser: animelayer.New(cfg, db), AnistarParser: anistar.New(cfg, db, "Data"), AnifilmParser: anifilm.New(cfg, db, "Data"), BaibakoParser: baibako.New(cfg, db, "Data"), BitruParser: bitru.New(cfg, db, "Data"), BitruAPIParser: bitruapi.New(cfg, db, "Data"), RutorParser: rutor.New(cfg, db, "Data"), MegapeerParser: megapeer.New(cfg, db), TorrentByParser: torrentby.New(cfg, db, "Data"), NNMClubParser: nnmclub.New(cfg, db, "Data"), LostfilmParser: lostfilm.New(cfg, db), RutrackerParser: rutracker.New(cfg, db, "Data"), KinozalParser: kinozal.New(cfg, db, "Data"), TolokaParser: toloka.New(cfg, db, "Data"), SelezenParser: selezen.New(cfg, db), LeproductionParser: leproduction.New(cfg, db, "Data"), MazepaParser: mazepa.New(cfg, db, "Data"), TracksDB: tracksDB}
 }
 
 func (s *Server) Handler() http.Handler {
@@ -130,6 +130,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/cron/bitru/parsealltask", s.handleCronBitruParseAllTask)
 	mux.HandleFunc("/cron/bitru/parselatest", s.handleCronBitruParseLatest)
 	mux.HandleFunc("/cron/rutor/parse", s.handleCronRutorParse)
+	mux.HandleFunc("/cron/rutor/updatetasksparse", s.handleCronRutorUpdateTasksParse)
+	mux.HandleFunc("/cron/rutor/parsealltask", s.handleCronRutorParseAllTask)
+	mux.HandleFunc("/cron/rutor/parselatest", s.handleCronRutorParseLatest)
 	mux.HandleFunc("/cron/megapeer/parse", s.handleCronMegapeerParse)
 	mux.HandleFunc("/cron/torrentby/parse", s.handleCronTorrentByParse)
 	mux.HandleFunc("/cron/torrentby/updatetasksparse", s.handleCronTorrentByUpdateTasksParse)
@@ -193,7 +196,8 @@ func (s *Server) handleConf(w http.ResponseWriter, r *http.Request) {
 	if key == "" {
 		key = r.URL.Query().Get("apiKey")
 	}
-	writeJSONOrdered(w, http.StatusOK, [][2]any{{"apikey", s.Config.APIKey == "" || key == s.Config.APIKey}})
+	valid := s.Config.APIKey == "" || (key != "" && subtle.ConstantTimeCompare([]byte(key), []byte(s.Config.APIKey)) == 1)
+	writeJSONOrdered(w, http.StatusOK, [][2]any{{"apikey", valid}})
 }
 
 var jackettPathRe = regexp.MustCompile(`(?i)^/api/v2\.0/indexers/[^/]+/results$`)
@@ -458,6 +462,45 @@ func (s *Server) handleCronRutorParse(w http.ResponseWriter, r *http.Request) {
 		"by_category": res.PerCategory,
 		"text":        fmt.Sprintf("fetched=%d +%d ~%d =%d failed=%d", res.Fetched, res.Added, res.Updated, res.Skipped, res.Failed),
 	})
+}
+
+func (s *Server) handleCronRutorUpdateTasksParse(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	res, err := s.RutorParser.UpdateTasksParse(context.Background())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "tasks": res})
+}
+
+func (s *Server) handleCronRutorParseAllTask(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	text, err := s.RutorParser.ParseAllTask(context.Background())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": text})
+}
+
+func (s *Server) handleCronRutorParseLatest(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	text, err := s.RutorParser.ParseLatest(context.Background(), parseOptionalInt(r.URL.Query(), "pages", 5))
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": text})
 }
 
 func (s *Server) handleCronMegapeerParse(w http.ResponseWriter, r *http.Request) {

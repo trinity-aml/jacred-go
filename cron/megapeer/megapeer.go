@@ -162,7 +162,7 @@ func (p *Parser) getBrowsePage(ctx context.Context, rawURL, cat string) (string,
 			if doErr != nil {
 				err = doErr
 			} else {
-				data, _ = io.ReadAll(resp.Body)
+				data, _ = io.ReadAll(io.LimitReader(resp.Body, 5<<20))
 				resp.Body.Close()
 				status = resp.StatusCode
 			}
@@ -345,7 +345,7 @@ func (p *Parser) downloadMagnet(ctx context.Context, downloadID string) (string,
 			if doErr != nil {
 				err = doErr
 			} else {
-				data, _ = io.ReadAll(resp.Body)
+				data, _ = io.ReadAll(io.LimitReader(resp.Body, 5<<20))
 				resp.Body.Close()
 				status = resp.StatusCode
 			}

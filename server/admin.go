@@ -803,7 +803,7 @@ func recomputeSizeBytes(sizeName string) int64 {
 
 func (s *Server) handleDevUpdateSize(w http.ResponseWriter, r *http.Request) {
 	if !isLocalRequest(r) {
-		writeJSON(w, http.StatusOK, map[string]any{"badip": true})
+		writeJSON(w, http.StatusForbidden, map[string]any{"badip": true})
 		return
 	}
 	updated := 0
@@ -838,7 +838,7 @@ func (s *Server) handleDevUpdateSize(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleDevUpdateSearchName(w http.ResponseWriter, r *http.Request) {
 	if !isLocalRequest(r) {
-		writeJSON(w, http.StatusOK, map[string]any{"badip": true})
+		writeJSON(w, http.StatusForbidden, map[string]any{"badip": true})
 		return
 	}
 	updated := 0
@@ -914,7 +914,7 @@ func firstNonEmpty(vals ...string) string {
 
 func (s *Server) handleDevResetCheckTime(w http.ResponseWriter, r *http.Request) {
 	if !isLocalRequest(r) {
-		writeJSON(w, http.StatusOK, map[string]any{"badip": true})
+		writeJSON(w, http.StatusForbidden, map[string]any{"badip": true})
 		return
 	}
 	yesterday := time.Now().UTC().AddDate(0, 0, -1).Format(time.RFC3339Nano)
@@ -944,7 +944,7 @@ func (s *Server) handleDevResetCheckTime(w http.ResponseWriter, r *http.Request)
 
 func (s *Server) handleDevUpdateDetails(w http.ResponseWriter, r *http.Request) {
 	if !isLocalRequest(r) {
-		writeJSON(w, http.StatusOK, map[string]any{"badip": true})
+		writeJSON(w, http.StatusForbidden, map[string]any{"badip": true})
 		return
 	}
 	updated := 0
@@ -976,7 +976,7 @@ func (s *Server) handleDevUpdateDetails(w http.ResponseWriter, r *http.Request) 
 
 func (s *Server) handleDevFixKnabenNames(w http.ResponseWriter, r *http.Request) {
 	if !isLocalRequest(r) {
-		writeJSON(w, http.StatusOK, map[string]any{"badip": true})
+		writeJSON(w, http.StatusForbidden, map[string]any{"badip": true})
 		return
 	}
 	processed, updated, migrated := 0, 0, 0
@@ -1051,7 +1051,7 @@ func (s *Server) handleDevFixKnabenNames(w http.ResponseWriter, r *http.Request)
 
 func (s *Server) handleDevFixBitruNames(w http.ResponseWriter, r *http.Request) {
 	if !isLocalRequest(r) {
-		writeJSON(w, http.StatusOK, map[string]any{"badip": true})
+		writeJSON(w, http.StatusForbidden, map[string]any{"badip": true})
 		return
 	}
 	processed, updated, migrated := 0, 0, 0
@@ -1121,7 +1121,7 @@ func (s *Server) handleDevFixBitruNames(w http.ResponseWriter, r *http.Request) 
 
 func (s *Server) handleDevRemoveBucket(w http.ResponseWriter, r *http.Request) {
 	if !isLocalRequest(r) {
-		writeJSON(w, http.StatusOK, map[string]any{"badip": true})
+		writeJSON(w, http.StatusForbidden, map[string]any{"badip": true})
 		return
 	}
 	key := strings.TrimSpace(r.URL.Query().Get("key"))
@@ -1170,7 +1170,7 @@ func (s *Server) handleDevRemoveBucket(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleDevFixEmptySearchFields(w http.ResponseWriter, r *http.Request) {
 	if !isLocalRequest(r) {
-		writeJSON(w, http.StatusOK, map[string]any{"badip": true})
+		writeJSON(w, http.StatusForbidden, map[string]any{"badip": true})
 		return
 	}
 	snFixed, soFixed, migratedCount := 0, 0, 0
@@ -1235,7 +1235,7 @@ var reBtih = regexp.MustCompile(`(?i)urn:btih:([a-fA-F0-9]{40})`)
 
 func (s *Server) handleDevMigrateAnilibertyUrls(w http.ResponseWriter, r *http.Request) {
 	if !isLocalRequest(r) {
-		writeJSON(w, http.StatusOK, map[string]any{"badip": true})
+		writeJSON(w, http.StatusForbidden, map[string]any{"badip": true})
 		return
 	}
 	processed, totalUpdated, skipped, totalErrors := 0, 0, 0, 0
@@ -1292,7 +1292,7 @@ func (s *Server) handleDevMigrateAnilibertyUrls(w http.ResponseWriter, r *http.R
 
 func (s *Server) handleDevRemoveDuplicateAniliberty(w http.ResponseWriter, r *http.Request) {
 	if !isLocalRequest(r) {
-		writeJSON(w, http.StatusOK, map[string]any{"badip": true})
+		writeJSON(w, http.StatusForbidden, map[string]any{"badip": true})
 		return
 	}
 	type entry struct {
@@ -1352,7 +1352,7 @@ var reAnimelayerID = regexp.MustCompile(`(?i)/([a-fA-F0-9]+)(?:[/?]|$)`)
 
 func (s *Server) handleDevFixAnimelayerDuplicates(w http.ResponseWriter, r *http.Request) {
 	if !isLocalRequest(r) {
-		writeJSON(w, http.StatusOK, map[string]any{"badip": true})
+		writeJSON(w, http.StatusForbidden, map[string]any{"badip": true})
 		return
 	}
 	totalFixed, totalRemoved := 0, 0
