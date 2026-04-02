@@ -2,18 +2,20 @@ package mazepa
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"html"
 	"log"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
-
-	"path/filepath"
 
 	"jacred/app"
 	"jacred/core"
@@ -75,18 +77,49 @@ var (
 	mazDateRe = regexp.MustCompile(`(\d{1,2})\s+(\S+)\s+(\d{4}),\s*(\d{1,2}):(\d{2})`)
 
 	inlineReB10e5aRe = regexp.MustCompile(`tr-(\d+)`)
+	mazePagRe        = regexp.MustCompile(`viewforum\.php\?f=\d+&(?:amp;)?start=(\d+)`)
 )
 
+type Task struct {
+	UpdateTime string `json:"updateTime"`
+	Page       int    `json:"page"` // start = page * 50
+}
+
+func (t Task) UpdatedToday() bool {
+	if strings.TrimSpace(t.UpdateTime) == "" {
+		return false
+	}
+	tm, _ := time.Parse(time.RFC3339, t.UpdateTime)
+	if tm.IsZero() {
+		tm, _ = time.Parse("2006-01-02T15:04:05", t.UpdateTime)
+	}
+	if tm.IsZero() {
+		return false
+	}
+	now := time.Now()
+	y1, m1, d1 := tm.Date()
+	y2, m2, d2 := now.Date()
+	return y1 == y2 && m1 == m2 && d1 == d2
+}
+
+func (t *Task) MarkToday() {
+	now := time.Now()
+	t.UpdateTime = time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.Local).Format(time.RFC3339)
+}
+
 type Parser struct {
-	Config  app.Config
-	DB      *filedb.DB
-	DataDir string
-	Client  *http.Client
-	CF      *core.CFClient
-	mu      sync.Mutex
-	working bool
-	cookie  string
-	cookieT time.Time
+	Config   app.Config
+	DB       *filedb.DB
+	DataDir  string
+	Client   *http.Client
+	CF       *core.CFClient
+	mu       sync.Mutex
+	working  bool
+	allWork  bool
+	latestMu sync.Mutex
+	tasks    map[string][]Task
+	cookie   string
+	cookieT  time.Time
 }
 
 type ParseResult struct {
@@ -100,12 +133,14 @@ func New(cfg app.Config, db *filedb.DB, dataDir string) *Parser {
 	if err != nil {
 		log.Printf("mazepa: CFClient init error: %v", err)
 	}
-	return &Parser{Config: cfg, DB: db, DataDir: dataDir, Client: &http.Client{
+	p := &Parser{Config: cfg, DB: db, DataDir: dataDir, Client: &http.Client{
 		Timeout: 30 * time.Second,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			return http.ErrUseLastResponse
 		},
 	}, CF: cf}
+	_ = p.loadTasks()
+	return p
 }
 
 func (p *Parser) getCookie() string {
@@ -312,6 +347,238 @@ func (p *Parser) parseForumPage(ctx context.Context, pageURL string, types []str
 		sig += asString(t["url"]) + ","
 	}
 	return out, sig, nil
+}
+
+func (p *Parser) UpdateTasksParse(ctx context.Context) (map[string][]Task, error) {
+	if p.getCookie() == "" {
+		if !p.takeLogin(ctx) {
+			return nil, fmt.Errorf("mazepa: login failed")
+		}
+	}
+	host := strings.TrimRight(p.Config.Mazepa.Host, "/")
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.tasks == nil {
+		p.tasks = map[string][]Task{}
+	}
+	for catID := range categories {
+		body, err := p.httpGet(ctx, fmt.Sprintf("%s/viewforum.php?f=%s&start=0", host, catID))
+		if err != nil {
+			continue
+		}
+		maxStart := 0
+		for _, m := range mazePagRe.FindAllStringSubmatch(body, -1) {
+			if n, err2 := strconv.Atoi(m[1]); err2 == nil && n > maxStart {
+				maxStart = n
+			}
+		}
+		maxPage := maxStart / 50
+		existing := p.tasks[catID]
+		pages := map[int]Task{}
+		for _, t := range existing {
+			pages[t.Page] = t
+		}
+		for pg := 0; pg <= maxPage; pg++ {
+			if _, ok := pages[pg]; !ok {
+				pages[pg] = Task{Page: pg, UpdateTime: "0001-01-01T00:00:00"}
+			}
+		}
+		merged := make([]Task, 0, len(pages))
+		for _, t := range pages {
+			merged = append(merged, t)
+		}
+		sort.Slice(merged, func(i, j int) bool { return merged[i].Page < merged[j].Page })
+		p.tasks[catID] = merged
+	}
+	if err := p.saveTasksLocked(); err != nil {
+		return nil, err
+	}
+	return cloneTasks(p.tasks), nil
+}
+
+func (p *Parser) ParseAllTask(ctx context.Context) (string, error) {
+	p.mu.Lock()
+	if p.allWork {
+		p.mu.Unlock()
+		return "work", nil
+	}
+	p.allWork = true
+	snapshot := cloneTasks(p.tasks)
+	p.mu.Unlock()
+	defer func() { p.mu.Lock(); p.allWork = false; p.mu.Unlock() }()
+
+	if p.getCookie() == "" {
+		if !p.takeLogin(ctx) {
+			return "", fmt.Errorf("mazepa: login failed")
+		}
+	}
+	host := strings.TrimRight(p.Config.Mazepa.Host, "/")
+	var total ParseResult
+	for catID, list := range snapshot {
+		types := categories[catID]
+		for _, task := range list {
+			if task.UpdatedToday() {
+				continue
+			}
+			if p.Config.Mazepa.ParseDelay > 0 {
+				select {
+				case <-ctx.Done():
+					return "", ctx.Err()
+				case <-time.After(time.Duration(p.Config.Mazepa.ParseDelay) * time.Millisecond):
+				}
+			}
+			pageURL := fmt.Sprintf("%s/viewforum.php?f=%s&start=%d", host, catID, task.Page*50)
+			items, _, err := p.parseForumPage(ctx, pageURL, types, host)
+			if err != nil {
+				return "", err
+			}
+			if len(items) == 0 {
+				continue
+			}
+			total.Fetched += len(items)
+			a, u, s, f, err := p.saveTorrents(items)
+			if err != nil {
+				return "", err
+			}
+			total.Added += a
+			total.Updated += u
+			total.Skipped += s
+			total.Failed += f
+			p.mu.Lock()
+			if list2, ok := p.tasks[catID]; ok {
+				for i := range list2 {
+					if list2[i].Page == task.Page {
+						list2[i].MarkToday()
+					}
+				}
+				p.tasks[catID] = list2
+			}
+			if err := p.saveTasksLocked(); err != nil {
+				p.mu.Unlock()
+				return "", err
+			}
+			p.mu.Unlock()
+		}
+	}
+	log.Printf("mazepa: parsealltask done fetched=%d added=%d skipped=%d failed=%d", total.Fetched, total.Added, total.Skipped, total.Failed)
+	return fmt.Sprintf("fetched=%d added=%d skipped=%d failed=%d", total.Fetched, total.Added, total.Skipped, total.Failed), nil
+}
+
+func (p *Parser) ParseLatest(ctx context.Context, pages int) (string, error) {
+	if !p.latestMu.TryLock() {
+		return "work", nil
+	}
+	defer p.latestMu.Unlock()
+	if pages <= 0 {
+		pages = 5
+	}
+	p.mu.Lock()
+	snapshot := cloneTasks(p.tasks)
+	p.mu.Unlock()
+	if len(snapshot) == 0 {
+		if _, err := p.UpdateTasksParse(ctx); err != nil {
+			return "", err
+		}
+		p.mu.Lock()
+		snapshot = cloneTasks(p.tasks)
+		p.mu.Unlock()
+	}
+	if p.getCookie() == "" {
+		if !p.takeLogin(ctx) {
+			return "", fmt.Errorf("mazepa: login failed")
+		}
+	}
+	host := strings.TrimRight(p.Config.Mazepa.Host, "/")
+	var lines []string
+	for catID, list := range snapshot {
+		types := categories[catID]
+		sort.Slice(list, func(i, j int) bool { return list[i].Page < list[j].Page })
+		if len(list) > pages {
+			list = list[:pages]
+		}
+		for _, task := range list {
+			if p.Config.Mazepa.ParseDelay > 0 {
+				select {
+				case <-ctx.Done():
+					return "", ctx.Err()
+				case <-time.After(time.Duration(p.Config.Mazepa.ParseDelay) * time.Millisecond):
+				}
+			}
+			pageURL := fmt.Sprintf("%s/viewforum.php?f=%s&start=%d", host, catID, task.Page*50)
+			items, _, err := p.parseForumPage(ctx, pageURL, types, host)
+			if err != nil {
+				return "", err
+			}
+			if len(items) == 0 {
+				continue
+			}
+			if _, _, _, _, err := p.saveTorrents(items); err != nil {
+				return "", err
+			}
+			p.mu.Lock()
+			if list2, ok := p.tasks[catID]; ok {
+				for i := range list2 {
+					if list2[i].Page == task.Page {
+						list2[i].MarkToday()
+					}
+				}
+				p.tasks[catID] = list2
+			}
+			if err := p.saveTasksLocked(); err != nil {
+				p.mu.Unlock()
+				return "", err
+			}
+			p.mu.Unlock()
+			lines = append(lines, fmt.Sprintf("%s - %d", catID, task.Page))
+		}
+	}
+	if len(lines) == 0 {
+		return "ok", nil
+	}
+	return strings.Join(lines, "\n") + "\n", nil
+}
+
+func (p *Parser) loadTasks() error {
+	path := filepath.Join(p.DataDir, "temp", "mazepa_taskParse.json")
+	b, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			p.tasks = map[string][]Task{}
+			return nil
+		}
+		return err
+	}
+	var raw map[string][]Task
+	if err := json.Unmarshal(b, &raw); err != nil {
+		return err
+	}
+	p.tasks = raw
+	return nil
+}
+
+func (p *Parser) saveTasksLocked() error {
+	if p.tasks == nil {
+		p.tasks = map[string][]Task{}
+	}
+	path := filepath.Join(p.DataDir, "temp", "mazepa_taskParse.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	b, err := json.Marshal(p.tasks)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, b, 0o644)
+}
+
+func cloneTasks(src map[string][]Task) map[string][]Task {
+	out := make(map[string][]Task, len(src))
+	for k, list := range src {
+		vv := make([]Task, len(list))
+		copy(vv, list)
+		out[k] = vv
+	}
+	return out
 }
 
 func (p *Parser) saveTorrents(torrents []filedb.TorrentDetails) (int, int, int, int, error) {

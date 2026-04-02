@@ -168,6 +168,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/cron/baibako/parse", s.handleCronBaibakoParse)
 	mux.HandleFunc("/cron/leproduction/parse", s.handleCronLeproductionParse)
 	mux.HandleFunc("/cron/mazepa/parse", s.handleCronMazepaParse)
+	mux.HandleFunc("/cron/mazepa/updatetasksparse", s.handleCronMazepaUpdateTasksParse)
+	mux.HandleFunc("/cron/mazepa/parsealltask", s.handleCronMazepaParseAllTask)
+	mux.HandleFunc("/cron/mazepa/parselatest", s.handleCronMazepaParseLatest)
 	return s.middleware(mux)
 }
 
@@ -866,6 +869,45 @@ func (s *Server) handleCronMazepaParse(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": res.Status, "fetched": res.Fetched, "added": res.Added, "updated": res.Updated, "skipped": res.Skipped, "failed": res.Failed, "text": fmt.Sprintf("fetched=%d +%d ~%d =%d failed=%d", res.Fetched, res.Added, res.Updated, res.Skipped, res.Failed)})
+}
+
+func (s *Server) handleCronMazepaUpdateTasksParse(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	res, err := s.MazepaParser.UpdateTasksParse(context.Background())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "tasks": res})
+}
+
+func (s *Server) handleCronMazepaParseAllTask(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	text, err := s.MazepaParser.ParseAllTask(context.Background())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": text})
+}
+
+func (s *Server) handleCronMazepaParseLatest(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	text, err := s.MazepaParser.ParseLatest(context.Background(), parseOptionalInt(r.URL.Query(), "pages", 5))
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": text})
 }
 
 func buildResults(items []filedb.TorrentDetails, rqnum bool) []map[string]any {
