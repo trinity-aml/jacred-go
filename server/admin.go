@@ -1420,6 +1420,15 @@ func (s *Server) handleSyncTracksCheck(w http.ResponseWriter, r *http.Request) {
 	writeBareNotFound(w)
 }
 
+func (s *Server) handleStatsRefresh(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	go s.generateStatsFile()
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok"})
+}
+
 // RunStatsLoop periodically generates Data/temp/stats.json.
 func (s *Server) RunStatsLoop(ctx context.Context) {
 	interval := time.Duration(s.Config.TimeStatsUpdate) * time.Minute
