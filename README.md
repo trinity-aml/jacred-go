@@ -609,6 +609,10 @@ curl "http://127.0.0.1:9117/api/v1.0/conf?apikey=your-key"
 
 Stats endpoints are open (no API key required) when `openstats: true`.
 
+### `GET /stats/refresh`
+
+Refresh `Data/temp/stats.json`
+
 ### `GET /stats/torrents`
 
 Returns pre-computed stats from `Data/temp/stats.json` (rebuilt every `timeStatsUpdate` seconds).

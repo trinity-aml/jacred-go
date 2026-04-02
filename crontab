@@ -1,4 +1,5 @@
-*/20 *   *   *   *    curl -s "http://127.0.0.1:9117/jsondb/save"
+*/15 *   *   *   *    curl -s "http://127.0.0.1:9117/jsondb/save"
+*/20 *   *   *   *    curl -s "http://127.0.0.1:9117/stats/refresh"
 
 */15 *   *   *   *    curl -s "http://127.0.0.1:9117/cron/torrentby/parse"
 5    */4 *   *   *    curl -s "http://127.0.0.1:9117/cron/torrentby/UpdateTasksParse"
@@ -64,5 +65,4 @@
 
 */40 *   *   *   *    curl -s "http://127.0.0.1:9117/cron/lostfilm/parsepages"
 20   */8 *   *   *    curl -s "http://127.0.0.1:9117/cron/lostfilm/parse"
-0    */8 *   *   *    curl -s "http://127.0.0.1:9117/cron/lostfilm/parseseasonpacks"
 
