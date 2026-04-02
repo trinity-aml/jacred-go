@@ -77,7 +77,7 @@ var (
 	mazDateRe = regexp.MustCompile(`(\d{1,2})\s+(\S+)\s+(\d{4}),\s*(\d{1,2}):(\d{2})`)
 
 	inlineReB10e5aRe = regexp.MustCompile(`tr-(\d+)`)
-	mazePagRe        = regexp.MustCompile(`viewforum\.php\?f=\d+&(?:amp;)?start=(\d+)`)
+	mazePagRe        = regexp.MustCompile(`f=\d+&(?:amp;)?start=(\d+)\.html`)
 )
 
 type Task struct {
