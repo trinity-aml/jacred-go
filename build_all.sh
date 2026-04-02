@@ -32,7 +32,7 @@ TARGETS=(
   freebsd/arm64
 )
 
-rm -fr ./Dist/*
+rm -fr ${OUT}/*
 mkdir -p "${OUT}"
 
 OK=0
