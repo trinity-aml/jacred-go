@@ -211,7 +211,7 @@ There are five distinct parsing strategies across the 20 trackers:
 
 Parse exactly one page. Default is page 0 (most recent) for most trackers; Bitru defaults to page 1.
 
-**Trackers:** Rutor, Bitru, Kinozal, NNMClub, RuTracker, TorrentBy, Toloka
+**Trackers:** Rutor, Selezen, Bitru, Kinozal, NNMClub, RuTracker, TorrentBy, Toloka
 
 > Note: Rutor, Bitru, Kinozal, NNMClub, RuTracker, TorrentBy, Toloka also support task-based parsing (see §4 below). The `parse?page=N` endpoint is available as a single-page fallback.
 
@@ -269,7 +269,7 @@ For large trackers with hundreds of category pages. Works in three steps:
 2. **Parse all** discovered tasks (can be interrupted and resumed)
 3. **Parse latest** — shortcut to parse only the most recent N pages
 
-**Trackers:** Rutor, Bitru, Kinozal, NNMClub, RuTracker, TorrentBy, Toloka
+**Trackers:** Rutor, Selezen, Bitru, Kinozal, NNMClub, RuTracker, TorrentBy, Toloka
 
 ```bash
 # Step 1: Discover all pages and build task list (run once or periodically)
@@ -467,8 +467,13 @@ GET /cron/rutracker/parselatest
 GET /cron/selezen/parse
   parseFrom=N   (default 0) — page range start
   parseTo=M     (default 0) — page range end
+
+GET /cron/selezen/updatetasksparse      — discover all pages
+GET /cron/selezen/parsealltask          — parse all discovered tasks
+GET /cron/selezen/parselatest
+  pages=N   (default 5) — parse latest N pages only
 ```
-Without parameters: parses only page 0.
+Without parameters `parse` parses only page 1.
 
 #### Toloka
 ```

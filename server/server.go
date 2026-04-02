@@ -80,7 +80,7 @@ func New(cfg app.Config, db *filedb.DB, tracksDB *tracks.DB, wwwroot string) *Se
 		tracksDB = tracks.New("Data")
 		_ = tracksDB.Load()
 	}
-	return &Server{Config: cfg, DB: db, WWWRoot: wwwroot, Version: VersionInfo{Version: "dev", GitSha: "unknown", GitBranch: "unknown", BuildDate: time.Now().UTC().Format("2006-01-02 15:04:05 UTC")}, KnabenParser: knaben.New(cfg, db), AnidubParser: anidub.New(cfg, db), AnilibertyParser: aniliberty.New(cfg, db), AnimelayerParser: animelayer.New(cfg, db), AnistarParser: anistar.New(cfg, db, "Data"), AnifilmParser: anifilm.New(cfg, db, "Data"), BaibakoParser: baibako.New(cfg, db, "Data"), BitruParser: bitru.New(cfg, db, "Data"), BitruAPIParser: bitruapi.New(cfg, db, "Data"), RutorParser: rutor.New(cfg, db, "Data"), MegapeerParser: megapeer.New(cfg, db), TorrentByParser: torrentby.New(cfg, db, "Data"), NNMClubParser: nnmclub.New(cfg, db, "Data"), LostfilmParser: lostfilm.New(cfg, db), RutrackerParser: rutracker.New(cfg, db, "Data"), KinozalParser: kinozal.New(cfg, db, "Data"), TolokaParser: toloka.New(cfg, db, "Data"), SelezenParser: selezen.New(cfg, db), LeproductionParser: leproduction.New(cfg, db, "Data"), MazepaParser: mazepa.New(cfg, db, "Data"), TracksDB: tracksDB}
+	return &Server{Config: cfg, DB: db, WWWRoot: wwwroot, Version: VersionInfo{Version: "dev", GitSha: "unknown", GitBranch: "unknown", BuildDate: time.Now().UTC().Format("2006-01-02 15:04:05 UTC")}, KnabenParser: knaben.New(cfg, db), AnidubParser: anidub.New(cfg, db), AnilibertyParser: aniliberty.New(cfg, db), AnimelayerParser: animelayer.New(cfg, db), AnistarParser: anistar.New(cfg, db, "Data"), AnifilmParser: anifilm.New(cfg, db, "Data"), BaibakoParser: baibako.New(cfg, db, "Data"), BitruParser: bitru.New(cfg, db, "Data"), BitruAPIParser: bitruapi.New(cfg, db, "Data"), RutorParser: rutor.New(cfg, db, "Data"), MegapeerParser: megapeer.New(cfg, db), TorrentByParser: torrentby.New(cfg, db, "Data"), NNMClubParser: nnmclub.New(cfg, db, "Data"), LostfilmParser: lostfilm.New(cfg, db), RutrackerParser: rutracker.New(cfg, db, "Data"), KinozalParser: kinozal.New(cfg, db, "Data"), TolokaParser: toloka.New(cfg, db, "Data"), SelezenParser: selezen.New(cfg, db, "Data"), LeproductionParser: leproduction.New(cfg, db, "Data"), MazepaParser: mazepa.New(cfg, db, "Data"), TracksDB: tracksDB}
 }
 
 func (s *Server) Handler() http.Handler {
@@ -160,6 +160,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/cron/toloka/parsealltask", s.handleCronTolokaParseAllTask)
 	mux.HandleFunc("/cron/toloka/parselatest", s.handleCronTolokaParseLatest)
 	mux.HandleFunc("/cron/selezen/parse", s.handleCronSelezenParse)
+	mux.HandleFunc("/cron/selezen/updatetasksparse", s.handleCronSelezenUpdateTasksParse)
+	mux.HandleFunc("/cron/selezen/parsealltask", s.handleCronSelezenParseAllTask)
+	mux.HandleFunc("/cron/selezen/parselatest", s.handleCronSelezenParseLatest)
 	mux.HandleFunc("/cron/anistar/parse", s.handleCronAnistarParse)
 	mux.HandleFunc("/cron/anifilm/parse", s.handleCronAnifilmParse)
 	mux.HandleFunc("/cron/baibako/parse", s.handleCronBaibakoParse)
@@ -754,6 +757,45 @@ func (s *Server) handleCronSelezenParse(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": res.Status, "parsed": res.Parsed, "added": res.Added, "updated": res.Updated, "skipped": res.Skipped, "failed": res.Failed, "text": fmt.Sprintf("parsed=%d +%d ~%d =%d failed=%d", res.Parsed, res.Added, res.Updated, res.Skipped, res.Failed)})
+}
+
+func (s *Server) handleCronSelezenUpdateTasksParse(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	res, err := s.SelezenParser.UpdateTasksParse(context.Background())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "tasks": res})
+}
+
+func (s *Server) handleCronSelezenParseAllTask(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	text, err := s.SelezenParser.ParseAllTask(context.Background())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": text})
+}
+
+func (s *Server) handleCronSelezenParseLatest(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	text, err := s.SelezenParser.ParseLatest(context.Background(), parseOptionalInt(r.URL.Query(), "pages", 5))
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": text})
 }
 
 func (s *Server) handleCronAnistarParse(w http.ResponseWriter, r *http.Request) {

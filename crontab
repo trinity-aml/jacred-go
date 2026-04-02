@@ -1,0 +1,65 @@
+*/20 *   *   *   *    curl -s "http://127.0.0.1:9119/jsondb/save"
+
+*/15 *   *   *   *    curl -s "http://127.0.0.1:9119/cron/torrentby/parse"
+1    */4 *   *   *    curl -s "http://127.0.0.1:9119/cron/torrentby/UpdateTasksParse"
+*/5  *   *   *   *    curl -s "http://127.0.0.1:9119/cron/torrentby/ParseAllTask"
+
+*/15 *   *   *   *    curl -s "http://127.0.0.1:9119/cron/rutracker/parse"
+1    */4 *   *   *    curl -s "http://127.0.0.1:9119/cron/rutracker/UpdateTasksParse"
+*/5  *   *   *   *    curl -s "http://127.0.0.1:9119/cron/rutracker/ParseAllTask"
+
+*/15 *   *   *   *    curl -s "http://127.0.0.1:9119/cron/rutor/parse"
+5    */4 *   *   *    curl -s "http://127.0.0.1:9119/cron/rutor/UpdateTasksParse"
+*/5  *   *   *   *    curl -s "http://127.0.0.1:9119/cron/rutor/ParseAllTask"
+
+*/15 *   *   *   *    curl -s "http://127.0.0.1:9119/cron/megapeer/parse"
+*    */8 *   *   *    curl -s "http://127.0.0.1:9119/cron/megapeer/parse?maxpage=10"
+
+*/15 *   *   *   *    curl -s "http://127.0.0.1:9119/cron/nnmclub/parse"
+10   */4 *   *   *    curl -s "http://127.0.0.1:9119/cron/nnmclub/UpdateTasksParse"
+*/5  *   *   *   *    curl -s "http://127.0.0.1:9119/cron/nnmclub/ParseAllTask"
+
+*/15 *   *   *   *    curl -s "http://127.0.0.1:9119/cron/kinozal/parse"
+10   */4 *   *   *    curl -s "http://127.0.0.1:9119/cron/kinozal/UpdateTasksParse"
+*/5  *   *   *   *    curl -s "http://127.0.0.1:9119/cron/kinozal/ParseAllTask"
+
+*/20 *   *   *   *    curl -s "http://127.0.0.1:9119/cron/bitruapi/parse"
+
+*/15 *   *   *   *    curl -s "http://127.0.0.1:9119/cron/bitru/parse"
+10   */4 *   *   *    curl -s "http://127.0.0.1:9119/cron/bitru/UpdateTasksParse"
+*/5  *   *   *   *    curl -s "http://127.0.0.1:9119/cron/bitru/ParseAllTask"
+
+*/15 *   *   *   *    curl -s "http://127.0.0.1:9119/cron/selezen/parse"
+20   */4 *   *   *    curl -s "http://127.0.0.1:9119/cron/selezen/UpdateTasksParse"
+*/5  *   *   *   *    curl -s "http://127.0.0.1:9119/cron/selezen/ParseAllTask"
+
+*/40 *   *   *   *    curl -s "http://127.0.0.1:9119/cron/toloka/parse"
+20   */4 *   *   *    curl -s "http://127.0.0.1:9119/cron/toloka/UpdateTasksParse"
+*/5  *   *   *   *    curl -s "http://127.0.0.1:9119/cron/toloka/ParseAllTask"
+
+*/40 *   *   *   *    curl -s "http://127.0.0.1:9119/cron/mazepa/parse"
+
+40   */4 *   *   *    curl -s "http://127.0.0.1:9119/cron/anilibria/parse"
+*/5  *   *   *   *    curl -s "http://127.0.0.1:9119/cron/anilibria/parse?limit_page=1"
+
+50   */6 *   *   *    curl -s "http://127.0.0.1:9119/cron/anidub/parse?limit_page=20"
+*/15 *   *   *   *    curl -s "http://127.0.0.1:9119/cron/anidub/parse?limit_page=2"
+
+55   */6 *   *   *    curl -s "http://127.0.0.1:9119/cron/anistar/parse?limit_page=20"
+*/15 *   *   *   *    curl -s "http://127.0.0.1:9119/cron/anistar/parse?limit_page=2"
+
+45   */6 *   *   *    curl -s "http://127.0.0.1:9119/cron/leproduction/parse"
+*/15 *   *   *   *    curl -s "http://127.0.0.1:9119/cron/leproduction/parse?limit_page=1"
+
+*/15 *   *   *   *    curl -s "http://127.0.0.1:9119/cron/animelayer/parse"
+50   */8 *   *   *    curl -s "http://127.0.0.1:9119/cron/animelayer/parse?maxpage=90"
+
+*/40 *   *   *   *    curl -s "http://127.0.0.1:9119/cron/anifilm/parse"
+50   1   *   *   *    curl -s "http://127.0.0.1:9119/cron/anifilm/parse?fullparse=true"
+
+*/15 *   *   *   *    curl -s "http://127.0.0.1:9119/cron/baibako/parse"
+50   2   *   *   *    curl -s "http://127.0.0.1:9119/cron/baibako/parse?maxpage=418"
+
+*/40 *   *   *   *    curl -s "http://127.0.0.1:9119/cron/lostfilm/parse"
+# curl "http://127.0.0.1:9119/cron/lostfilm/ParsePages?pageFrom=1&pageTo=10"
+

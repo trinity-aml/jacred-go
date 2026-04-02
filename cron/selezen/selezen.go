@@ -3,19 +3,21 @@ package selezen
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"html"
 	"io"
 	"log"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
-
-	"path/filepath"
 
 	"jacred/app"
 	"jacred/core"
@@ -42,15 +44,48 @@ var (
 	badAnimeMarkerRe     = regexp.MustCompile(`>Аниме</a>`)
 	multMarkerRe         = regexp.MustCompile(`>Мульт|>мульт`)
 	loginSessionCookieRe = regexp.MustCompile(`PHPSESSID=([^;]+)(;|$)`)
+	// pagination: finds highest page number in DLE pager links
+	pageLinksRe = regexp.MustCompile(`/relizy-ot-selezen/page/([0-9]+)/`)
 )
 
+type Task struct {
+	UpdateTime string `json:"updateTime"`
+	Page       int    `json:"page"`
+}
+
+func (t Task) UpdatedToday() bool {
+	if strings.TrimSpace(t.UpdateTime) == "" {
+		return false
+	}
+	tm, _ := time.Parse(time.RFC3339, t.UpdateTime)
+	if tm.IsZero() {
+		tm, _ = time.Parse("2006-01-02T15:04:05", t.UpdateTime)
+	}
+	if tm.IsZero() {
+		return false
+	}
+	now := time.Now()
+	y1, m1, d1 := tm.Date()
+	y2, m2, d2 := now.Date()
+	return y1 == y2 && m1 == m2 && d1 == d2
+}
+
+func (t *Task) MarkToday() {
+	now := time.Now()
+	t.UpdateTime = time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.Local).Format(time.RFC3339)
+}
+
 type Parser struct {
-	Config app.Config
-	DB     *filedb.DB
-	Client *http.Client
+	Config  app.Config
+	DB      *filedb.DB
+	DataDir string
+	Client  *http.Client
 
 	mu               sync.Mutex
 	working          bool
+	allWork          bool
+	latestMu         sync.Mutex
+	tasks            []Task
 	cookieMu         sync.Mutex
 	cookie           string
 	lastLoginAttempt time.Time
@@ -65,8 +100,10 @@ type ParseResult struct {
 	Failed  int    `json:"failed"`
 }
 
-func New(cfg app.Config, db *filedb.DB) *Parser {
-	return &Parser{Config: cfg, DB: db, Client: &http.Client{Timeout: 25 * time.Second}}
+func New(cfg app.Config, db *filedb.DB, dataDir string) *Parser {
+	p := &Parser{Config: cfg, DB: db, DataDir: dataDir, Client: &http.Client{Timeout: 25 * time.Second}}
+	_ = p.loadTasks()
+	return p
 }
 
 func (p *Parser) Parse(ctx context.Context, parseFrom, parseTo int) (ParseResult, error) {
@@ -394,6 +431,196 @@ func (p *Parser) fetchMagnet(ctx context.Context, cookie, urlv string) (string, 
 		return "", err
 	}
 	return html.UnescapeString(matchDecode(magnetRe, body)), nil
+}
+
+func (p *Parser) UpdateTasksParse(ctx context.Context) ([]Task, error) {
+	cookie, err := p.ensureCookie(ctx)
+	if err != nil {
+		return nil, err
+	}
+	host := strings.TrimRight(strings.TrimSpace(p.Config.Selezen.Host), "/")
+	if host == "" {
+		return nil, nil
+	}
+	body, err := p.fetchText(ctx, host+"/relizy-ot-selezen/", cookie, host+"/")
+	if err != nil {
+		return nil, err
+	}
+	maxPage := 1
+	for _, m := range pageLinksRe.FindAllStringSubmatch(body, -1) {
+		if n, err2 := strconv.Atoi(m[1]); err2 == nil && n > maxPage {
+			maxPage = n
+		}
+	}
+
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.tasks == nil {
+		p.tasks = []Task{}
+	}
+	pages := map[int]Task{}
+	for _, t := range p.tasks {
+		pages[t.Page] = t
+	}
+	for pg := 1; pg <= maxPage; pg++ {
+		if _, ok := pages[pg]; !ok {
+			pages[pg] = Task{Page: pg, UpdateTime: "0001-01-01T00:00:00"}
+		}
+	}
+	merged := make([]Task, 0, len(pages))
+	for _, t := range pages {
+		merged = append(merged, t)
+	}
+	sort.Slice(merged, func(i, j int) bool { return merged[i].Page < merged[j].Page })
+	p.tasks = merged
+	if err := p.saveTasksLocked(); err != nil {
+		return nil, err
+	}
+	return cloneTasks(p.tasks), nil
+}
+
+func (p *Parser) ParseAllTask(ctx context.Context) (string, error) {
+	p.mu.Lock()
+	if p.allWork {
+		p.mu.Unlock()
+		return "work", nil
+	}
+	p.allWork = true
+	snapshot := cloneTasks(p.tasks)
+	p.mu.Unlock()
+	defer func() { p.mu.Lock(); p.allWork = false; p.mu.Unlock() }()
+
+	for _, task := range snapshot {
+		if task.UpdatedToday() {
+			continue
+		}
+		if p.Config.Selezen.ParseDelay > 0 {
+			select {
+			case <-ctx.Done():
+				return "", ctx.Err()
+			case <-time.After(time.Duration(p.Config.Selezen.ParseDelay) * time.Millisecond):
+			}
+		}
+		parsed, added, updated, skipped, failed, err := p.parsePage(ctx, task.Page)
+		if err != nil {
+			return "", err
+		}
+		if parsed > 0 {
+			log.Printf("selezen: page=%d fetched=%d added=%d updated=%d skipped=%d failed=%d", task.Page, parsed, added, updated, skipped, failed)
+			p.mu.Lock()
+			for i := range p.tasks {
+				if p.tasks[i].Page == task.Page {
+					p.tasks[i].MarkToday()
+					break
+				}
+			}
+			if err2 := p.saveTasksLocked(); err2 != nil {
+				p.mu.Unlock()
+				return "", err2
+			}
+			p.mu.Unlock()
+		}
+	}
+	return "ok", nil
+}
+
+func (p *Parser) ParseLatest(ctx context.Context, pages int) (string, error) {
+	if !p.latestMu.TryLock() {
+		return "work", nil
+	}
+	defer p.latestMu.Unlock()
+	if pages <= 0 {
+		pages = 5
+	}
+	p.mu.Lock()
+	snapshot := cloneTasks(p.tasks)
+	p.mu.Unlock()
+	if len(snapshot) == 0 {
+		if _, err := p.UpdateTasksParse(ctx); err != nil {
+			return "", err
+		}
+		p.mu.Lock()
+		snapshot = cloneTasks(p.tasks)
+		p.mu.Unlock()
+	}
+	sort.Slice(snapshot, func(i, j int) bool { return snapshot[i].Page < snapshot[j].Page })
+	if len(snapshot) > pages {
+		snapshot = snapshot[:pages]
+	}
+	var lines []string
+	for _, task := range snapshot {
+		if p.Config.Selezen.ParseDelay > 0 {
+			select {
+			case <-ctx.Done():
+				return "", ctx.Err()
+			case <-time.After(time.Duration(p.Config.Selezen.ParseDelay) * time.Millisecond):
+			}
+		}
+		parsed, added, updated, skipped, failed, err := p.parsePage(ctx, task.Page)
+		if err != nil {
+			return "", err
+		}
+		if parsed == 0 {
+			continue
+		}
+		log.Printf("selezen: page=%d fetched=%d added=%d updated=%d skipped=%d failed=%d", task.Page, parsed, added, updated, skipped, failed)
+		p.mu.Lock()
+		for i := range p.tasks {
+			if p.tasks[i].Page == task.Page {
+				p.tasks[i].MarkToday()
+				break
+			}
+		}
+		if err2 := p.saveTasksLocked(); err2 != nil {
+			p.mu.Unlock()
+			return "", err2
+		}
+		p.mu.Unlock()
+		lines = append(lines, fmt.Sprintf("page=%d", task.Page))
+	}
+	if len(lines) == 0 {
+		return "ok", nil
+	}
+	return strings.Join(lines, "\n") + "\n", nil
+}
+
+func (p *Parser) loadTasks() error {
+	path := filepath.Join(p.DataDir, "temp", "selezen_taskParse.json")
+	b, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			p.tasks = []Task{}
+			return nil
+		}
+		return err
+	}
+	var raw []Task
+	if err := json.Unmarshal(b, &raw); err != nil {
+		return err
+	}
+	p.tasks = raw
+	return nil
+}
+
+func (p *Parser) saveTasksLocked() error {
+	if p.tasks == nil {
+		p.tasks = []Task{}
+	}
+	path := filepath.Join(p.DataDir, "temp", "selezen_taskParse.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	b, err := json.Marshal(p.tasks)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, b, 0o644)
+}
+
+func cloneTasks(src []Task) []Task {
+	out := make([]Task, len(src))
+	copy(out, src)
+	return out
 }
 
 func parseNames(title string) (string, string, int) {
