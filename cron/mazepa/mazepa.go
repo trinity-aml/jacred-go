@@ -356,11 +356,14 @@ func (p *Parser) UpdateTasksParse(ctx context.Context) (map[string][]Task, error
 		}
 	}
 	host := strings.TrimRight(p.Config.Mazepa.Host, "/")
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if p.tasks == nil {
-		p.tasks = map[string][]Task{}
+
+	// Fetch page counts per category WITHOUT holding p.mu
+	// (httpGet calls getCookie which also needs p.mu — holding it here would deadlock)
+	type catMax struct {
+		catID   string
+		maxPage int
 	}
+	var fetched []catMax
 	for catID := range categories {
 		body, err := p.httpGet(ctx, fmt.Sprintf("%s/viewforum.php?f=%s&start=0", host, catID))
 		if err != nil {
@@ -372,13 +375,22 @@ func (p *Parser) UpdateTasksParse(ctx context.Context) (map[string][]Task, error
 				maxStart = n
 			}
 		}
-		maxPage := maxStart / 50
-		existing := p.tasks[catID]
+		fetched = append(fetched, catMax{catID, maxStart / 50})
+	}
+
+	// Merge results into tasks under lock
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.tasks == nil {
+		p.tasks = map[string][]Task{}
+	}
+	for _, cm := range fetched {
+		existing := p.tasks[cm.catID]
 		pages := map[int]Task{}
 		for _, t := range existing {
 			pages[t.Page] = t
 		}
-		for pg := 0; pg <= maxPage; pg++ {
+		for pg := 0; pg <= cm.maxPage; pg++ {
 			if _, ok := pages[pg]; !ok {
 				pages[pg] = Task{Page: pg, UpdateTime: "0001-01-01T00:00:00"}
 			}
@@ -388,7 +400,7 @@ func (p *Parser) UpdateTasksParse(ctx context.Context) (map[string][]Task, error
 			merged = append(merged, t)
 		}
 		sort.Slice(merged, func(i, j int) bool { return merged[i].Page < merged[j].Page })
-		p.tasks[catID] = merged
+		p.tasks[cm.catID] = merged
 	}
 	if err := p.saveTasksLocked(); err != nil {
 		return nil, err
