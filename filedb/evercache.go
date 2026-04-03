@@ -1,7 +1,6 @@
 package filedb
 
 import (
-	"encoding/json"
 	"sort"
 	"sync"
 	"time"
@@ -9,7 +8,7 @@ import (
 
 // bucketCacheEntry holds a cached bucket and the last time it was accessed.
 type bucketCacheEntry struct {
-	mu         sync.RWMutex
+	mu         sync.Mutex
 	bucket     map[string]TorrentDetails
 	accessedAt time.Time
 }
@@ -74,17 +73,14 @@ func (db *DB) evictOldest(take int) {
 		path       string
 		accessedAt time.Time
 	}
+	// Snapshot path→time without holding entry locks (slight staleness is acceptable).
 	ecMu.RLock()
 	entries := make([]kv, 0, len(ecStore))
 	for path, e := range ecStore {
-		e.mu.Lock()
-		at := e.accessedAt
-		e.mu.Unlock()
-		entries = append(entries, kv{path, at})
+		entries = append(entries, kv{path, e.accessedAt})
 	}
 	ecMu.RUnlock()
 
-	// sort oldest first
 	sort.Slice(entries, func(i, j int) bool {
 		return entries[i].accessedAt.Before(entries[j].accessedAt)
 	})
@@ -121,10 +117,7 @@ func (db *DB) EvictCache(take int) int {
 		if take > 0 && removed >= take {
 			break
 		}
-		e.mu.RLock()
-		stale := e.accessedAt.Before(cutoff)
-		e.mu.RUnlock()
-		if stale {
+		if e.accessedAt.Before(cutoff) {
 			delete(ecStore, path)
 			removed++
 		}
@@ -140,18 +133,53 @@ func CacheSize() int {
 	return n
 }
 
-// deepCopyBucket returns a full deep copy of a bucket via JSON round-trip.
+// deepCopyBucket returns a full deep copy of a bucket without JSON serialization.
+// TorrentDetails values are JSON-decoded types: string, float64, bool, nil, []any, map[string]any.
 func deepCopyBucket(src map[string]TorrentDetails) map[string]TorrentDetails {
 	if src == nil {
 		return nil
 	}
-	b, err := json.Marshal(src)
-	if err != nil {
-		return nil
-	}
-	var dst map[string]TorrentDetails
-	if err := json.Unmarshal(b, &dst); err != nil {
-		return nil
+	dst := make(map[string]TorrentDetails, len(src))
+	for k, td := range src {
+		dst[k] = copyTorrentDetails(td)
 	}
 	return dst
+}
+
+func copyTorrentDetails(src TorrentDetails) TorrentDetails {
+	if src == nil {
+		return nil
+	}
+	dst := make(TorrentDetails, len(src))
+	for k, v := range src {
+		dst[k] = copyValue(v)
+	}
+	return dst
+}
+
+// copyValue deep-copies a JSON-decoded value.
+// Primitives (string, float64, bool, nil) are immutable and returned as-is.
+// Slices and maps are copied recursively.
+func copyValue(v any) any {
+	switch val := v.(type) {
+	case map[string]any:
+		m := make(map[string]any, len(val))
+		for k, v2 := range val {
+			m[k] = copyValue(v2)
+		}
+		return m
+	case []any:
+		s := make([]any, len(val))
+		for i, v2 := range val {
+			s[i] = copyValue(v2)
+		}
+		return s
+	case []string:
+		s := make([]string, len(val))
+		copy(s, val)
+		return s
+	default:
+		// string, float64, bool, nil, int — all immutable value types
+		return val
+	}
 }

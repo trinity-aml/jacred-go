@@ -62,6 +62,12 @@ func (db *DB) OpenRead(key string) (map[string]TorrentDetails, error) {
 	}
 	return bucket, err
 }
+
+// OpenReadNoCache reads a bucket directly from disk, bypassing the evercache.
+// Use for bulk scans (stats, admin) where caching every bucket wastes memory.
+func (db *DB) OpenReadNoCache(key string) (map[string]TorrentDetails, error) {
+	return db.openReadPath(db.PathDb(key))
+}
 func (db *DB) openReadPath(path string) (map[string]TorrentDetails, error) {
 	f, err := os.Open(path)
 	if err != nil {

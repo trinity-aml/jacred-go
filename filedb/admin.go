@@ -165,7 +165,7 @@ func (db *DB) FindCorrupt(sampleSize int) map[string]any {
 	missingOriginalnameSample := []map[string]any{}
 	missingTrackerNameSample := []map[string]any{}
 	for _, item := range db.OrderedMasterEntries() {
-		bucket, err := db.OpenRead(item.Key)
+		bucket, err := db.OpenReadNoCache(item.Key)
 		if err != nil {
 			continue
 		}
@@ -216,7 +216,7 @@ func (db *DB) RemoveNullValues() (int, int, error) {
 	affectedFiles := 0
 	for _, item := range db.OrderedMasterEntries() {
 		path := db.PathDb(item.Key)
-		bucket, err := db.OpenRead(item.Key)
+		bucket, err := db.OpenReadNoCache(item.Key)
 		if err != nil {
 			continue
 		}
@@ -258,7 +258,7 @@ func (db *DB) FindDuplicateKeys(tracker string, excludeNumeric bool) map[string]
 		if excludeNumeric && parts[0] != "" && allDigits(parts[0]) {
 			continue
 		}
-		bucket, err := db.OpenRead(key)
+		bucket, err := db.OpenReadNoCache(key)
 		if err != nil {
 			continue
 		}
@@ -291,7 +291,7 @@ func (db *DB) FindEmptySearchFields(sampleSize int) map[string]any {
 	emptySoSample := []map[string]any{}
 	emptyBothSample := []map[string]any{}
 	for _, item := range db.OrderedMasterEntries() {
-		bucket, err := db.OpenRead(item.Key)
+		bucket, err := db.OpenReadNoCache(item.Key)
 		if err != nil {
 			continue
 		}

@@ -385,13 +385,8 @@ func httpGetJSON[T any](ctx context.Context, client *http.Client, url string) (T
 		return zero, fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 100<<20)) // 100 MB max
-	if err != nil {
-		return zero, err
-	}
-
 	var result T
-	if err := json.Unmarshal(body, &result); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 100<<20)).Decode(&result); err != nil {
 		return zero, fmt.Errorf("json: %w", err)
 	}
 	return result, nil

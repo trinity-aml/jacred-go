@@ -584,7 +584,7 @@ func (p *Parser) saveTasksLocked() error {
 	if err := os.MkdirAll(filepath.Dir(p.tasksPath()), 0o755); err != nil {
 		return err
 	}
-	b, err := json.MarshalIndent(p.tasks, "", "  ")
+	b, err := json.Marshal(p.tasks)
 	if err != nil {
 		return err
 	}

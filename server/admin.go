@@ -100,7 +100,7 @@ func (s *Server) collectStatsTorrents(trackerName string, newtoday, updatedtoday
 	today := todayLocalMidnightUTC()
 	collected := make([]filedb.TorrentDetails, 0, limit)
 	for _, item := range s.DB.OrderedMasterEntries() {
-		bucket, err := s.DB.OpenRead(item.Key)
+		bucket, err := s.DB.OpenReadNoCache(item.Key)
 		if err != nil {
 			continue
 		}
@@ -1473,7 +1473,7 @@ func (s *Server) generateStatsFile() {
 	trackers := map[string]*trackerStat{}
 
 	for _, item := range s.DB.OrderedMasterEntries() {
-		bucket, err := s.DB.OpenRead(item.Key)
+		bucket, err := s.DB.OpenReadNoCache(item.Key)
 		if err != nil {
 			continue
 		}
