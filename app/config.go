@@ -348,6 +348,10 @@ func setConfigKV(cfg *Config, k, v string) {
 		cfg.SyncSpidr = parseBool(v)
 	case "maxreadfile":
 		cfg.MaxReadFile = parseInt(v)
+	case "memlimit":
+		cfg.MemLimitMB = parseInt(v)
+	case "gcpercent":
+		cfg.GCPercent = parseInt(v)
 	case "timeStatsUpdate":
 		cfg.TimeStatsUpdate = parseInt(v)
 	case "timeSync":

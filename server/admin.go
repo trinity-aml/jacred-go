@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -1570,4 +1571,6 @@ func (s *Server) generateStatsFile() {
 		return
 	}
 	log.Printf("stats: generated in %dms, trackers=%d", time.Since(start).Milliseconds(), len(trackers))
+	// Release memory held by all the bucket maps we just scanned.
+	runtime.GC()
 }

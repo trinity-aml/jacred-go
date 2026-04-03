@@ -74,6 +74,8 @@ type Config struct {
 	SyncSport          bool                 `json:"syncsport"`
 	SyncSpidr          bool                 `json:"syncspidr"`
 	MaxReadFile        int                  `json:"maxreadfile"`
+	MemLimitMB         int                  `json:"memlimit"`
+	GCPercent          int                  `json:"gcpercent"`
 	Evercache          Evercache            `json:"evercache"`
 	TimeStatsUpdate    int                  `json:"timeStatsUpdate"`
 	TimeSync           int                  `json:"timeSync"`
@@ -122,7 +124,8 @@ func DefaultConfig() Config {
 		SyncSport:          true,
 		SyncSpidr:          true,
 		MaxReadFile:        200,
-		Evercache:          Evercache{Enable: true, ValidHour: 1, MaxOpenWriteTask: 2000, DropCacheTake: 200},
+		GCPercent:          50,
+		Evercache:          Evercache{Enable: true, ValidHour: 1, MaxOpenWriteTask: 500, DropCacheTake: 100},
 		TimeStatsUpdate:    90,
 		TimeSync:           60,
 		TimeSyncSpidr:      60,

@@ -92,7 +92,28 @@ opensync: true               # Enable /sync/fdb/torrents (V2 protocol, no auth)
 opensync_v1: false           # Enable /sync/torrents (V1 protocol, no auth)
 web: true                    # Serve web UI (index.html, stats.html)
 timeStatsUpdate: 90          # Rebuild stats.json every N seconds
+memlimit: 0                  # Hard cap on Go heap in MB (0 = no limit)
+gcpercent: 50                # GC frequency: lower = more GC, less peak RAM (default 50)
 ```
+
+### Memory Limits
+
+Control Go runtime memory usage. Essential on VPS with limited RAM.
+
+```yaml
+memlimit: 1500   # Hard cap on Go heap in MB; GC becomes very aggressive near the limit
+gcpercent: 50    # Go's GOGC knob: 50 = GC at +50% heap growth (default 50, Go default is 100)
+```
+
+**Recommended settings by RAM:**
+
+| VPS RAM | `memlimit` | `gcpercent` | `evercache.maxOpenWriteTask` |
+|---------|-----------|-------------|------------------------------|
+| 1 GB    | `700`     | `20`        | `200`                        |
+| 2 GB    | `1500`    | `30`        | `300`                        |
+| 4 GB+   | `0`       | `50`        | `500`                        |
+
+`memlimit: 0` disables the hard cap (Go default behaviour).
 
 ### CloudFlare TLS Client
 
@@ -106,12 +127,17 @@ cfclient:
 
 ### Evercache (In-Memory Bucket Cache)
 
+Keeps recently opened buckets in RAM to reduce disk reads on repeated searches.
+The cache is hard-capped at `maxOpenWriteTask` entries; when full the oldest
+`dropCacheTake` entries are evicted immediately. Stale entries (older than
+`validHour`) are swept every 10 minutes by a background goroutine.
+
 ```yaml
 evercache:
   enable: true               # Enable in-memory caching of buckets
-  validHour: 1               # Cache TTL in hours (0 = unlimited)
-  maxOpenWriteTask: 2000     # Max buckets held in memory
-  dropCacheTake: 200         # Evict this many entries when cache is full
+  validHour: 1               # Cache TTL in hours; entries older than this are evicted
+  maxOpenWriteTask: 500      # Max buckets held in memory (hard cap)
+  dropCacheTake: 100         # How many to evict when the cap is hit
 ```
 
 ### Sync (Multi-Instance)

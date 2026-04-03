@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime/debug"
 	"strconv"
 	"syscall"
 	"time"
@@ -63,6 +64,19 @@ func main() {
 	_ = os.MkdirAll(filepath.Join("Data", "temp"), 0o755)
 	_ = os.MkdirAll(filepath.Join("Data", "log"), 0o755)
 	_ = os.MkdirAll(filepath.Join("Data", "tracks"), 0o755)
+
+	// Memory limits
+	gcpct := cfg.GCPercent
+	if gcpct <= 0 {
+		gcpct = 50
+	}
+	debug.SetGCPercent(gcpct)
+	if cfg.MemLimitMB > 0 {
+		debug.SetMemoryLimit(int64(cfg.MemLimitMB) * 1024 * 1024)
+		log.Printf("memory: limit=%dMB gc=%d%%", cfg.MemLimitMB, gcpct)
+	} else {
+		log.Printf("memory: no hard limit, gc=%d%%", gcpct)
+	}
 
 	// Log to file + stdout (if log: true in config)
 	if cfg.Log {

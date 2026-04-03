@@ -48,14 +48,36 @@ web: true             # Serve index.html and stats.html
 
 timeStatsUpdate: 90   # Rebuild Data/temp/stats.json every N seconds
 
+# ── Memory ────────────────────────────────────────────────────────────────────
+# Controls Go runtime memory usage. Useful on VPS with limited RAM.
+#
+# memlimit: sets a hard cap on the Go heap in MB.
+#   When the heap approaches this limit the GC runs very aggressively to stay
+#   under it — this prevents OOM-kill at the cost of more CPU for GC.
+#   Leave at 0 (disabled) if you have plenty of RAM.
+#   Recommended for 2 GB VPS: 1500  (leaves ~500 MB for the OS)
+#   Recommended for 1 GB VPS:  700
+#
+# gcpercent: controls how often the GC runs (Go's GOGC knob).
+#   100 = GC when heap doubles since last collection (Go default).
+#    50 = GC when heap grows 50% — twice as frequent, lower peak usage.
+#    20 = very aggressive; suitable for very tight memory budgets.
+#   -1  = disable GC entirely (not recommended).
+
+memlimit: 0       # MB — 0 means no limit
+gcpercent: 50     # default 50 (Go's built-in default is 100)
+
 # ── In-memory bucket cache (Evercache) ────────────────────────────────────────
-# Keeps recently opened buckets in memory to reduce disk reads.
+# Keeps recently opened buckets in memory to reduce disk reads on searches.
+# The cache is capped at maxOpenWriteTask entries; when full the oldest
+# dropCacheTake entries are evicted. Stale entries (older than validHour) are
+# swept every 10 minutes by the background evercache cron.
 
 evercache:
   enable: true
-  validHour: 1          # Cache TTL in hours (0 = never expire)
-  maxOpenWriteTask: 2000 # Max number of buckets held in memory
-  dropCacheTake: 200    # How many buckets to evict when limit is reached
+  validHour: 1          # Cache TTL in hours; entries older than this are evicted
+  maxOpenWriteTask: 500 # Max buckets held in memory (reduce to 200-300 on 1 GB VPS)
+  dropCacheTake: 100    # How many buckets to evict when the cap is hit
 
 # ── CloudFlare TLS client ─────────────────────────────────────────────────────
 # Used by: Megapeer, TorrentBy, Bitru, Mazepa, Anistar, Anifilm

@@ -6,11 +6,15 @@ opensync: true
 web: true
 timeStatsUpdate: 90
 
+# Memory limits (0 = no limit)
+# memlimit: 1500    # Hard cap on Go heap in MB — recommended for VPS with 2GB RAM
+# gcpercent: 50     # GC aggressiveness: lower = more frequent GC, less peak memory (default 50)
+
 evercache:
   enable: true
   validHour: 1
-  maxOpenWriteTask: 2000
-  dropCacheTake: 200
+  maxOpenWriteTask: 500   # Max buckets held in memory (lower for VPS with limited RAM)
+  dropCacheTake: 100
 
 cfclient:
   profile: "chrome_146"
