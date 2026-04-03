@@ -28,22 +28,27 @@ func RunTrackersCron(ctx context.Context, db *filedb.DB, dataDir, wwwroot string
 		return
 	case <-time.After(20 * time.Second):
 	}
+	if err := RunTrackersCronOnce(ctx, db, dataDir, wwwroot); err != nil {
+		fmt.Printf("trackers: error / %v\n", err)
+	}
+	ticker := time.NewTicker(time.Hour)
+	defer ticker.Stop()
 	for {
-		if err := RunTrackersCronOnce(ctx, db, dataDir, wwwroot); err != nil {
-			fmt.Printf("trackers: error / %v\n", err)
-		}
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(time.Hour):
+		case <-ticker.C:
+			if err := RunTrackersCronOnce(ctx, db, dataDir, wwwroot); err != nil {
+				fmt.Printf("trackers: error / %v\n", err)
+			}
 		}
 	}
 }
 
 func RunTrackersCronOnce(ctx context.Context, db *filedb.DB, dataDir, wwwroot string) error {
 	trackers := map[string]struct{}{}
-	for _, item := range db.OrderedMasterEntries() {
-		bucket, err := db.OpenRead(item.Key)
+	for _, item := range db.UnorderedMasterEntries() {
+		bucket, err := db.OpenReadNoCache(item.Key)
 		if err != nil {
 			continue
 		}

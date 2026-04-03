@@ -6,11 +6,30 @@ import (
 	"strings"
 )
 
+// allVoicesLower holds precomputed lowercase versions of allVoices to avoid
+// repeated strings.ToLower() calls inside UpdateFullDetails hot path.
+var allVoicesLower []string
+
+func init() {
+	allVoicesLower = make([]string, len(allVoices))
+	for i, v := range allVoices {
+		allVoicesLower[i] = strings.ToLower(v)
+	}
+}
+
 // UpdateFullDetails computes quality, videotype, voices, languages, seasons and size
 // for a torrent entry, modifying the map in-place. Port of C# FileDB.updateFullDetails.
+//
+// Skips processing if the torrent was already fully processed in a previous save
+// (quality and _sn are set). New/updated torrents arrive from parsers via ToMap()
+// which never sets these fields, so they are always processed.
 func UpdateFullDetails(t TorrentDetails) {
 	title := asString(t["title"])
 	if title == "" {
+		return
+	}
+	// Already processed: quality is set and search name is populated.
+	if t["quality"] != nil && asString(t["_sn"]) != "" {
 		return
 	}
 	titleLower := strings.ToLower(title)
@@ -49,9 +68,9 @@ func UpdateFullDetails(t TorrentDetails) {
 	if reDub.MatchString(titleLower) {
 		voices["Дубляж"] = struct{}{}
 	}
-	for _, v := range allVoices {
-		if len(v) > 4 && strings.Contains(titleLower, strings.ToLower(v)) {
-			voices[v] = struct{}{}
+	for i, vLow := range allVoicesLower {
+		if len(allVoices[i]) > 4 && strings.Contains(titleLower, vLow) {
+			voices[allVoices[i]] = struct{}{}
 		}
 	}
 	voiceList := setToSlice(voices)

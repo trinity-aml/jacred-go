@@ -42,6 +42,20 @@ func (db *DB) OrderedMasterEntries() []MasterEntry {
 	return out
 }
 
+// UnorderedMasterEntries returns all master DB entries in arbitrary (map) order.
+// Use instead of OrderedMasterEntries for full scans where sort order does not
+// matter (stats generation, dev/maintenance handlers). Avoids O(n log n) sort
+// over 100k+ entries.
+func (db *DB) UnorderedMasterEntries() []MasterEntry {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	out := make([]MasterEntry, 0, len(db.masterDb))
+	for k, v := range db.masterDb {
+		out = append(out, MasterEntry{Key: k, Value: v})
+	}
+	return out
+}
+
 // MigrateTorrentToNewKey adds a torrent entry to a different bucket identified by newKey.
 // The caller is responsible for removing the entry from the original bucket.
 func (db *DB) MigrateTorrentToNewKey(t TorrentDetails, newKey string) error {
@@ -164,7 +178,7 @@ func (db *DB) FindCorrupt(sampleSize int) map[string]any {
 	missingNameSample := []map[string]any{}
 	missingOriginalnameSample := []map[string]any{}
 	missingTrackerNameSample := []map[string]any{}
-	for _, item := range db.OrderedMasterEntries() {
+	for _, item := range db.UnorderedMasterEntries() {
 		bucket, err := db.OpenReadNoCache(item.Key)
 		if err != nil {
 			continue
@@ -214,7 +228,7 @@ func (db *DB) FindCorrupt(sampleSize int) map[string]any {
 func (db *DB) RemoveNullValues() (int, int, error) {
 	totalRemoved := 0
 	affectedFiles := 0
-	for _, item := range db.OrderedMasterEntries() {
+	for _, item := range db.UnorderedMasterEntries() {
 		path := db.PathDb(item.Key)
 		bucket, err := db.OpenReadNoCache(item.Key)
 		if err != nil {
@@ -249,7 +263,7 @@ func (db *DB) RemoveNullValues() (int, int, error) {
 
 func (db *DB) FindDuplicateKeys(tracker string, excludeNumeric bool) map[string]any {
 	duplicateKeys := []map[string]any{}
-	for _, item := range db.OrderedMasterEntries() {
+	for _, item := range db.UnorderedMasterEntries() {
 		key := item.Key
 		parts := strings.SplitN(key, ":", 2)
 		if len(parts) != 2 || !strings.EqualFold(parts[0], parts[1]) {
@@ -290,7 +304,7 @@ func (db *DB) FindEmptySearchFields(sampleSize int) map[string]any {
 	emptySnSample := []map[string]any{}
 	emptySoSample := []map[string]any{}
 	emptyBothSample := []map[string]any{}
-	for _, item := range db.OrderedMasterEntries() {
+	for _, item := range db.UnorderedMasterEntries() {
 		bucket, err := db.OpenReadNoCache(item.Key)
 		if err != nil {
 			continue

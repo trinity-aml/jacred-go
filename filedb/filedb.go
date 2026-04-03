@@ -17,6 +17,9 @@ import (
 	"jacred/core"
 )
 
+// pathCache caches key → bucket file path to avoid repeated MD5 on every call.
+var pathCache sync.Map
+
 type TorrentDetails map[string]any
 
 type TorrentInfo struct {
@@ -45,11 +48,18 @@ func (db *DB) lockKey(key string) *sync.Mutex {
 
 func (db *DB) KeyDb(name, original string) string { return core.NameToHash(name, original) }
 func (db *DB) PathDb(key string) string {
-	md5key := core.MD5(key)
-	if db.Config.FDBPathLevels == 2 || db.Config.FDBPathLevels == 0 {
-		return filepath.Join(db.DataDir, "fdb", md5key[:2], md5key[2:])
+	if v, ok := pathCache.Load(key); ok {
+		return v.(string)
 	}
-	return filepath.Join(db.DataDir, "fdb", md5key[:1], md5key)
+	md5key := core.MD5(key)
+	var path string
+	if db.Config.FDBPathLevels == 2 || db.Config.FDBPathLevels == 0 {
+		path = filepath.Join(db.DataDir, "fdb", md5key[:2], md5key[2:])
+	} else {
+		path = filepath.Join(db.DataDir, "fdb", md5key[:1], md5key)
+	}
+	pathCache.Store(key, path)
+	return path
 }
 func (db *DB) OpenRead(key string) (map[string]TorrentDetails, error) {
 	path := db.PathDb(key)

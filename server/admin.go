@@ -100,7 +100,7 @@ func (s *Server) handleStatsTorrentsEx(w http.ResponseWriter, r *http.Request) {
 func (s *Server) collectStatsTorrents(trackerName string, newtoday, updatedtoday, limit int) []map[string]any {
 	today := todayLocalMidnightUTC()
 	collected := make([]filedb.TorrentDetails, 0, limit)
-	for _, item := range s.DB.OrderedMasterEntries() {
+	for _, item := range s.DB.UnorderedMasterEntries() {
 		bucket, err := s.DB.OpenReadNoCache(item.Key)
 		if err != nil {
 			continue
@@ -808,7 +808,7 @@ func (s *Server) handleDevUpdateSize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	updated := 0
-	for _, item := range s.DB.OrderedMasterEntries() {
+	for _, item := range s.DB.UnorderedMasterEntries() {
 		bucket, err := s.DB.OpenReadOrEmpty(item.Key)
 		if err != nil {
 			continue
@@ -843,7 +843,7 @@ func (s *Server) handleDevUpdateSearchName(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	updated := 0
-	for _, item := range s.DB.OrderedMasterEntries() {
+	for _, item := range s.DB.UnorderedMasterEntries() {
 		bucket, err := s.DB.OpenReadOrEmpty(item.Key)
 		if err != nil {
 			continue
@@ -919,7 +919,7 @@ func (s *Server) handleDevResetCheckTime(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	yesterday := time.Now().UTC().AddDate(0, 0, -1).Format(time.RFC3339Nano)
-	for _, item := range s.DB.OrderedMasterEntries() {
+	for _, item := range s.DB.UnorderedMasterEntries() {
 		bucket, err := s.DB.OpenReadOrEmpty(item.Key)
 		if err != nil {
 			continue
@@ -949,7 +949,7 @@ func (s *Server) handleDevUpdateDetails(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	updated := 0
-	for _, item := range s.DB.OrderedMasterEntries() {
+	for _, item := range s.DB.UnorderedMasterEntries() {
 		bucket, err := s.DB.OpenReadOrEmpty(item.Key)
 		if err != nil {
 			continue
@@ -981,7 +981,7 @@ func (s *Server) handleDevFixKnabenNames(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	processed, updated, migrated := 0, 0, 0
-	for _, item := range s.DB.OrderedMasterEntries() {
+	for _, item := range s.DB.UnorderedMasterEntries() {
 		bucket, unlock, err := s.DB.OpenReadOrEmptyLocked(item.Key)
 		if err != nil {
 			continue
@@ -1056,7 +1056,7 @@ func (s *Server) handleDevFixBitruNames(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	processed, updated, migrated := 0, 0, 0
-	for _, item := range s.DB.OrderedMasterEntries() {
+	for _, item := range s.DB.UnorderedMasterEntries() {
 		bucket, unlock, err := s.DB.OpenReadOrEmptyLocked(item.Key)
 		if err != nil {
 			continue
@@ -1175,7 +1175,7 @@ func (s *Server) handleDevFixEmptySearchFields(w http.ResponseWriter, r *http.Re
 		return
 	}
 	snFixed, soFixed, migratedCount := 0, 0, 0
-	for _, item := range s.DB.OrderedMasterEntries() {
+	for _, item := range s.DB.UnorderedMasterEntries() {
 		bucket, unlock, err := s.DB.OpenReadOrEmptyLocked(item.Key)
 		if err != nil {
 			continue
@@ -1241,7 +1241,7 @@ func (s *Server) handleDevMigrateAnilibertyUrls(w http.ResponseWriter, r *http.R
 	}
 	processed, totalUpdated, skipped, totalErrors := 0, 0, 0, 0
 	var errors []string
-	for _, item := range s.DB.OrderedMasterEntries() {
+	for _, item := range s.DB.UnorderedMasterEntries() {
 		bucket, err := s.DB.OpenReadOrEmpty(item.Key)
 		if err != nil {
 			continue
@@ -1303,7 +1303,7 @@ func (s *Server) handleDevRemoveDuplicateAniliberty(w http.ResponseWriter, r *ht
 		updateTime time.Time
 	}
 	hashMap := map[string][]entry{}
-	for _, item := range s.DB.OrderedMasterEntries() {
+	for _, item := range s.DB.UnorderedMasterEntries() {
 		bucket, err := s.DB.OpenReadOrEmpty(item.Key)
 		if err != nil {
 			continue
@@ -1357,7 +1357,7 @@ func (s *Server) handleDevFixAnimelayerDuplicates(w http.ResponseWriter, r *http
 		return
 	}
 	totalFixed, totalRemoved := 0, 0
-	for _, item := range s.DB.OrderedMasterEntries() {
+	for _, item := range s.DB.UnorderedMasterEntries() {
 		bucket, err := s.DB.OpenReadOrEmpty(item.Key)
 		if err != nil {
 			continue
@@ -1432,9 +1432,9 @@ func (s *Server) handleStatsRefresh(w http.ResponseWriter, r *http.Request) {
 
 // RunStatsLoop periodically generates Data/temp/stats.json.
 func (s *Server) RunStatsLoop(ctx context.Context) {
-	interval := time.Duration(s.Config.TimeStatsUpdate) * time.Minute
+	interval := time.Duration(s.Config.TimeStatsUpdate) * time.Second
 	if interval <= 0 {
-		interval = 90 * time.Minute
+		interval = 90 * time.Second
 	}
 	// Generate once at startup (after 30s delay)
 	select {
@@ -1443,11 +1443,13 @@ func (s *Server) RunStatsLoop(ctx context.Context) {
 	case <-time.After(30 * time.Second):
 	}
 	s.generateStatsFile()
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(interval):
+		case <-ticker.C:
 			s.generateStatsFile()
 		}
 	}
@@ -1473,7 +1475,7 @@ func (s *Server) generateStatsFile() {
 
 	trackers := map[string]*trackerStat{}
 
-	for _, item := range s.DB.OrderedMasterEntries() {
+	for _, item := range s.DB.UnorderedMasterEntries() {
 		bucket, err := s.DB.OpenReadNoCache(item.Key)
 		if err != nil {
 			continue
