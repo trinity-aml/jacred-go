@@ -2,6 +2,7 @@ package filedb
 
 import (
 	"encoding/json"
+	"sort"
 	"sync"
 	"time"
 )
@@ -35,8 +36,8 @@ func (db *DB) ecGet(path string) map[string]TorrentDetails {
 	if !ok {
 		return nil
 	}
-	e.mu.RLock()
-	defer e.mu.RUnlock()
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	cutoff := time.Now().Add(-time.Duration(db.Config.Evercache.ValidHour) * time.Hour)
 	if e.accessedAt.Before(cutoff) {
 		return nil
@@ -46,6 +47,7 @@ func (db *DB) ecGet(path string) map[string]TorrentDetails {
 }
 
 // ecPut stores (or replaces) a deep copy of bucket for path.
+// If the cache exceeds MaxOpenWriteTask entries, the oldest DropCacheTake entries are evicted.
 func (db *DB) ecPut(path string, bucket map[string]TorrentDetails) {
 	if !db.ecEnabled() {
 		return
@@ -54,6 +56,45 @@ func (db *DB) ecPut(path string, bucket map[string]TorrentDetails) {
 	entry := &bucketCacheEntry{bucket: cp, accessedAt: time.Now()}
 	ecMu.Lock()
 	ecStore[path] = entry
+	maxSize := db.Config.Evercache.MaxOpenWriteTask
+	overflow := maxSize > 0 && len(ecStore) > maxSize
+	ecMu.Unlock()
+	if overflow {
+		take := db.Config.Evercache.DropCacheTake
+		if take <= 0 {
+			take = 200
+		}
+		db.evictOldest(take)
+	}
+}
+
+// evictOldest removes the `take` least-recently-used entries from the cache.
+func (db *DB) evictOldest(take int) {
+	type kv struct {
+		path       string
+		accessedAt time.Time
+	}
+	ecMu.RLock()
+	entries := make([]kv, 0, len(ecStore))
+	for path, e := range ecStore {
+		e.mu.Lock()
+		at := e.accessedAt
+		e.mu.Unlock()
+		entries = append(entries, kv{path, at})
+	}
+	ecMu.RUnlock()
+
+	// sort oldest first
+	sort.Slice(entries, func(i, j int) bool {
+		return entries[i].accessedAt.Before(entries[j].accessedAt)
+	})
+	if take > len(entries) {
+		take = len(entries)
+	}
+	ecMu.Lock()
+	for i := 0; i < take; i++ {
+		delete(ecStore, entries[i].path)
+	}
 	ecMu.Unlock()
 }
 
