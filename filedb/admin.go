@@ -26,6 +26,18 @@ func ToFileTimeUTC(t time.Time) int64 {
 	return t.UTC().Unix()*ticksPerSecond + int64(t.UTC().Nanosecond())/100 + ticksBetweenEpochs
 }
 
+// NormalizeFileTime converts a FileTime that may have been generated with the
+// old C# DateTime epoch (ticks since 0001-01-01) to the correct Windows FILETIME
+// epoch (ticks since 1601-01-01). Values below 5e17 are assumed already correct.
+// The difference between the two epochs is 504911232000000000 ticks.
+func NormalizeFileTime(ft int64) int64 {
+	const csharpEpochDiff = int64(504911232000000000) // 621355968000000000 - 116444736000000000
+	if ft > 500_000_000_000_000_000 {
+		return ft - csharpEpochDiff
+	}
+	return ft
+}
+
 func (db *DB) OrderedMasterEntries() []MasterEntry {
 	db.mu.RLock()
 	defer db.mu.RUnlock()

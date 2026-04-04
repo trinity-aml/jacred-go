@@ -216,6 +216,7 @@ func (s *Server) handleSyncFdbTorrents(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ft, _ := strconv.ParseInt(firstQuery(q, "time", "fileTime"), 10, 64)
+	ft = filedb.NormalizeFileTime(ft)
 	startRaw := firstQuery(q, "start", "startTime")
 	start, _ := strconv.ParseInt(startRaw, 10, 64)
 	if start == 0 && strings.TrimSpace(startRaw) == "" {
@@ -315,6 +316,7 @@ func (s *Server) handleSyncFdbTorrents(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleSyncTorrents(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	ft, _ := strconv.ParseInt(firstQuery(q, "time", "fileTime"), 10, 64)
+	ft = filedb.NormalizeFileTime(ft)
 	if !s.Config.OpenSyncV1 || ft == 0 {
 		writeJSON(w, http.StatusOK, []any{})
 		return
