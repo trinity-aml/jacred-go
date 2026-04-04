@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"sort"
@@ -112,6 +113,10 @@ func (db *DB) RebuildIndexes() error {
 		}
 	}
 	if len(master) == 0 {
+		// masterDb.bz is missing or corrupt — falling back to slow full scan of all .gz files.
+		// This typically happens after an OOM kill during SaveChangesToFile.
+		// Expected duration: ~1-3 min for large databases. Will auto-fix on next save.
+		log.Printf("filedb: masterDb.bz missing or corrupt, rebuilding from .gz files (may take minutes)...")
 		err := filepath.Walk(filepath.Join(db.DataDir, "fdb"), func(path string, info os.FileInfo, err error) error {
 			if err != nil || info == nil || info.IsDir() {
 				return err

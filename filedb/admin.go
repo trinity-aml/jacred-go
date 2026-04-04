@@ -105,19 +105,35 @@ func (db *DB) SaveChangesToFile() error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	f, err := os.Create(path)
+	// Write to a temp file first, then rename atomically.
+	// os.Create would truncate the file immediately — if the process is killed
+	// mid-write (e.g. by OOM killer), the file is left corrupt and the next
+	// startup falls back to the slow full .gz walk (2-3 min for 123k entries).
+	tmp := path + ".tmp"
+	f, err := os.Create(tmp)
 	if err != nil {
 		return err
 	}
-	defer f.Close()
 	gz := gzip.NewWriter(f)
 	enc := json.NewEncoder(gz)
 	enc.SetEscapeHTML(false)
-	if err := enc.Encode(master); err != nil {
-		_ = gz.Close()
-		return err
+	encErr := enc.Encode(master)
+	gzErr := gz.Close()
+	fErr := f.Close()
+	if encErr != nil {
+		_ = os.Remove(tmp)
+		return encErr
 	}
-	if err := gz.Close(); err != nil {
+	if gzErr != nil {
+		_ = os.Remove(tmp)
+		return gzErr
+	}
+	if fErr != nil {
+		_ = os.Remove(tmp)
+		return fErr
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
 		return err
 	}
 	db.dailyBackup(path)
