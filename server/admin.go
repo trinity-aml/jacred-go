@@ -215,12 +215,10 @@ func (s *Server) handleSyncFdbTorrents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ftRaw, _ := strconv.ParseInt(firstQuery(q, "time", "fileTime"), 10, 64)
-	ft := filedb.NormalizeFileTime(ftRaw)
-	wasCSharpEpoch := ftRaw != ft
-	if wasCSharpEpoch {
-		log.Printf("sync/v2: normalized ft %d → %d", ftRaw, ft)
-	}
+	ft := filedb.NormalizeFileTime(func() int64 {
+		v, _ := strconv.ParseInt(firstQuery(q, "time", "fileTime"), 10, 64)
+		return v
+	}())
 	startRaw := firstQuery(q, "start", "startTime")
 	start, _ := strconv.ParseInt(startRaw, 10, 64)
 	if start == 0 && strings.TrimSpace(startRaw) == "" {
@@ -240,11 +238,6 @@ func (s *Server) handleSyncFdbTorrents(w http.ResponseWriter, r *http.Request) {
 	if take <= 0 {
 		take = 2000
 	}
-	// When ft was converted from old C# epoch, Torrs won't advance lastsync until
-	// nextread=false. Return everything at once so the catch-up sync can complete.
-	if wasCSharpEpoch {
-		take = 1<<31 - 1 // effectively unlimited
-	}
 
 	nextread := false
 	countread := 0
@@ -253,6 +246,12 @@ func (s *Server) handleSyncFdbTorrents(w http.ResponseWriter, r *http.Request) {
 	for _, item := range s.DB.OrderedMasterEntries() {
 		if item.Value.FileTime <= ft {
 			continue
+		}
+		// If we already exceeded take in a previous collection, signal nextread
+		// but don't process any more — the client will resume from the last fileTime.
+		if countread > take {
+			nextread = true
+			break
 		}
 
 		bucket, err := s.DB.OpenRead(item.Key)
@@ -287,16 +286,9 @@ func (s *Server) handleSyncFdbTorrents(w http.ResponseWriter, r *http.Request) {
 			}
 
 			countread++
-			if countread > take {
-				nextread = true
-				break
-			}
 		}
 
 		if len(torrent) == 0 {
-			if nextread {
-				break
-			}
 			continue
 		}
 
@@ -304,22 +296,16 @@ func (s *Server) handleSyncFdbTorrents(w http.ResponseWriter, r *http.Request) {
 			"Key": item.Key,
 			"Value": map[string]any{
 				"time":     item.Value.UpdateTime,
-				"fileTime": item.Value.FileTime,
+				"fileTime": filedb.SyncFileTime(filedb.NormalizeFileTime(item.Value.FileTime)),
 				"torrents": torrent,
 			},
 		})
-
-		if nextread {
-			break
-		}
 	}
 
-	if len(collections) > 0 {
-		lastCol := collections[len(collections)-1]
-		if v, ok := lastCol["Value"].(map[string]any); ok {
-			log.Printf("sync/v2: ft_in=%d ft_out=%d nextread=%v collections=%d", ft, v["fileTime"], nextread, len(collections))
-		}
-	}
+	// Torrs (and compatible clients) do not advance their 'time' parameter between
+	// requests when nextread=true — they only update lastsync on nextread=false.
+	// Always return nextread=false so clients can advance their cursor each cycle.
+	nextread = false
 	writeCanonicalJSON(w, http.StatusOK, map[string]any{
 		"nextread":   nextread,
 		"countread":  countread,

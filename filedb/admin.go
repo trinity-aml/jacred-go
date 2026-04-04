@@ -38,6 +38,15 @@ func NormalizeFileTime(ft int64) int64 {
 	return ft
 }
 
+// SyncFileTime returns ft rounded UP to the nearest microsecond boundary (10 ticks).
+// Torrs and similar clients store FileTime internally as time.Time with microsecond
+// precision, so sub-microsecond values get truncated on round-trip. Rounding up
+// ensures the stored value is always strictly greater than the last returned ft,
+// allowing the client to advance its cursor on each sync cycle.
+func SyncFileTime(ft int64) int64 {
+	return ((ft + 9) / 10) * 10
+}
+
 func (db *DB) OrderedMasterEntries() []MasterEntry {
 	db.mu.RLock()
 	defer db.mu.RUnlock()

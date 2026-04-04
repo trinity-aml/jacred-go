@@ -93,6 +93,10 @@ func main() {
 	if err := db.RebuildIndexes(); err != nil {
 		log.Fatal(err)
 	}
+	// Persist migrated index immediately so old C# epoch values don't survive restarts.
+	if err := db.SaveChangesToFile(); err != nil {
+		log.Printf("warning: failed to persist migrated index: %v", err)
+	}
 	tracksDB := tracks.New("Data")
 	if err := tracksDB.Load(); err != nil {
 		log.Printf("tracks load error: %v", err)

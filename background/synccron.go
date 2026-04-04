@@ -140,7 +140,6 @@ func RunSyncCron(ctx context.Context, cfg app.Config, db *filedb.DB) {
 
 				for _, col := range root.Collections {
 					toImport := make(map[string]filedb.TorrentDetails, len(col.Value.Torrents))
-					var latestTime time.Time
 
 					for tURL, t := range col.Value.Torrents {
 						tn := asString(t["trackerName"])
@@ -159,9 +158,6 @@ func RunSyncCron(ctx context.Context, cfg app.Config, db *filedb.DB) {
 							continue
 						}
 						toImport[tURL] = t
-						if ut := asTime(t["updateTime"]); ut.After(latestTime) {
-							latestTime = ut
-						}
 					}
 
 					if len(toImport) == 0 {
@@ -173,7 +169,7 @@ func RunSyncCron(ctx context.Context, cfg app.Config, db *filedb.DB) {
 							importTorrent(db, t, tURL)
 						}
 					} else {
-						importCollection(db, col.Key, toImport, latestTime)
+						importCollection(db, col.Key, toImport)
 					}
 					imported += len(toImport)
 					runtime.Gosched() // yield between collection saves
@@ -188,9 +184,9 @@ func RunSyncCron(ctx context.Context, cfg app.Config, db *filedb.DB) {
 				log.Printf("sync: [%d] time=%d (%s) | %d torrents, nextread=%v, %s",
 					batchIndex, lastsync, formatFileTime(lastsync), imported, root.NextRead, batchElapsed.Truncate(time.Millisecond))
 
-				// Update lastsync from last collection
+				// Update lastsync from last collection (normalize in case remote uses old C# epoch)
 				lastCol := root.Collections[len(root.Collections)-1]
-				lastsync = lastCol.Value.FileTime
+				lastsync = filedb.NormalizeFileTime(lastCol.Value.FileTime)
 
 				if root.NextRead {
 					// Save periodically
@@ -353,7 +349,12 @@ func RunSyncSpidr(ctx context.Context, cfg app.Config, db *filedb.DB) {
 
 // importCollection merges all torrents in toImport into the bucket at key.
 // One read + one write instead of N reads + N writes.
-func importCollection(db *filedb.DB, key string, toImport map[string]filedb.TorrentDetails, latestTime time.Time) {
+// The masterDb timestamp is always time.Now() so each collection gets a unique,
+// sequential FileTime regardless of the torrent updateTime from the source.
+// This is critical for sync pagination: if we used latestTime (old torrent data),
+// all collections would share the same FileTime and become unreachable after the
+// first page is returned.
+func importCollection(db *filedb.DB, key string, toImport map[string]filedb.TorrentDetails) {
 	bucket, err := db.OpenReadOrEmpty(key)
 	if err != nil {
 		return
@@ -361,10 +362,7 @@ func importCollection(db *filedb.DB, key string, toImport map[string]filedb.Torr
 	for tURL, t := range toImport {
 		bucket[tURL] = t
 	}
-	if latestTime.IsZero() {
-		latestTime = time.Now().UTC()
-	}
-	_ = db.SaveBucket(key, bucket, latestTime)
+	_ = db.SaveBucket(key, bucket, time.Now().UTC())
 }
 
 // importTorrent adds or updates a single torrent in the DB.
