@@ -302,10 +302,6 @@ func (s *Server) handleSyncFdbTorrents(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	// Torrs (and compatible clients) do not advance their 'time' parameter between
-	// requests when nextread=true — they only update lastsync on nextread=false.
-	// Always return nextread=false so clients can advance their cursor each cycle.
-	nextread = false
 	writeCanonicalJSON(w, http.StatusOK, map[string]any{
 		"nextread":   nextread,
 		"countread":  countread,
