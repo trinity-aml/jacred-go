@@ -5,6 +5,7 @@ import (
 	"crypto/md5"
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -38,13 +39,13 @@ func NormalizeFileTime(ft int64) int64 {
 	return ft
 }
 
-// SyncFileTime returns ft rounded UP to the nearest microsecond boundary (10 ticks).
-// Torrs and similar clients store FileTime internally as time.Time with microsecond
-// precision, so sub-microsecond values get truncated on round-trip. Rounding up
-// ensures the stored value is always strictly greater than the last returned ft,
-// allowing the client to advance its cursor on each sync cycle.
+// SyncFileTime returns the next float64-distinct value above ft.
+// Torrs and similar clients compare FileTime values as float64; at magnitudes
+// around 1.34e17, float64 ULP = 16 ticks (1.6 µs), so values within the same
+// 16-tick bucket compare equal. Returning math.Nextafter(float64(ft)) guarantees
+// col.FileTime > filetime is true in the client, advancing the sync cursor.
 func SyncFileTime(ft int64) int64 {
-	return ((ft + 9) / 10) * 10
+	return int64(math.Nextafter(float64(ft), math.MaxFloat64))
 }
 
 func (db *DB) OrderedMasterEntries() []MasterEntry {
