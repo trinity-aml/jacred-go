@@ -215,8 +215,12 @@ func (s *Server) handleSyncFdbTorrents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ft, _ := strconv.ParseInt(firstQuery(q, "time", "fileTime"), 10, 64)
-	ft = filedb.NormalizeFileTime(ft)
+	ftRaw, _ := strconv.ParseInt(firstQuery(q, "time", "fileTime"), 10, 64)
+	ft := filedb.NormalizeFileTime(ftRaw)
+	wasCSharpEpoch := ftRaw != ft
+	if wasCSharpEpoch {
+		log.Printf("sync/v2: normalized ft %d → %d", ftRaw, ft)
+	}
 	startRaw := firstQuery(q, "start", "startTime")
 	start, _ := strconv.ParseInt(startRaw, 10, 64)
 	if start == 0 && strings.TrimSpace(startRaw) == "" {
@@ -235,6 +239,11 @@ func (s *Server) handleSyncFdbTorrents(w http.ResponseWriter, r *http.Request) {
 	take := defaultInt(firstQuery(q, "take", "limit"), 2000)
 	if take <= 0 {
 		take = 2000
+	}
+	// When ft was converted from old C# epoch, Torrs won't advance lastsync until
+	// nextread=false. Return everything at once so the catch-up sync can complete.
+	if wasCSharpEpoch {
+		take = 1<<31 - 1 // effectively unlimited
 	}
 
 	nextread := false
@@ -305,6 +314,12 @@ func (s *Server) handleSyncFdbTorrents(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	if len(collections) > 0 {
+		lastCol := collections[len(collections)-1]
+		if v, ok := lastCol["Value"].(map[string]any); ok {
+			log.Printf("sync/v2: ft_in=%d ft_out=%d nextread=%v collections=%d", ft, v["fileTime"], nextread, len(collections))
+		}
+	}
 	writeCanonicalJSON(w, http.StatusOK, map[string]any{
 		"nextread":   nextread,
 		"countread":  countread,
