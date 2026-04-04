@@ -47,9 +47,19 @@ func RunTrackersCron(ctx context.Context, db *filedb.DB, dataDir, wwwroot string
 
 func RunTrackersCronOnce(ctx context.Context, db *filedb.DB, dataDir, wwwroot string) error {
 	trackers := map[string]struct{}{}
+	httpClient := &http.Client{Timeout: 7 * time.Second}
+
 	for _, item := range db.UnorderedMasterEntries() {
+		// Respect context cancellation and throttle disk reads
+		select {
+		case <-ctx.Done():
+			return nil
+		default:
+		}
+
 		bucket, err := db.OpenReadNoCache(item.Key)
 		if err != nil {
+			time.Sleep(time.Millisecond)
 			continue
 		}
 		for _, t := range bucket {
@@ -66,12 +76,14 @@ func RunTrackersCronOnce(ctx context.Context, db *filedb.DB, dataDir, wwwroot st
 					continue
 				}
 				tr = strings.TrimSpace(strings.ToLower(tr))
-				if badTrackerURL(tr) || !checkTracker(ctx, tr) {
+				if badTrackerURL(tr) || !checkTrackerWith(ctx, httpClient, tr) {
 					continue
 				}
 				trackers[tr] = struct{}{}
 			}
 		}
+		// 1ms sleep per entry: spreads 123k reads over ~2 min, keeps CPU below saturation
+		time.Sleep(time.Millisecond)
 	}
 	list := make([]string, 0, len(trackers))
 	for tr := range trackers {
@@ -84,9 +96,8 @@ func RunTrackersCronOnce(ctx context.Context, db *filedb.DB, dataDir, wwwroot st
 	return os.WriteFile(filepath.Join(wwwroot, "trackers.txt"), []byte(strings.Join(list, "\n")), 0o644)
 }
 
-func checkTracker(ctx context.Context, tracker string) bool {
+func checkTrackerWith(ctx context.Context, client *http.Client, tracker string) bool {
 	if strings.HasPrefix(tracker, "http") {
-		client := &http.Client{Timeout: 7 * time.Second}
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, tracker, nil)
 		if err != nil {
 			return false

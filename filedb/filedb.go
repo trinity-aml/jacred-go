@@ -98,6 +98,16 @@ func (db *DB) RebuildIndexes() error {
 	masterPath := filepath.Join(db.DataDir, "masterDb.bz")
 	if _, err := os.Stat(masterPath); err == nil {
 		if loaded, err := readMasterDb(masterPath); err == nil && len(loaded) > 0 {
+			// Migrate old C# DateTime ticks (since year 0001) to Windows FILETIME (since 1601).
+			// Old values are ~6.39e17 for 2026; correct Windows FILETIME is ~1.34e17.
+			const dotNetToWindowsDiff = int64(504911232000000000)
+			const threshold = int64(200000000000000000) // 2e17: above this indicates old C# ticks
+			for key, ti := range loaded {
+				if ti.FileTime > threshold {
+					ti.FileTime -= dotNetToWindowsDiff
+					loaded[key] = ti
+				}
+			}
 			master = loaded
 		}
 	}
@@ -116,7 +126,7 @@ func (db *DB) RebuildIndexes() error {
 					continue
 				}
 				ut := torrentTime(t, "updateTime")
-				ti := TorrentInfo{UpdateTime: ut, FileTime: ut.UTC().UnixNano() / 100}
+				ti := TorrentInfo{UpdateTime: ut, FileTime: ToFileTimeUTC(ut)}
 				if prev, ok := master[key]; !ok || ti.UpdateTime.After(prev.UpdateTime) {
 					master[key] = ti
 				}

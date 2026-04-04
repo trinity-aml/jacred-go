@@ -118,7 +118,7 @@ func UpdateFullDetails(t TorrentDetails) {
 	}
 }
 
-func computeSize(sizeName string) float64 {
+func computeSize(sizeName string) int64 {
 	if strings.TrimSpace(sizeName) == "" {
 		return 0
 	}
@@ -138,7 +138,7 @@ func computeSize(sizeName string) float64 {
 	case "tb", "тб":
 		size *= 1048576
 	}
-	return size * 1048576
+	return int64(size * 1048576)
 }
 
 func isSerialType(types []string) bool {

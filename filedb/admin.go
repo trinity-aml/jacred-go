@@ -22,7 +22,7 @@ func ToFileTimeUTC(t time.Time) int64 {
 		return 0
 	}
 	const ticksPerSecond = int64(10000000)
-	const ticksBetweenEpochs = int64(621355968000000000)
+	const ticksBetweenEpochs = int64(116444736000000000) // 100-ns ticks from 1601-01-01 to 1970-01-01 (Windows FILETIME epoch)
 	return t.UTC().Unix()*ticksPerSecond + int64(t.UTC().Nanosecond())/100 + ticksBetweenEpochs
 }
 

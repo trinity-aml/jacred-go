@@ -10,7 +10,7 @@ type TorrentRecord struct {
 	Sid          int      `json:"sid,omitempty"`
 	Pir          int      `json:"pir,omitempty"`
 	SizeName     string   `json:"sizeName,omitempty"`
-	Size         float64  `json:"size,omitempty"`
+	Size         int64    `json:"size,omitempty"`
 	Magnet       string   `json:"magnet,omitempty"`
 	CreateTime   string   `json:"createTime,omitempty"`
 	UpdateTime   string   `json:"updateTime,omitempty"`
@@ -121,7 +121,7 @@ func RecordFromMap(m TorrentDetails) TorrentRecord {
 		Sid:          asInt(m["sid"]),
 		Pir:          asInt(m["pir"]),
 		SizeName:     asString(m["sizeName"]),
-		Size:         asFloat64(m["size"]),
+		Size:         asInt64(m["size"]),
 		Magnet:       asString(m["magnet"]),
 		CreateTime:   asString(m["createTime"]),
 		UpdateTime:   asString(m["updateTime"]),
@@ -150,6 +150,19 @@ func asFloat64(v any) float64 {
 		return float64(n)
 	case int:
 		return float64(n)
+	default:
+		return 0
+	}
+}
+
+func asInt64(v any) int64 {
+	switch n := v.(type) {
+	case int64:
+		return n
+	case float64:
+		return int64(n)
+	case int:
+		return int64(n)
 	default:
 		return 0
 	}

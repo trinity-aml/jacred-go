@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -63,7 +64,7 @@ func formatFileTime(ft int64) string {
 		return "-"
 	}
 	const ticksPerSecond = int64(10000000)
-	const ticksBetweenEpochs = int64(621355968000000000)
+	const ticksBetweenEpochs = int64(116444736000000000) // Windows FILETIME epoch (1601→1970)
 	unixNano := (ft - ticksBetweenEpochs) * 100
 	t := time.Unix(0, unixNano).Local()
 	return t.Format(syncTimeFormat)
@@ -134,34 +135,48 @@ func RunSyncCron(ctx context.Context, cfg app.Config, db *filedb.DB) {
 					break
 				}
 
-				// Filter and import
-				filteredTracker, filteredSport := 0, 0
-				imported := 0
+				// Filter and import — batch per collection (one read+write per bucket key)
+				filteredTracker, filteredSport, imported := 0, 0, 0
 
 				for _, col := range root.Collections {
-					for url, t := range col.Value.Torrents {
-						tn := asString(t["trackerName"])
+					toImport := make(map[string]filedb.TorrentDetails, len(col.Value.Torrents))
+					var latestTime time.Time
 
-						// Filter by synctrackers
+					for tURL, t := range col.Value.Torrents {
+						tn := asString(t["trackerName"])
 						if len(cfg.SyncTrackers) > 0 && tn != "" && !containsIgnoreCase(cfg.SyncTrackers, tn) {
 							filteredTracker++
 							continue
 						}
-
-						// Filter sport
-						if !cfg.SyncSport {
-							if types, ok := t["types"]; ok {
-								if isSportType(types) {
-									filteredSport++
-									continue
-								}
-							}
+						if !cfg.SyncSport && isSportType(t["types"]) {
+							filteredSport++
+							continue
 						}
-
-						// Import torrent
-						importTorrent(db, t, url)
-						imported++
+						if tURL == "" {
+							tURL = asString(t["url"])
+						}
+						if tURL == "" {
+							continue
+						}
+						toImport[tURL] = t
+						if ut := asTime(t["updateTime"]); ut.After(latestTime) {
+							latestTime = ut
+						}
 					}
+
+					if len(toImport) == 0 {
+						continue
+					}
+					if col.Key == "" || col.Key == ":" {
+						// Fallback: compute key per entry
+						for tURL, t := range toImport {
+							importTorrent(db, t, tURL)
+						}
+					} else {
+						importCollection(db, col.Key, toImport, latestTime)
+					}
+					imported += len(toImport)
+					runtime.Gosched() // yield between collection saves
 				}
 
 				if filteredTracker > 0 || filteredSport > 0 {
@@ -184,6 +199,12 @@ func RunSyncCron(ctx context.Context, cfg app.Config, db *filedb.DB) {
 						_ = db.SaveChangesToFile()
 						writeInt64File(lastSyncPath, lastsync)
 						log.Printf("sync: saved state (lastsync.txt)")
+					}
+					// Brief pause between batches to avoid pegging CPU
+					select {
+					case <-ctx.Done():
+						return
+					case <-time.After(100 * time.Millisecond):
 					}
 					continue
 				}
@@ -328,6 +349,22 @@ func RunSyncSpidr(ctx context.Context, cfg app.Config, db *filedb.DB) {
 		log.Printf("sync_spidr: end / %s (cycle added %d torrents in %s)",
 			time.Now().Format(syncTimeFormat), cycleTotal, cycleElapsed.Truncate(time.Millisecond))
 	}
+}
+
+// importCollection merges all torrents in toImport into the bucket at key.
+// One read + one write instead of N reads + N writes.
+func importCollection(db *filedb.DB, key string, toImport map[string]filedb.TorrentDetails, latestTime time.Time) {
+	bucket, err := db.OpenReadOrEmpty(key)
+	if err != nil {
+		return
+	}
+	for tURL, t := range toImport {
+		bucket[tURL] = t
+	}
+	if latestTime.IsZero() {
+		latestTime = time.Now().UTC()
+	}
+	_ = db.SaveBucket(key, bucket, latestTime)
 }
 
 // importTorrent adds or updates a single torrent in the DB.

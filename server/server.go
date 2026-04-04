@@ -995,6 +995,8 @@ func defaultString(v, def string) string {
 
 func parseSize(t filedb.TorrentDetails) float64 {
 	switch v := t["size"].(type) {
+	case int64:
+		return float64(v)
 	case float64:
 		return v
 	case json.Number:

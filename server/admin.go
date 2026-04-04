@@ -448,6 +448,15 @@ func normalizeSyncTorrent(t filedb.TorrentDetails) filedb.TorrentDetails {
 	if _, ok := t["ffprobe"]; !ok {
 		t["ffprobe"] = []any{}
 	}
+	if v, ok := t["size"]; ok {
+		switch n := v.(type) {
+		case float64:
+			t["size"] = int64(n)
+		case json.Number:
+			i, _ := n.Int64()
+			t["size"] = i
+		}
+	}
 	return t
 }
 
@@ -1432,9 +1441,9 @@ func (s *Server) handleStatsRefresh(w http.ResponseWriter, r *http.Request) {
 
 // RunStatsLoop periodically generates Data/temp/stats.json.
 func (s *Server) RunStatsLoop(ctx context.Context) {
-	interval := time.Duration(s.Config.TimeStatsUpdate) * time.Second
+	interval := time.Duration(s.Config.TimeStatsUpdate) * time.Minute
 	if interval <= 0 {
-		interval = 90 * time.Second
+		interval = 60 * time.Minute
 	}
 	// Generate once at startup (after 30s delay)
 	select {

@@ -416,7 +416,7 @@ func parseBitruDate(day, monWord, year, hm string) time.Time {
 	return tm.UTC()
 }
 
-func parseSizeBytes(v string) float64 {
+func parseSizeBytes(v string) int64 {
 	m := regexp.MustCompile(`(?i)([0-9]+(?:[\.,][0-9]+)?)\s*(TB|GB|MB|KB|ТБ|ГБ|МБ|КБ)`).FindStringSubmatch(strings.TrimSpace(v))
 	if len(m) < 3 {
 		return 0
@@ -424,13 +424,13 @@ func parseSizeBytes(v string) float64 {
 	n, _ := strconv.ParseFloat(strings.ReplaceAll(m[1], ",", "."), 64)
 	switch strings.ToUpper(m[2]) {
 	case "TB", "ТБ":
-		return n * 1024 * 1024 * 1024 * 1024
+		return int64(n * 1024 * 1024 * 1024 * 1024)
 	case "GB", "ГБ":
-		return n * 1024 * 1024 * 1024
+		return int64(n * 1024 * 1024 * 1024)
 	case "MB", "МБ":
-		return n * 1024 * 1024
+		return int64(n * 1024 * 1024)
 	case "KB", "КБ":
-		return n * 1024
+		return int64(n * 1024)
 	}
 	return 0
 }

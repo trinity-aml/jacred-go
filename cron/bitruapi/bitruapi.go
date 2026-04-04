@@ -301,7 +301,7 @@ func (p *Parser) mapToTorrentDetails(item *apiItem) filedb.TorrentDetails {
 		Title: htmlDecode(strings.TrimSpace(titlePart)),
 		Sid: int(item.Torrent.Seeders),
 		Pir: int(item.Torrent.Leechers),
-		Size: float64(item.Torrent.Size),
+		Size: int64(item.Torrent.Size),
 		SizeName: formatSize(int64(item.Torrent.Size)),
 		CreateTime: createTime.Format(time.RFC3339Nano),
 		Name: name,
