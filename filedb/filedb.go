@@ -32,6 +32,7 @@ type DB struct {
 	Config   app.Config
 	DataDir  string
 	mu       sync.RWMutex
+	saveMu   sync.Mutex // serializes concurrent SaveChangesToFile calls
 	masterDb map[string]TorrentInfo
 	fastdb   map[string][]string
 	keyLocks sync.Map // per-key *sync.Mutex for write serialization

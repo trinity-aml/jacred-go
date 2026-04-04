@@ -95,6 +95,8 @@ func (db *DB) RemoveKeyFromMasterDb(key string) {
 }
 
 func (db *DB) SaveChangesToFile() error {
+	db.saveMu.Lock()
+	defer db.saveMu.Unlock()
 	db.mu.RLock()
 	master := make(map[string]TorrentInfo, len(db.masterDb))
 	for k, v := range db.masterDb {
