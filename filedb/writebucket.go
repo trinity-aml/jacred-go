@@ -87,6 +87,7 @@ func (db *DB) saveBucketInternal(key string, bucket map[string]TorrentDetails, u
 	db.ecPut(path, bucket)
 	db.mu.Lock()
 	db.masterDb[key] = TorrentInfo{UpdateTime: updatedAt.UTC(), FileTime: ToFileTimeUTC(updatedAt.UTC())}
+	db.dirty.Store(true)
 	for _, part := range strings.Split(key, ":") {
 		part = strings.TrimSpace(part)
 		if part == "" {

@@ -657,9 +657,6 @@ func (p *Parser) saveTorrents(torrents []filedb.TorrentDetails) (int, int, int, 
 			return added, updated, skipped, failed, err
 		}
 	}
-	if len(changed) > 0 {
-		_ = p.DB.SaveChangesToFile()
-	}
 	return added, updated, skipped, failed, nil
 }
 

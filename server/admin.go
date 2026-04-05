@@ -383,7 +383,7 @@ func (s *Server) handleJSONDBSave(w http.ResponseWriter, r *http.Request) {
 	}
 	jsonDBSaveWork.Store(true)
 	defer jsonDBSaveWork.Store(false)
-	if err := s.DB.SaveChangesToFile(); err != nil {
+	if err := s.DB.SaveChangesToFileNow(); err != nil {
 		writePlainUTF8(w, http.StatusInternalServerError, "error")
 		return
 	}
@@ -841,7 +841,7 @@ func (s *Server) handleDevUpdateSize(w http.ResponseWriter, r *http.Request) {
 			_ = s.DB.SaveBucket(item.Key, bucket, time.Now().UTC())
 		}
 	}
-	_ = s.DB.SaveChangesToFile()
+	_ = s.DB.SaveChangesToFileNow()
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "updated": updated})
 }
 
@@ -888,7 +888,7 @@ func (s *Server) handleDevUpdateSearchName(w http.ResponseWriter, r *http.Reques
 			_ = s.DB.SaveBucket(item.Key, bucket, time.Now().UTC())
 		}
 	}
-	_ = s.DB.SaveChangesToFile()
+	_ = s.DB.SaveChangesToFileNow()
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "updated": updated})
 }
 
@@ -947,7 +947,7 @@ func (s *Server) handleDevResetCheckTime(w http.ResponseWriter, r *http.Request)
 			_ = s.DB.SaveBucket(item.Key, bucket, time.Now().UTC())
 		}
 	}
-	_ = s.DB.SaveChangesToFile()
+	_ = s.DB.SaveChangesToFileNow()
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
@@ -979,7 +979,7 @@ func (s *Server) handleDevUpdateDetails(w http.ResponseWriter, r *http.Request) 
 			_ = s.DB.SaveBucket(item.Key, bucket, time.Now().UTC())
 		}
 	}
-	_ = s.DB.SaveChangesToFile()
+	_ = s.DB.SaveChangesToFileNow()
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "updated": updated})
 }
 
@@ -1054,7 +1054,7 @@ func (s *Server) handleDevFixKnabenNames(w http.ResponseWriter, r *http.Request)
 		}
 		unlock()
 	}
-	_ = s.DB.SaveChangesToFile()
+	_ = s.DB.SaveChangesToFileNow()
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "processed": processed, "updated": updated, "migrated": migrated})
 }
 
@@ -1124,7 +1124,7 @@ func (s *Server) handleDevFixBitruNames(w http.ResponseWriter, r *http.Request) 
 		}
 		unlock()
 	}
-	_ = s.DB.SaveChangesToFile()
+	_ = s.DB.SaveChangesToFileNow()
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "processed": processed, "updated": updated, "migrated": migrated})
 }
 
@@ -1169,7 +1169,7 @@ func (s *Server) handleDevRemoveBucket(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = s.DB.SaveBucketUnlocked(key, bucket, time.Now().UTC())
 	unlock()
-	_ = s.DB.SaveChangesToFile()
+	_ = s.DB.SaveChangesToFileNow()
 	resp := map[string]any{"ok": true, "key": key, "removed": removedCount, "migrated": migratedCount}
 	if doMigrate {
 		resp["newKey"] = newKey
@@ -1236,7 +1236,7 @@ func (s *Server) handleDevFixEmptySearchFields(w http.ResponseWriter, r *http.Re
 		}
 		unlock()
 	}
-	_ = s.DB.SaveChangesToFile()
+	_ = s.DB.SaveChangesToFileNow()
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "snFixed": snFixed, "soFixed": soFixed, "migrated": migratedCount})
 }
 
@@ -1288,7 +1288,7 @@ func (s *Server) handleDevMigrateAnilibertyUrls(w http.ResponseWriter, r *http.R
 		}
 		_ = s.DB.SaveBucket(item.Key, bucket, time.Now().UTC())
 	}
-	_ = s.DB.SaveChangesToFile()
+	_ = s.DB.SaveChangesToFileNow()
 	resp := map[string]any{"ok": true, "totalProcessed": processed, "totalUpdated": totalUpdated, "totalSkipped": skipped, "totalErrors": totalErrors}
 	if len(errors) > 0 {
 		if len(errors) > 10 {
@@ -1353,7 +1353,7 @@ func (s *Server) handleDevRemoveDuplicateAniliberty(w http.ResponseWriter, r *ht
 			}
 		}
 	}
-	_ = s.DB.SaveChangesToFile()
+	_ = s.DB.SaveChangesToFileNow()
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "totalRemoved": totalRemoved})
 }
 
@@ -1415,7 +1415,7 @@ func (s *Server) handleDevFixAnimelayerDuplicates(w http.ResponseWriter, r *http
 			_ = s.DB.SaveBucket(item.Key, bucket, time.Now().UTC())
 		}
 	}
-	_ = s.DB.SaveChangesToFile()
+	_ = s.DB.SaveChangesToFileNow()
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "urlsFixed": totalFixed, "duplicatesRemoved": totalRemoved})
 }
 

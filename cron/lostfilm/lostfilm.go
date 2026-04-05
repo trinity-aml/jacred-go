@@ -675,11 +675,6 @@ func (p *Parser) saveTorrents(ctx context.Context, host, cookie string, torrents
 			return added, updated, skipped, failed, fromCache, noMagnet, err
 		}
 	}
-	if len(changed) > 0 {
-		if err := p.DB.SaveChangesToFile(); err != nil {
-			return added, updated, skipped, failed, fromCache, noMagnet, err
-		}
-	}
 	return added, updated, skipped, failed, fromCache, noMagnet, nil
 }
 

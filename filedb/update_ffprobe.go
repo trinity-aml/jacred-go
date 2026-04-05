@@ -119,5 +119,5 @@ func (db *DB) UpdateTorrentFfprobeInfo(torrentKey, magnet string, ffprobeTryingD
 	db.mu.Lock()
 	db.masterDb[torrentKey] = TorrentInfo{UpdateTime: parseDotNetTime(now), FileTime: ToFileTimeUTC(parseDotNetTime(now))}
 	db.mu.Unlock()
-	return db.SaveChangesToFile()
+	return db.SaveChangesToFileNow()
 }

@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"jacred/app"
@@ -35,7 +36,9 @@ type DB struct {
 	saveMu   sync.Mutex // serializes concurrent SaveChangesToFile calls
 	masterDb map[string]TorrentInfo
 	fastdb   map[string][]string
-	keyLocks sync.Map // per-key *sync.Mutex for write serialization
+	keyLocks sync.Map  // per-key *sync.Mutex for write serialization
+	dirty    atomic.Bool  // true when masterDb has unsaved changes
+	lastSaved atomic.Int64 // unix nanoseconds of last successful save
 }
 
 func New(cfg app.Config, dataDir string) *DB {

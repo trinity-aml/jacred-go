@@ -247,7 +247,7 @@ func RunSyncCron(ctx context.Context, cfg app.Config, db *filedb.DB) {
 			}
 		}
 
-		_ = db.SaveChangesToFile()
+		_ = db.SaveChangesToFileNow()
 		writeInt64File(lastSyncPath, lastsync)
 
 		cycleElapsed = time.Since(cycleStart)

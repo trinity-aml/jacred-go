@@ -497,11 +497,6 @@ func (p *Parser) saveTorrents(ctx context.Context, torrents []filedb.TorrentDeta
 			return added, updated, skipped, duplicates, failed, err
 		}
 	}
-	if len(changed) > 0 {
-		if err := p.DB.SaveChangesToFile(); err != nil {
-			return added, updated, skipped, duplicates, failed, err
-		}
-	}
 	return added, updated, skipped, duplicates, failed, nil
 }
 

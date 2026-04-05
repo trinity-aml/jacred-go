@@ -114,9 +114,32 @@ func (db *DB) RemoveKeyFromMasterDb(key string) {
 		}
 	}
 	db.mu.Unlock()
+	db.dirty.Store(true)
 }
 
+const masterDbSaveInterval = 5 * time.Minute
+
+// SaveChangesToFile writes masterDb to disk only if there are unsaved changes
+// and at least masterDbSaveInterval has passed since the last save.
+// Use SaveChangesToFileNow for forced saves (shutdown, dev ops).
 func (db *DB) SaveChangesToFile() error {
+	if !db.dirty.Load() {
+		return nil
+	}
+	if time.Since(time.Unix(0, db.lastSaved.Load())) < masterDbSaveInterval {
+		return nil
+	}
+	return db.doSave()
+}
+
+// SaveChangesToFileNow writes masterDb to disk unconditionally.
+// Use for shutdown handlers and dev/maintenance operations where immediate
+// persistence is required regardless of the throttle interval.
+func (db *DB) SaveChangesToFileNow() error {
+	return db.doSave()
+}
+
+func (db *DB) doSave() error {
 	db.saveMu.Lock()
 	defer db.saveMu.Unlock()
 	db.mu.RLock()
@@ -160,6 +183,8 @@ func (db *DB) SaveChangesToFile() error {
 		_ = os.Remove(tmp)
 		return err
 	}
+	db.dirty.Store(false)
+	db.lastSaved.Store(time.Now().UnixNano())
 	db.dailyBackup(path)
 	return nil
 }
@@ -294,7 +319,7 @@ func (db *DB) RemoveNullValues() (int, int, error) {
 		if err := db.RebuildIndexes(); err != nil {
 			return totalRemoved, affectedFiles, err
 		}
-		if err := db.SaveChangesToFile(); err != nil {
+		if err := db.SaveChangesToFileNow(); err != nil {
 			return totalRemoved, affectedFiles, err
 		}
 	}

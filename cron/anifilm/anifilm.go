@@ -358,9 +358,6 @@ func (p *Parser) saveTorrents(ctx context.Context, host string, torrents []filed
 			return added, updated, skipped, failed, err
 		}
 	}
-	if len(changed) > 0 {
-		_ = p.DB.SaveChangesToFile()
-	}
 	return added, updated, skipped, failed, nil
 }
 

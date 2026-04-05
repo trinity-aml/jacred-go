@@ -94,7 +94,7 @@ func main() {
 		log.Fatal(err)
 	}
 	// Persist migrated index immediately so old C# epoch values don't survive restarts.
-	if err := db.SaveChangesToFile(); err != nil {
+	if err := db.SaveChangesToFileNow(); err != nil {
 		log.Printf("warning: failed to persist migrated index: %v", err)
 	}
 	tracksDB := tracks.New("Data")
@@ -158,7 +158,7 @@ func main() {
 
 	// Сохраняем masterDb перед выходом
 	log.Println("saving database...")
-	if err := db.SaveChangesToFile(); err != nil {
+	if err := db.SaveChangesToFileNow(); err != nil {
 		log.Printf("error saving masterDb: %v", err)
 	} else {
 		log.Println("database saved successfully")
