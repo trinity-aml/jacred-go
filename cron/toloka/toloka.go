@@ -490,27 +490,6 @@ func fileTime(td filedb.TorrentDetails) time.Time {
 	return time.Now().UTC()
 }
 
-func samePrimary(existing, incoming filedb.TorrentDetails) bool {
-	return strings.TrimSpace(asString(existing["title"])) == strings.TrimSpace(asString(incoming["title"])) &&
-		strings.TrimSpace(asString(existing["sizeName"])) == strings.TrimSpace(asString(incoming["sizeName"])) &&
-		strings.TrimSpace(asString(existing["magnet"])) == strings.TrimSpace(asString(incoming["magnet"]))
-}
-
-func mergeTorrent(existing filedb.TorrentDetails, exists bool, incoming filedb.TorrentDetails) filedb.TorrentDetails {
-	out := filedb.TorrentDetails{}
-	if exists && existing != nil {
-		for k, v := range existing {
-			out[k] = v
-		}
-	}
-	for k, v := range incoming {
-		out[k] = v
-	}
-	if _, ok := out["updateTime"]; !ok || strings.TrimSpace(asString(out["updateTime"])) == "" {
-		out["updateTime"] = time.Now().UTC().Format(time.RFC3339Nano)
-	}
-	return out
-}
 
 func defaultUA() string {
 	return "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
@@ -572,7 +551,7 @@ func parsePageHTML(host, cat, htmlBody string) []parseItem {
 
 func (p *Parser) saveTorrents(ctx context.Context, items []parseItem) (int, int, int, int, error) {
 	added, updated, skipped, failed := 0, 0, 0, 0
-	plog := core.NewParserLog(trackerName, filepath.Join(p.DB.DataDir, "log"), p.Config.Toloka.Log)
+	plog := core.NewParserLog(trackerName, filepath.Join(p.DB.DataDir, "log"), p.Config.LogParsers && p.Config.Toloka.Log)
 	bucketCache := map[string]map[string]filedb.TorrentDetails{}
 	changed := map[string]time.Time{}
 	cookie, err := p.ensureCookie(ctx)
@@ -600,12 +579,11 @@ func (p *Parser) saveTorrents(ctx context.Context, items []parseItem) (int, int,
 			skipped++
 			continue
 		}
-		if existing, ok := bucket[urlv]; ok && samePrimary(existing, incoming) {
-			skipped++
-			continue
-		}
-		if strings.TrimSpace(asString(incoming["magnet"])) == "" {
-			// Rate limit: 500ms between downloads to avoid 429
+		existing, exists := bucket[urlv]
+		// Only resolve magnet if title changed or existing has no magnet
+		needMagnet := strings.TrimSpace(asString(incoming["magnet"])) == "" &&
+			(!exists || strings.TrimSpace(asString(existing["title"])) != strings.TrimSpace(asString(incoming["title"])) || strings.TrimSpace(asString(existing["magnet"])) == "")
+		if needMagnet {
 			select {
 			case <-ctx.Done():
 				return added, updated, skipped, failed, ctx.Err()
@@ -622,10 +600,18 @@ func (p *Parser) saveTorrents(ctx context.Context, items []parseItem) (int, int,
 			}
 			incoming["magnet"] = magnet
 		}
-		existing, exists := bucket[urlv]
-		bucket[urlv] = mergeTorrent(existing, exists, incoming)
-		changed[key] = fileTime(bucket[urlv])
+		var ex filedb.TorrentDetails
 		if exists {
+			ex = existing
+		}
+		result := filedb.MergeTorrent(ex, incoming, p.Config.TracksAttempt)
+		if !result.Changed {
+			skipped++
+			continue
+		}
+		bucket[urlv] = result.Torrent
+		changed[key] = fileTime(result.Torrent)
+		if !result.IsNew {
 			plog.WriteUpdated(urlv, asString(incoming["title"]))
 			updated++
 		} else {

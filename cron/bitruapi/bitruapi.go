@@ -320,7 +320,7 @@ func (p *Parser) mapToTorrentDetails(item *apiItem) filedb.TorrentDetails {
 
 func (p *Parser) saveTorrentsAndMagnets(ctx context.Context, torrents []filedb.TorrentDetails) (int, int, int, int, error) {
 	added, updated, skipped, failed := 0, 0, 0, 0
-	plog := core.NewParserLog("bitruapi", filepath.Join(p.DB.DataDir, "log"), p.Config.Bitru.Log)
+	plog := core.NewParserLog("bitruapi", filepath.Join(p.DB.DataDir, "log"), p.Config.LogParsers && p.Config.Bitru.Log)
 	bucketCache := map[string]map[string]filedb.TorrentDetails{}
 	changed := map[string]time.Time{}
 	for _, incoming := range torrents {
@@ -344,40 +344,47 @@ func (p *Parser) saveTorrentsAndMagnets(ctx context.Context, torrents []filedb.T
 			continue
 		}
 		existing, exists := bucket[urlv]
-		if exists && strings.TrimSpace(asString(existing["title"])) == strings.TrimSpace(asString(incoming["title"])) {
+		needMagnet := !exists || strings.TrimSpace(asString(existing["title"])) != strings.TrimSpace(asString(incoming["title"])) || strings.TrimSpace(asString(existing["magnet"])) == ""
+		if needMagnet {
+			downloadURL := strings.TrimSpace(asString(incoming["_sn"]))
+			if !strings.HasPrefix(strings.ToLower(downloadURL), "http") {
+				if m := detailsIDRe.FindStringSubmatch(urlv); len(m) == 2 {
+					downloadURL = strings.TrimRight(p.Config.Bitru.Host, "/") + "/download.php?id=" + m[1]
+				}
+			}
+			if strings.TrimSpace(downloadURL) == "" {
+				failed++
+				continue
+			}
+			select {
+			case <-ctx.Done():
+				return added, updated, skipped, failed, ctx.Err()
+			case <-time.After(apiDelay()):
+			}
+			b, err := p.download(ctx, downloadURL, strings.TrimRight(p.Config.Bitru.Host, "/")+"/")
+			magnet := ""
+			if err == nil {
+				magnet = core.TorrentBytesToMagnet(b)
+			}
+			if strings.TrimSpace(magnet) == "" {
+				failed++
+				continue
+			}
+			incoming["magnet"] = magnet
+		}
+		incoming["_sn"] = nil
+		var ex filedb.TorrentDetails
+		if exists {
+			ex = existing
+		}
+		result := filedb.MergeTorrent(ex, incoming, p.Config.TracksAttempt)
+		if !result.Changed {
 			skipped++
 			continue
 		}
-		downloadURL := strings.TrimSpace(asString(incoming["_sn"]))
-		if !strings.HasPrefix(strings.ToLower(downloadURL), "http") {
-			if m := detailsIDRe.FindStringSubmatch(urlv); len(m) == 2 {
-				downloadURL = strings.TrimRight(p.Config.Bitru.Host, "/") + "/download.php?id=" + m[1]
-			}
-		}
-		if strings.TrimSpace(downloadURL) == "" {
-			failed++
-			continue
-		}
-		select {
-		case <-ctx.Done():
-			return added, updated, skipped, failed, ctx.Err()
-		case <-time.After(apiDelay()):
-		}
-		b, err := p.download(ctx, downloadURL, strings.TrimRight(p.Config.Bitru.Host, "/")+"/")
-		magnet := ""
-		if err == nil {
-			magnet = core.TorrentBytesToMagnet(b)
-		}
-		if strings.TrimSpace(magnet) == "" {
-			failed++
-			continue
-		}
-		incoming["magnet"] = magnet
-		incoming["_sn"] = nil
-		merged := mergeTorrent(existing, exists, incoming)
-		bucket[urlv] = merged
-		changed[key] = fileTime(merged)
-		if exists {
+		bucket[urlv] = result.Torrent
+		changed[key] = fileTime(result.Torrent)
+		if !result.IsNew {
 			plog.WriteUpdated(urlv, asString(incoming["title"]))
 			updated++
 		} else {
@@ -500,35 +507,6 @@ func parseAnyInt64(v any) int64 {
 	}
 }
 
-func mergeTorrent(existing filedb.TorrentDetails, exists bool, incoming filedb.TorrentDetails) filedb.TorrentDetails {
-	out := filedb.TorrentDetails{}
-	if exists {
-		for k, v := range existing {
-			out[k] = v
-		}
-	}
-	for k, v := range incoming {
-		if v == nil {
-			continue
-		}
-		if s, ok := v.(string); ok && strings.TrimSpace(s) == "" {
-			continue
-		}
-		out[k] = v
-	}
-	if strings.TrimSpace(asString(out["name"])) == "" {
-		out["name"] = asString(out["title"])
-	}
-	if strings.TrimSpace(asString(out["originalname"])) == "" {
-		out["originalname"] = out["name"]
-	}
-	out["_sn"] = core.SearchName(asString(out["name"]))
-	out["_so"] = core.SearchName(asString(out["originalname"]))
-	if fileTime(out).IsZero() {
-		out["updateTime"] = time.Now().UTC().Format(time.RFC3339Nano)
-	}
-	return out
-}
 
 func fileTime(t filedb.TorrentDetails) time.Time {
 	for _, key := range []string{"updateTime", "createTime"} {

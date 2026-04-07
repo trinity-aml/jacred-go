@@ -595,7 +595,7 @@ func cloneTasks(src map[string][]Task) map[string][]Task {
 
 func (p *Parser) saveTorrents(torrents []filedb.TorrentDetails) (int, int, int, int, error) {
 	added, updated, skipped, failed := 0, 0, 0, 0
-	plog := core.NewParserLog(trackerName, filepath.Join(p.DB.DataDir, "log"), p.Config.Mazepa.Log)
+	plog := core.NewParserLog(trackerName, filepath.Join(p.DB.DataDir, "log"), p.Config.LogParsers && p.Config.Mazepa.Log)
 	bucketCache := map[string]map[string]filedb.TorrentDetails{}
 	changed := map[string]time.Time{}
 
@@ -620,31 +620,18 @@ func (p *Parser) saveTorrents(torrents []filedb.TorrentDetails) (int, int, int, 
 			continue
 		}
 		existing, exists := bucket[urlv]
-		if exists && asString(existing["title"]) == asString(incoming["title"]) && strings.TrimSpace(asString(existing["magnet"])) != "" {
+		var ex filedb.TorrentDetails
+		if exists {
+			ex = existing
+		}
+		result := filedb.MergeTorrent(ex, incoming, p.Config.TracksAttempt)
+		if !result.Changed {
 			skipped++
 			continue
 		}
-		out := filedb.TorrentDetails{}
-		if exists {
-			for k, v := range existing {
-				out[k] = v
-			}
-		}
-		for k, v := range incoming {
-			if v == nil {
-				continue
-			}
-			if s, ok := v.(string); ok && strings.TrimSpace(s) == "" {
-				continue
-			}
-			out[k] = v
-		}
-		out["_sn"] = core.SearchName(asString(out["name"]))
-		out["_so"] = core.SearchName(core.FirstNonEmpty(asString(out["originalname"]), asString(out["name"])))
-
-		bucket[urlv] = out
+		bucket[urlv] = result.Torrent
 		changed[key] = time.Now().UTC()
-		if exists {
+		if !result.IsNew {
 			plog.WriteUpdated(urlv, asString(incoming["title"]))
 			updated++
 		} else {

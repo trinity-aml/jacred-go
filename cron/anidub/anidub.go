@@ -205,7 +205,7 @@ func parsePageHTML(host, htmlBody string, page int, now time.Time) []pendingTorr
 
 func (p *Parser) saveTorrents(ctx context.Context, items []pendingTorrent) (int, int, int, int, error) {
 	added, updated, skipped, failed := 0, 0, 0, 0
-	plog := core.NewParserLog(trackerName, filepath.Join(p.DB.DataDir, "log"), p.Config.Anidub.Log)
+	plog := core.NewParserLog(trackerName, filepath.Join(p.DB.DataDir, "log"), p.Config.LogParsers && p.Config.Anidub.Log)
 	bucketCache := map[string]map[string]filedb.TorrentDetails{}
 	changed := map[string]time.Time{}
 	for _, item := range items {
@@ -230,86 +230,51 @@ func (p *Parser) saveTorrents(ctx context.Context, items []pendingTorrent) (int,
 			continue
 		}
 		existing, exists := bucket[urlv]
-		detailHTML := ""
-		if exists && strings.EqualFold(strings.TrimSpace(asString(existing["title"])), strings.TrimSpace(asString(incoming["title"]))) && strings.TrimSpace(asString(existing["magnet"])) != "" {
-			var err error
-			detailHTML, err = p.fetchText(ctx, urlv)
-			if err == nil && detailHTML != "" {
-				released := extractReleased(detailHTML)
-				if released > 0 {
-					incoming["relased"] = released
-				}
-				currentMagnet := matchOne(magnetRe, detailHTML)
-				if strings.TrimSpace(currentMagnet) != "" {
-					if strings.EqualFold(strings.TrimSpace(currentMagnet), strings.TrimSpace(asString(existing["magnet"]))) {
-						if asInt(existing["relased"]) == 0 && released > 0 {
-							incoming["magnet"] = currentMagnet
-							if sz := extractSizeName(detailHTML); sz != "" {
-								incoming["sizeName"] = sz
-								incoming["size"] = parseSizeBytes(sz)
-							}
-							merged := mergeTorrent(existing, true, incoming)
-							bucket[urlv] = merged
-							changed[key] = fileTime(merged)
-							updated++
-						} else {
-							skipped++
-						}
-						continue
-					}
-					incoming["magnet"] = currentMagnet
-					if sz := extractSizeName(detailHTML); sz != "" {
-						incoming["sizeName"] = sz
-						incoming["size"] = parseSizeBytes(sz)
-					}
-					merged := mergeTorrent(existing, true, incoming)
-					bucket[urlv] = merged
-					changed[key] = fileTime(merged)
-					updated++
-					continue
-				}
-			}
+		// Fetch detail page for magnet/relased/sizeName
+		detailHTML, err := p.fetchText(ctx, urlv)
+		if err != nil {
+			failed++
+			continue
 		}
-		if strings.TrimSpace(asString(incoming["magnet"])) == "" {
-			if detailHTML == "" {
-				var err error
-				detailHTML, err = p.fetchText(ctx, urlv)
-				if err != nil {
-					failed++
-					continue
-				}
-			}
-			released := extractReleased(detailHTML)
-			if released > 0 {
+		if detailHTML != "" {
+			if released := extractReleased(detailHTML); released > 0 {
 				incoming["relased"] = released
 			}
 			if magnet := matchOne(magnetRe, detailHTML); magnet != "" {
 				incoming["magnet"] = magnet
-				if sz := extractSizeName(detailHTML); sz != "" {
-					incoming["sizeName"] = sz
-					incoming["size"] = parseSizeBytes(sz)
-				}
-			} else if downloadURL := buildDownloadURL(strings.TrimRight(strings.TrimSpace(p.Config.Anidub.Host), "/"), matchOne(downloadRe, detailHTML)); downloadURL != "" {
+			}
+			if sz := extractSizeName(detailHTML); sz != "" {
+				incoming["sizeName"] = sz
+				incoming["size"] = parseSizeBytes(sz)
+			}
+		}
+		// Fallback: download .torrent file
+		if strings.TrimSpace(asString(incoming["magnet"])) == "" && detailHTML != "" {
+			if downloadURL := buildDownloadURL(strings.TrimRight(strings.TrimSpace(p.Config.Anidub.Host), "/"), matchOne(downloadRe, detailHTML)); downloadURL != "" {
 				if b, err := p.download(ctx, downloadURL, urlv); err == nil && len(b) > 0 {
 					if magnet := core.TorrentBytesToMagnet(b); magnet != "" {
 						incoming["magnet"] = magnet
 					}
 				}
-				if sz := extractSizeName(detailHTML); sz != "" {
-					incoming["sizeName"] = sz
-					incoming["size"] = parseSizeBytes(sz)
-				}
 			}
 		}
-		if strings.TrimSpace(asString(incoming["magnet"])) == "" {
+		if strings.TrimSpace(asString(incoming["magnet"])) == "" && !exists {
 			plog.WriteFailed(urlv, asString(incoming["title"]))
 			failed++
 			continue
 		}
-		merged := mergeTorrent(existing, exists, incoming)
-		bucket[urlv] = merged
-		changed[key] = fileTime(merged)
+		var ex filedb.TorrentDetails
 		if exists {
+			ex = existing
+		}
+		result := filedb.MergeTorrent(ex, incoming, p.Config.TracksAttempt)
+		if !result.Changed {
+			skipped++
+			continue
+		}
+		bucket[urlv] = result.Torrent
+		changed[key] = fileTime(result.Torrent)
+		if !result.IsNew {
 			plog.WriteUpdated(urlv, asString(incoming["title"]))
 			updated++
 		} else {
@@ -505,38 +470,6 @@ func parseSizeBytes(v string) float64 {
 	return 0
 }
 
-func mergeTorrent(existing filedb.TorrentDetails, exists bool, incoming filedb.TorrentDetails) filedb.TorrentDetails {
-	out := filedb.TorrentDetails{}
-	if exists {
-		for k, v := range existing {
-			out[k] = v
-		}
-	}
-	for k, v := range incoming {
-		if k == "" || v == nil {
-			continue
-		}
-		if s, ok := v.(string); ok && strings.TrimSpace(s) == "" {
-			if _, had := out[k]; had {
-				continue
-			}
-		}
-		out[k] = v
-	}
-	if strings.TrimSpace(asString(out["originalname"])) == "" {
-		out["originalname"] = firstNonEmpty(asString(out["name"]), asString(out["title"]))
-	}
-	out["_sn"] = core.SearchName(asString(out["name"]))
-	out["_so"] = core.SearchName(firstNonEmpty(asString(out["originalname"]), asString(out["name"])))
-	if fileTime(out).IsZero() {
-		now := time.Now().UTC()
-		out["createTime"] = now.Format(time.RFC3339Nano)
-		out["updateTime"] = now.Format(time.RFC3339Nano)
-	} else {
-		out["updateTime"] = time.Now().UTC().Format(time.RFC3339Nano)
-	}
-	return out
-}
 
 func fileTime(t filedb.TorrentDetails) time.Time {
 	for _, key := range []string{"updateTime", "createTime"} {

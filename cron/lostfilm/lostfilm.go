@@ -587,7 +587,7 @@ func (p *Parser) collectFromMovies(ctx context.Context, htmlBody, host, cookie s
 
 func (p *Parser) saveTorrents(ctx context.Context, host, cookie string, torrents []filedb.TorrentDetails) (int, int, int, int, int, int, error) {
 	added, updated, skipped, failed, fromCache, noMagnet := 0, 0, 0, 0, 0, 0
-	plog := core.NewParserLog(trackerName, filepath.Join(p.DB.DataDir, "log"), p.Config.Lostfilm.Log)
+	plog := core.NewParserLog(trackerName, filepath.Join(p.DB.DataDir, "log"), p.Config.LogParsers && p.Config.Lostfilm.Log)
 	bucketCache := map[string]map[string]filedb.TorrentDetails{}
 	changed := map[string]time.Time{}
 	for _, incoming := range torrents {
@@ -655,14 +655,18 @@ func (p *Parser) saveTorrents(ctx context.Context, host, cookie string, torrents
 				}
 			}
 		}
-		if exists && samePrimary(existing, incoming) {
+		var ex filedb.TorrentDetails
+		if exists {
+			ex = existing
+		}
+		result := filedb.MergeTorrent(ex, incoming, p.Config.TracksAttempt)
+		if !result.Changed {
 			skipped++
 			continue
 		}
-		merged := mergeTorrent(existing, exists, incoming)
-		bucket[urlv] = merged
-		changed[key] = fileTime(merged)
-		if exists {
+		bucket[urlv] = result.Torrent
+		changed[key] = fileTime(result.Torrent)
+		if !result.IsNew {
 			plog.WriteUpdated(urlv, asString(incoming["title"]))
 			updated++
 		} else {
@@ -1163,31 +1167,6 @@ func torrentTotalSize(data []byte) int64 {
 		}
 	}
 	return 0
-}
-
-func mergeTorrent(existing filedb.TorrentDetails, exists bool, incoming filedb.TorrentDetails) filedb.TorrentDetails {
-	out := filedb.TorrentDetails{}
-	if exists {
-		for k, v := range existing {
-			out[k] = v
-		}
-	}
-	for k, v := range incoming {
-		out[k] = v
-	}
-	if strings.TrimSpace(asString(out["trackerName"])) == "" {
-		out["trackerName"] = trackerName
-	}
-	out["_sn"] = core.SearchName(asString(out["name"]))
-	out["_so"] = core.SearchName(firstNonEmpty(asString(out["originalname"]), asString(out["name"])))
-	if fileTime(out).IsZero() {
-		out["updateTime"] = time.Now().UTC().Format(time.RFC3339Nano)
-	}
-	return out
-}
-
-func samePrimary(existing, incoming filedb.TorrentDetails) bool {
-	return asString(existing["title"]) == asString(incoming["title"]) && asString(existing["magnet"]) == asString(incoming["magnet"]) && asInt(existing["sid"]) == asInt(incoming["sid"]) && asInt(existing["pir"]) == asInt(incoming["pir"])
 }
 
 func fileTime(t filedb.TorrentDetails) time.Time {

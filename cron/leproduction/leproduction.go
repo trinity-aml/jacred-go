@@ -267,7 +267,7 @@ func (p *Parser) parsePage(ctx context.Context, pageURL, host, cat string, types
 
 func (p *Parser) saveTorrents(ctx context.Context, torrents []filedb.TorrentDetails, host string) (int, int, int, int, error) {
 	added, updated, skipped, failed := 0, 0, 0, 0
-	plog := core.NewParserLog(trackerName, filepath.Join(p.DB.DataDir, "log"), p.Config.Leproduction.Log)
+	plog := core.NewParserLog(trackerName, filepath.Join(p.DB.DataDir, "log"), p.Config.LogParsers && p.Config.Leproduction.Log)
 	bucketCache := map[string]map[string]filedb.TorrentDetails{}
 	changed := map[string]time.Time{}
 
@@ -292,13 +292,8 @@ func (p *Parser) saveTorrents(ctx context.Context, torrents []filedb.TorrentDeta
 			continue
 		}
 		existing, exists := bucket[urlv]
-		if exists && asString(existing["title"]) == asString(incoming["title"]) && strings.TrimSpace(asString(existing["magnet"])) != "" {
-			skipped++
-			continue
-		}
-
-		// If no magnet yet, try download page
-		if strings.TrimSpace(asString(incoming["magnet"])) == "" {
+		needMagnet := !exists || asString(existing["title"]) != asString(incoming["title"]) || strings.TrimSpace(asString(existing["magnet"])) == ""
+		if needMagnet && strings.TrimSpace(asString(incoming["magnet"])) == "" {
 			tid := asString(incoming["_tid"])
 			if tid != "" {
 				downURL := fmt.Sprintf("%s/index.php?do=download&id=%s", host, tid)
@@ -313,30 +308,22 @@ func (p *Parser) saveTorrents(ctx context.Context, torrents []filedb.TorrentDeta
 			}
 		}
 		delete(incoming, "_tid")
-
-		if strings.TrimSpace(asString(incoming["magnet"])) == "" {
+		if needMagnet && strings.TrimSpace(asString(incoming["magnet"])) == "" {
 			failed++
 			continue
 		}
-
-		out := filedb.TorrentDetails{}
+		var ex filedb.TorrentDetails
 		if exists {
-			for k, v := range existing {
-				out[k] = v
-			}
+			ex = existing
 		}
-		for k, v := range incoming {
-			if v == nil {
-				continue
-			}
-			out[k] = v
+		result := filedb.MergeTorrent(ex, incoming, p.Config.TracksAttempt)
+		if !result.Changed {
+			skipped++
+			continue
 		}
-		out["_sn"] = core.SearchName(asString(out["name"]))
-		out["_so"] = core.SearchName(core.FirstNonEmpty(asString(out["originalname"]), asString(out["name"])))
-
-		bucket[urlv] = out
+		bucket[urlv] = result.Torrent
 		changed[key] = time.Now().UTC()
-		if exists {
+		if !result.IsNew {
 			plog.WriteUpdated(urlv, asString(incoming["title"]))
 			updated++
 		} else {

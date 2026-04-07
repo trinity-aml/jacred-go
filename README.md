@@ -14,6 +14,10 @@ Collects torrent metadata from 19 Russian/Ukrainian trackers into a unified flat
 - [Sync API](#sync-api)
 - [Database Admin Endpoints](#database-admin-endpoints)
 - [Dev/Maintenance Endpoints](#devmaintenance-endpoints)
+- [Config Hot-Reload](#config-hot-reload)
+- [Search Result Caching](#search-result-caching)
+- [FDB Audit Log](#fdb-audit-log)
+- [Parser Logging](#parser-logging)
 - [Cron Examples](#cron-examples)
 - [Database Structure](#database-structure)
 
@@ -79,11 +83,11 @@ listenport: 9117             # Listening port
 apikey: ""                   # API key required for /api/v1.0/* (empty = no auth)
 devkey: ""                   # Key for dev endpoints (empty = local IP only)
 log: true                    # Enable logging
-logParsers: false            # Verbose parser debug logs
-logFdb: false                # Log FileDB read/write operations
-logFdbRetentionDays: 7       # Delete log files older than N days
-logFdbMaxSizeMb: 0           # Max total log size in MB (0 = unlimited)
-logFdbMaxFiles: 0            # Max number of log files (0 = unlimited)
+logParsers: false            # Global gate for per-tracker parser logs (both must be true)
+logFdb: false                # FDB audit log: JSON Lines per bucket change
+logFdbRetentionDays: 7       # Delete FDB log files older than N days
+logFdbMaxSizeMb: 0           # Max total FDB log size in MB (0 = unlimited)
+logFdbMaxFiles: 0            # Max number of FDB log files (0 = unlimited)
 fdbPathLevels: 2             # Directory nesting depth for bucket files
 mergeduplicates: true        # Merge duplicate torrents from different trackers
 mergenumduplicates: true     # Merge numeric ID variations
@@ -91,7 +95,7 @@ openstats: true              # Enable /stats/* endpoints (no auth)
 opensync: true               # Enable /sync/fdb/torrents (V2 protocol, no auth)
 opensync_v1: false           # Enable /sync/torrents (V1 protocol, no auth)
 web: true                    # Serve web UI (index.html, stats.html)
-timeStatsUpdate: 90          # Rebuild stats.json every N seconds
+timeStatsUpdate: 90          # Rebuild stats.json every N minutes
 memlimit: 0                  # Hard cap on Go heap in MB (0 = no limit)
 gcpercent: 50                # GC frequency: lower = more GC, less peak RAM (default 50)
 ```
@@ -811,7 +815,7 @@ A daily backup `Data/masterDb_DD-MM-YYYY.bz` is created on each save. Backups ol
 
 ## Dev/Maintenance Endpoints
 
-Available from **local IP only** (127.0.0.1, ::1, 192.168.x.x, 10.x.x.x).
+Available from **local IP only** (127.0.0.1, ::1, fe80::/10 link-local, fc00::/7 ULA, IPv4-mapped IPv6).
 
 ### Data Integrity
 
@@ -995,6 +999,32 @@ curl "http://127.0.0.1:9117/dev/removeBucket?key=матрица:the+matrix&migra
 
 ---
 
+## Config Hot-Reload
+
+The `init.yaml` file is checked for changes every 10 seconds. When the file modification time changes, the config is reloaded automatically — no restart needed.
+
+Hot-reloadable settings include: API keys, logging flags, sync settings, stats update interval, tracker hosts/cookies/credentials, rate limits.
+
+## Search Result Caching
+
+Search endpoints (`/api/v1.0/torrents` and `/api/v2.0/indexers/*/results`) cache results in memory with a 5-minute TTL. Cache hits return an `X-Cache: HIT` header. The cache is keyed by the full query string.
+
+## FDB Audit Log
+
+When `logFdb: true`, every bucket change is logged to `Data/log/fdb.YYYY-MM-dd.log` in JSON Lines format. Each line records the incoming and existing torrent data for the changed entry.
+
+Retention is controlled by `logFdbRetentionDays`, `logFdbMaxSizeMb`, and `logFdbMaxFiles`. Cleanup runs automatically after each masterDb save.
+
+## Parser Logging
+
+Two-level logging control:
+1. **Global gate:** `logParsers: true` must be set to enable any parser logging
+2. **Per-tracker:** each tracker's `log: true` enables logging for that specific tracker
+
+Both must be `true` for logs to be written. Log files are stored in `Data/log/{tracker}.log`.
+
+---
+
 ## Cron Examples
 
 Typical external crontab (`/etc/cron.d/jacred` or `Data/crontab`):
@@ -1034,7 +1064,9 @@ Data/
   temp/
     stats.json               # Pre-computed stats cache
   log/
+    YYYY-MM-DD.log           # Application log (when log: true)
     kinozal.log              # Per-tracker add/update/skip/fail logs
+    fdb.YYYY-MM-dd.log       # FDB audit log: JSON Lines per bucket change
   {tracker}_tasks.json       # Task state for incremental parsers
 ```
 

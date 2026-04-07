@@ -186,6 +186,9 @@ func (db *DB) doSave() error {
 	db.dirty.Store(false)
 	db.lastSaved.Store(time.Now().UnixNano())
 	db.dailyBackup(path)
+	if db.fdbLog != nil {
+		go db.fdbLog.CleanupLogs()
+	}
 	return nil
 }
 

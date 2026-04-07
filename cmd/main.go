@@ -117,6 +117,15 @@ func main() {
 	go background.RunTrackersCron(ctx, db, "Data", "wwwroot", cfg.Evercache.Enable && cfg.Evercache.ValidHour <= 0)
 
 	srv := server.New(cfg, db, tracksDB, "wwwroot")
+
+	// Config hot-reload: check init.yaml mtime every 10 seconds
+	reloader := background.NewConfigReloader("init.yaml", cfg)
+	reloader.OnReload(func(newCfg app.Config) {
+		srv.Config = newCfg
+		db.Config = newCfg
+	})
+	go reloader.Run(ctx)
+
 	go srv.RunStatsLoop(ctx)
 	go background.RunSyncCron(ctx, cfg, db)
 	go background.RunSyncSpidr(ctx, cfg, db)

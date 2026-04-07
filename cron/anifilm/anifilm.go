@@ -212,7 +212,7 @@ func (p *Parser) fetchPage(ctx context.Context, host, cat string, page int, crea
 
 func (p *Parser) saveTorrents(ctx context.Context, host string, torrents []filedb.TorrentDetails) (int, int, int, int, error) {
 	added, updated, skipped, failed := 0, 0, 0, 0
-	plog := core.NewParserLog(trackerName, filepath.Join(p.DB.DataDir, "log"), p.Config.Anifilm.Log)
+	plog := core.NewParserLog(trackerName, filepath.Join(p.DB.DataDir, "log"), p.Config.LogParsers && p.Config.Anifilm.Log)
 	bucketCache := map[string]map[string]filedb.TorrentDetails{}
 	changed := map[string]time.Time{}
 
@@ -237,106 +237,88 @@ func (p *Parser) saveTorrents(ctx context.Context, host string, torrents []filed
 			continue
 		}
 		existing, exists := bucket[urlv]
-		// Skip if title matches (ignoring [1080p] suffix which we may add)
-		if exists {
+		// Only fetch detail page if title changed or no magnet
+		needMagnet := !exists || strings.TrimSpace(asString(existing["magnet"])) == ""
+		if !needMagnet {
 			existTitle := strings.ReplaceAll(asString(existing["title"]), " [1080p]", "")
-			incomTitle := asString(incoming["title"])
-			if existTitle == incomTitle && strings.TrimSpace(asString(existing["magnet"])) != "" {
-				skipped++
+			if existTitle != asString(incoming["title"]) {
+				needMagnet = true
+			}
+		}
+		if needMagnet {
+			detailHTML, err := p.httpGet(ctx, urlv, "")
+			if err != nil || detailHTML == "" {
+				if err != nil {
+					log.Printf("anifilm: detail page %s error: %v", urlv, err)
+				} else {
+					log.Printf("anifilm: detail page %s empty response", urlv)
+				}
+				failed++
 				continue
 			}
-		}
-
-		// Fetch detail page to find torrent download link
-		detailHTML, err := p.httpGet(ctx, urlv, "")
-		if err != nil || detailHTML == "" {
-			if err != nil {
-				log.Printf("anifilm: detail page %s error: %v", urlv, err)
-			} else {
-				log.Printf("anifilm: detail page %s empty response", urlv)
-			}
-			failed++
-			continue
-		}
-
-		// Prefer 1080p torrent
-		title := asString(incoming["title"])
-		var tid string
-		torrentBlocks := strings.Split(detailHTML, `<li class="release__torrents-item">`)
-		for _, block := range torrentBlocks {
-			if strings.Contains(block, "1080p") && strings.Contains(block, `href="/releases/download-torrent/`) {
-				if m := tidRe.FindStringSubmatch(block); len(m) > 1 {
-					tid = m[1]
-					if !strings.Contains(title, " [1080p]") {
-						title += " [1080p]"
+			title := asString(incoming["title"])
+			var tid string
+			torrentBlocks := strings.Split(detailHTML, `<li class="release__torrents-item">`)
+			for _, block := range torrentBlocks {
+				if strings.Contains(block, "1080p") && strings.Contains(block, `href="/releases/download-torrent/`) {
+					if m := tidRe.FindStringSubmatch(block); len(m) > 1 {
+						tid = m[1]
+						if !strings.Contains(title, " [1080p]") {
+							title += " [1080p]"
+						}
+						break
 					}
-					break
 				}
 			}
-		}
-		// Fallback: any torrent link
-		if tid == "" {
-			if m := tidRe.FindStringSubmatch(detailHTML); len(m) > 1 {
-				tid = m[1]
-			}
-		}
-		if tid == "" {
-			// Log first few failures
-			hasTorrentBlock := strings.Contains(detailHTML, "release__torrents")
-			hasDownloadLink := strings.Contains(detailHTML, "download-torrent")
-			hasCloudflare := strings.Contains(detailHTML, "cf-browser-verification") || strings.Contains(detailHTML, "challenge-platform")
-			log.Printf("anifilm: tid not found url=%s torrentBlock=%v downloadLink=%v cloudflare=%v htmlLen=%d",
-				urlv, hasTorrentBlock, hasDownloadLink, hasCloudflare, len(detailHTML))
-			failed++
-			continue
-		}
-
-		// Download .torrent → magnet
-		torrentBytes, err := p.httpDownload(ctx, host+"/"+tid, urlv)
-		if err != nil || len(torrentBytes) == 0 {
-			log.Printf("anifilm: torrent download failed tid=%s err=%v size=%d", tid, err, len(torrentBytes))
-			failed++
-			continue
-		}
-		magnet, magnetErr := core.TorrentBytesToMagnetErr(torrentBytes)
-		if magnet == "" {
-			prefix := ""
-			if len(torrentBytes) > 0 {
-				end := 80
-				if end > len(torrentBytes) {
-					end = len(torrentBytes)
+			if tid == "" {
+				if m := tidRe.FindStringSubmatch(detailHTML); len(m) > 1 {
+					tid = m[1]
 				}
-				prefix = string(torrentBytes[:end])
 			}
-			log.Printf("anifilm: magnet extraction failed tid=%s torrentSize=%d err=%v prefix=%q", tid, len(torrentBytes), magnetErr, prefix)
-			failed++
-			continue
+			if tid == "" {
+				hasTorrentBlock := strings.Contains(detailHTML, "release__torrents")
+				hasDownloadLink := strings.Contains(detailHTML, "download-torrent")
+				hasCloudflare := strings.Contains(detailHTML, "cf-browser-verification") || strings.Contains(detailHTML, "challenge-platform")
+				log.Printf("anifilm: tid not found url=%s torrentBlock=%v downloadLink=%v cloudflare=%v htmlLen=%d",
+					urlv, hasTorrentBlock, hasDownloadLink, hasCloudflare, len(detailHTML))
+				failed++
+				continue
+			}
+			torrentBytes, err := p.httpDownload(ctx, host+"/"+tid, urlv)
+			if err != nil || len(torrentBytes) == 0 {
+				log.Printf("anifilm: torrent download failed tid=%s err=%v size=%d", tid, err, len(torrentBytes))
+				failed++
+				continue
+			}
+			magnet, magnetErr := core.TorrentBytesToMagnetErr(torrentBytes)
+			if magnet == "" {
+				prefix := ""
+				if len(torrentBytes) > 0 {
+					end := 80
+					if end > len(torrentBytes) {
+						end = len(torrentBytes)
+					}
+					prefix = string(torrentBytes[:end])
+				}
+				log.Printf("anifilm: magnet extraction failed tid=%s torrentSize=%d err=%v prefix=%q", tid, len(torrentBytes), magnetErr, prefix)
+				failed++
+				continue
+			}
+			incoming["title"] = title
+			incoming["magnet"] = magnet
 		}
-
-		incoming["title"] = title
-		incoming["magnet"] = magnet
-
-		out := filedb.TorrentDetails{}
+		var ex filedb.TorrentDetails
 		if exists {
-			for k, v := range existing {
-				out[k] = v
-			}
+			ex = existing
 		}
-		for k, v := range incoming {
-			if v == nil {
-				continue
-			}
-			if s, ok := v.(string); ok && strings.TrimSpace(s) == "" {
-				continue
-			}
-			out[k] = v
+		result := filedb.MergeTorrent(ex, incoming, p.Config.TracksAttempt)
+		if !result.Changed {
+			skipped++
+			continue
 		}
-		out["_sn"] = core.SearchName(asString(out["name"]))
-		out["_so"] = core.SearchName(core.FirstNonEmpty(asString(out["originalname"]), asString(out["name"])))
-
-		bucket[urlv] = out
+		bucket[urlv] = result.Torrent
 		changed[key] = time.Now().UTC()
-		if exists {
+		if !result.IsNew {
 			plog.WriteUpdated(urlv, asString(incoming["title"]))
 			updated++
 		} else {

@@ -73,6 +73,7 @@ type Server struct {
 	LeproductionParser *leproduction.Parser
 	MazepaParser       *mazepa.Parser
 	TracksDB           *tracks.DB
+	cache              *searchCache // search result cache (5 min TTL)
 }
 
 func New(cfg app.Config, db *filedb.DB, tracksDB *tracks.DB, wwwroot string) *Server {
@@ -80,7 +81,7 @@ func New(cfg app.Config, db *filedb.DB, tracksDB *tracks.DB, wwwroot string) *Se
 		tracksDB = tracks.New("Data")
 		_ = tracksDB.Load()
 	}
-	return &Server{Config: cfg, DB: db, WWWRoot: wwwroot, Version: VersionInfo{Version: "dev", GitSha: "unknown", GitBranch: "unknown", BuildDate: time.Now().UTC().Format("2006-01-02 15:04:05 UTC")}, KnabenParser: knaben.New(cfg, db), AnidubParser: anidub.New(cfg, db), AnilibertyParser: aniliberty.New(cfg, db), AnimelayerParser: animelayer.New(cfg, db), AnistarParser: anistar.New(cfg, db, "Data"), AnifilmParser: anifilm.New(cfg, db, "Data"), BaibakoParser: baibako.New(cfg, db, "Data"), BitruParser: bitru.New(cfg, db, "Data"), BitruAPIParser: bitruapi.New(cfg, db, "Data"), RutorParser: rutor.New(cfg, db, "Data"), MegapeerParser: megapeer.New(cfg, db), TorrentByParser: torrentby.New(cfg, db, "Data"), NNMClubParser: nnmclub.New(cfg, db, "Data"), LostfilmParser: lostfilm.New(cfg, db), RutrackerParser: rutracker.New(cfg, db, "Data"), KinozalParser: kinozal.New(cfg, db, "Data"), TolokaParser: toloka.New(cfg, db, "Data"), SelezenParser: selezen.New(cfg, db, "Data"), LeproductionParser: leproduction.New(cfg, db, "Data"), MazepaParser: mazepa.New(cfg, db, "Data"), TracksDB: tracksDB}
+	return &Server{Config: cfg, DB: db, WWWRoot: wwwroot, Version: VersionInfo{Version: "dev", GitSha: "unknown", GitBranch: "unknown", BuildDate: time.Now().UTC().Format("2006-01-02 15:04:05 UTC")}, KnabenParser: knaben.New(cfg, db), AnidubParser: anidub.New(cfg, db), AnilibertyParser: aniliberty.New(cfg, db), AnimelayerParser: animelayer.New(cfg, db), AnistarParser: anistar.New(cfg, db, "Data"), AnifilmParser: anifilm.New(cfg, db, "Data"), BaibakoParser: baibako.New(cfg, db, "Data"), BitruParser: bitru.New(cfg, db, "Data"), BitruAPIParser: bitruapi.New(cfg, db, "Data"), RutorParser: rutor.New(cfg, db, "Data"), MegapeerParser: megapeer.New(cfg, db), TorrentByParser: torrentby.New(cfg, db, "Data"), NNMClubParser: nnmclub.New(cfg, db, "Data"), LostfilmParser: lostfilm.New(cfg, db), RutrackerParser: rutracker.New(cfg, db, "Data"), KinozalParser: kinozal.New(cfg, db, "Data"), TolokaParser: toloka.New(cfg, db, "Data"), SelezenParser: selezen.New(cfg, db, "Data"), LeproductionParser: leproduction.New(cfg, db, "Data"), MazepaParser: mazepa.New(cfg, db, "Data"), TracksDB: tracksDB, cache: newSearchCache(5*time.Minute, 10000)}
 }
 
 func (s *Server) Handler() http.Handler {
@@ -214,6 +215,14 @@ func (s *Server) handleJackett(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	cacheKey := "jackett:" + r.URL.RawQuery
+	if cached, ok := s.cache.Get(cacheKey); ok {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.Header().Set("X-Cache", "HIT")
+		w.WriteHeader(http.StatusOK)
+		w.Write(cached)
+		return
+	}
 	q := r.URL.Query()
 	categoryRaw := firstCategoryValue(q)
 	res, err := s.DB.JackettSearch(filedb.SearchParams{
@@ -230,10 +239,21 @@ func (s *Server) handleJackett(w http.ResponseWriter, r *http.Request) {
 		writeCanonicalJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "jacred": true, "Results": []any{}})
 		return
 	}
-	writeCanonicalJSON(w, http.StatusOK, map[string]any{"Results": buildResults(res.Results, res.RqNum), "jacred": true})
+	data := writeCanonicalJSONCached(w, http.StatusOK, map[string]any{"Results": buildResults(res.Results, res.RqNum), "jacred": true})
+	if data != nil {
+		s.cache.Set(cacheKey, data)
+	}
 }
 
 func (s *Server) handleTorrents(w http.ResponseWriter, r *http.Request) {
+	cacheKey := "torrents:" + r.URL.RawQuery
+	if cached, ok := s.cache.Get(cacheKey); ok {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.Header().Set("X-Cache", "HIT")
+		w.WriteHeader(http.StatusOK)
+		w.Write(cached)
+		return
+	}
 	q := r.URL.Query()
 	items, err := s.DB.TorrentsSearch(filedb.TorrentsParams{
 		Search:    firstQueryURL(q, "search", "q"),
@@ -275,7 +295,10 @@ func (s *Server) handleTorrents(w http.ResponseWriter, r *http.Request) {
 			"types":        i["types"],
 		})
 	}
-	writeCanonicalJSON(w, http.StatusOK, out)
+	data := writeCanonicalJSONCached(w, http.StatusOK, out)
+	if data != nil {
+		s.cache.Set(cacheKey, data)
+	}
 }
 
 func (s *Server) handleQualitys(w http.ResponseWriter, r *http.Request) {

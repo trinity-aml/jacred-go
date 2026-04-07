@@ -408,7 +408,7 @@ func (p *Parser) parsePage(ctx context.Context, cat string, page int, arg string
 
 func (p *Parser) saveTorrents(ctx context.Context, torrents []filedb.TorrentDetails) (int, int, int, int, error) {
 	added, updated, skipped, failed := 0, 0, 0, 0
-	plog := core.NewParserLog(trackerName, filepath.Join(p.DB.DataDir, "log"), p.Config.Kinozal.Log)
+	plog := core.NewParserLog(trackerName, filepath.Join(p.DB.DataDir, "log"), p.Config.LogParsers && p.Config.Kinozal.Log)
 	bucketCache := map[string]map[string]filedb.TorrentDetails{}
 	changed := map[string]time.Time{}
 	for _, incoming := range torrents {
@@ -432,31 +432,40 @@ func (p *Parser) saveTorrents(ctx context.Context, torrents []filedb.TorrentDeta
 			continue
 		}
 		existing, exists := bucket[urlv]
-		if exists && samePrimary(existing, incoming) && asString(existing["magnet"]) != "" {
+		// Only resolve magnet if title changed or existing has no magnet (C# predicate pattern)
+		needMagnet := !exists || asString(existing["title"]) != asString(incoming["title"]) || strings.TrimSpace(asString(existing["magnet"])) == ""
+		if needMagnet {
+			magnet, err := p.resolveMagnet(ctx, urlv)
+			if err != nil {
+				plog.WriteFailed(urlv, asString(incoming["title"]))
+				failed++
+				continue
+			}
+			if magnet == "" {
+				plog.WriteFailed(urlv, asString(incoming["title"]))
+				failed++
+				continue
+			}
+			incoming["magnet"] = magnet
+		}
+		var ex filedb.TorrentDetails
+		if exists {
+			ex = existing
+		}
+		result := filedb.MergeTorrent(ex, incoming, p.Config.TracksAttempt)
+		if !result.Changed {
 			skipped++
 			continue
 		}
-		magnet, err := p.resolveMagnet(ctx, urlv)
-		if err != nil {
-			plog.WriteFailed(urlv, asString(incoming["title"]))
-			failed++
-			continue
-		}
-		if magnet == "" {
-			plog.WriteFailed(urlv, asString(incoming["title"]))
-			failed++
-			continue
-		}
-		incoming["magnet"] = magnet
-		bucket[urlv] = mergeTorrent(existing, exists, incoming)
-		if exists {
+		bucket[urlv] = result.Torrent
+		if !result.IsNew {
 			plog.WriteUpdated(urlv, asString(incoming["title"]))
 			updated++
 		} else {
 			plog.WriteAdded(urlv, asString(incoming["title"]))
 			added++
 		}
-		changed[key] = fileTime(bucket[urlv])
+		changed[key] = fileTime(result.Torrent)
 	}
 	for key, bucket := range bucketCache {
 		if _, ok := changed[key]; !ok {
@@ -824,24 +833,6 @@ func parseCreateTime(line, format string) time.Time {
 		}
 	}
 	return time.Time{}
-}
-func mergeTorrent(existing filedb.TorrentDetails, exists bool, incoming filedb.TorrentDetails) filedb.TorrentDetails {
-	out := filedb.TorrentDetails{}
-	if exists {
-		for k, v := range existing {
-			out[k] = v
-		}
-	}
-	for k, v := range incoming {
-		if v != nil {
-			out[k] = v
-		}
-	}
-	out["updateTime"] = time.Now()
-	return out
-}
-func samePrimary(existing, incoming filedb.TorrentDetails) bool {
-	return asString(existing["title"]) == asString(incoming["title"]) && asString(existing["magnet"]) == asString(incoming["magnet"]) && asString(existing["sizeName"]) == asString(incoming["sizeName"]) && asInt(existing["sid"]) == asInt(incoming["sid"]) && asInt(existing["pir"]) == asInt(incoming["pir"])
 }
 func fileTime(t filedb.TorrentDetails) time.Time {
 	if tm, ok := t["updateTime"].(time.Time); ok {

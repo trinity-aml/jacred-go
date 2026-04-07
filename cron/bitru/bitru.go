@@ -437,7 +437,7 @@ func parseSizeBytes(v string) int64 {
 
 func (p *Parser) saveTorrents(ctx context.Context, torrents []filedb.TorrentDetails) (int, int, int, int, error) {
 	added, updated, skipped, failed := 0, 0, 0, 0
-	plog := core.NewParserLog(trackerName, filepath.Join(p.DB.DataDir, "log"), p.Config.Bitru.Log)
+	plog := core.NewParserLog(trackerName, filepath.Join(p.DB.DataDir, "log"), p.Config.LogParsers && p.Config.Bitru.Log)
 	bucketCache := map[string]map[string]filedb.TorrentDetails{}
 	changed := map[string]time.Time{}
 	for _, incoming := range torrents {
@@ -461,33 +461,40 @@ func (p *Parser) saveTorrents(ctx context.Context, torrents []filedb.TorrentDeta
 			continue
 		}
 		existing, exists := bucket[urlv]
-		if exists && strings.TrimSpace(asString(existing["title"])) == strings.TrimSpace(asString(incoming["title"])) {
+		needMagnet := !exists || strings.TrimSpace(asString(existing["title"])) != strings.TrimSpace(asString(incoming["title"])) || strings.TrimSpace(asString(existing["magnet"])) == ""
+		if needMagnet {
+			downloadURL := ""
+			if m := downloadIDRe.FindStringSubmatch(urlv); len(m) == 2 {
+				downloadURL = strings.TrimRight(p.Config.Bitru.Host, "/") + "/download.php?id=" + m[1]
+			}
+			if downloadURL == "" {
+				failed++
+				continue
+			}
+			b, err := p.download(ctx, downloadURL, urlv)
+			magnet := ""
+			if err == nil {
+				magnet = core.TorrentBytesToMagnet(b)
+			}
+			if strings.TrimSpace(magnet) == "" {
+				plog.WriteFailed(urlv, asString(incoming["title"]))
+				failed++
+				continue
+			}
+			incoming["magnet"] = magnet
+		}
+		var ex filedb.TorrentDetails
+		if exists {
+			ex = existing
+		}
+		result := filedb.MergeTorrent(ex, incoming, p.Config.TracksAttempt)
+		if !result.Changed {
 			skipped++
 			continue
 		}
-		downloadURL := ""
-		if m := downloadIDRe.FindStringSubmatch(urlv); len(m) == 2 {
-			downloadURL = strings.TrimRight(p.Config.Bitru.Host, "/") + "/download.php?id=" + m[1]
-		}
-		if downloadURL == "" {
-			failed++
-			continue
-		}
-		b, err := p.download(ctx, downloadURL, urlv)
-		magnet := ""
-		if err == nil {
-			magnet = core.TorrentBytesToMagnet(b)
-		}
-		if strings.TrimSpace(magnet) == "" {
-			plog.WriteFailed(urlv, asString(incoming["title"]))
-			failed++
-			continue
-		}
-		incoming["magnet"] = magnet
-		merged := mergeTorrent(existing, exists, incoming)
-		bucket[urlv] = merged
-		changed[key] = fileTime(merged)
-		if exists {
+		bucket[urlv] = result.Torrent
+		changed[key] = fileTime(result.Torrent)
+		if !result.IsNew {
 			plog.WriteUpdated(urlv, asString(incoming["title"]))
 			updated++
 		} else {
@@ -596,23 +603,6 @@ func cloneTasks(src map[string][]Task) map[string][]Task {
 	return out
 }
 
-func mergeTorrent(existing filedb.TorrentDetails, exists bool, incoming filedb.TorrentDetails) filedb.TorrentDetails {
-	out := filedb.TorrentDetails{}
-	if exists {
-		for k, v := range existing {
-			out[k] = v
-		}
-	}
-	for k, v := range incoming {
-		out[k] = v
-	}
-	out["_sn"] = core.SearchName(asString(out["name"]))
-	out["_so"] = core.SearchName(firstNonEmpty(asString(out["originalname"]), asString(out["name"])))
-	if fileTime(out).IsZero() {
-		out["updateTime"] = time.Now().UTC().Format(time.RFC3339Nano)
-	}
-	return out
-}
 
 func fileTime(t filedb.TorrentDetails) time.Time {
 	for _, key := range []string{"updateTime", "createTime"} {

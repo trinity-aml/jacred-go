@@ -39,10 +39,20 @@ type DB struct {
 	keyLocks sync.Map  // per-key *sync.Mutex for write serialization
 	dirty    atomic.Bool  // true when masterDb has unsaved changes
 	lastSaved atomic.Int64 // unix nanoseconds of last successful save
+	fdbLog   *FdbLogger   // audit logger for bucket changes (nil if disabled)
 }
 
 func New(cfg app.Config, dataDir string) *DB {
-	return &DB{Config: cfg, DataDir: dataDir, masterDb: map[string]TorrentInfo{}, fastdb: map[string][]string{}}
+	db := &DB{Config: cfg, DataDir: dataDir, masterDb: map[string]TorrentInfo{}, fastdb: map[string][]string{}}
+	if cfg.LogFdb {
+		db.fdbLog = NewFdbLogger(
+			filepath.Join(dataDir, "log"),
+			cfg.LogFdbRetentionDays,
+			cfg.LogFdbMaxSizeMb,
+			cfg.LogFdbMaxFiles,
+		)
+	}
+	return db
 }
 
 // lockKey returns a per-key mutex for serializing writes to the same bucket file.

@@ -496,6 +496,15 @@ func writeCanonicalJSON(w http.ResponseWriter, code int, v any) {
 	_, _ = w.Write([]byte(canonicalJSONString(v)))
 }
 
+// writeCanonicalJSONCached writes JSON response and returns the bytes for caching.
+func writeCanonicalJSONCached(w http.ResponseWriter, code int, v any) []byte {
+	data := []byte(canonicalJSONString(v))
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(code)
+	_, _ = w.Write(data)
+	return data
+}
+
 func canonicalJSONString(v any) string {
 	var b strings.Builder
 	writeCanonicalJSONValue(&b, v)
@@ -782,7 +791,25 @@ func isLocalRequest(r *http.Request) bool {
 		host = strings.TrimSpace(r.RemoteAddr)
 	}
 	ip := net.ParseIP(host)
-	return ip != nil && ip.IsLoopback()
+	if ip == nil {
+		return false
+	}
+	// Unwrap IPv4-mapped IPv6 (e.g. ::ffff:127.0.0.1)
+	if v4 := ip.To4(); v4 != nil {
+		ip = v4
+	}
+	if ip.IsLoopback() {
+		return true
+	}
+	// fe80::/10 link-local
+	if ip.IsLinkLocalUnicast() {
+		return true
+	}
+	// fc00::/7 unique local (ULA)
+	if len(ip) == net.IPv6len && ip[0]&0xfe == 0xfc {
+		return true
+	}
+	return false
 }
 
 func recomputeSizeBytes(sizeName string) int64 {

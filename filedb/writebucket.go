@@ -60,6 +60,14 @@ func (db *DB) saveBucketInternal(key string, bucket map[string]TorrentDetails, u
 	for _, t := range bucket {
 		UpdateFullDetails(t)
 	}
+	// FDB audit log: compare old bucket with new before writing
+	if db.fdbLog != nil {
+		oldBucket, _ := db.OpenRead(key)
+		if oldBucket == nil {
+			oldBucket = map[string]TorrentDetails{}
+		}
+		db.fdbLog.LogBucketChanges(key, oldBucket, bucket)
+	}
 	path := db.PathDb(key)
 	if err := writeBucket(path, bucket); err != nil {
 		return err
