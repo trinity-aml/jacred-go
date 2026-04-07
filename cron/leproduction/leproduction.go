@@ -46,7 +46,7 @@ var (
 	fileNameRe    = regexp.MustCompile(`(?is)class="info_d1-le"[^>]*>\s*([^<]+)\s*</div>`)
 	sidLeRe       = regexp.MustCompile(`(?i)Раздают:\s*</b>\s*<span[^>]*class="li_distribute_m-le"[^>]*>\s*([0-9]+)\s*</span>`)
 	pirLeRe       = regexp.MustCompile(`(?i)Качают:\s*</b>\s*<span[^>]*class="li_swing_m-le"[^>]*>\s*([0-9]+)\s*</span>`)
-	sizeLeRe      = regexp.MustCompile(`(?i)Размер:\s*<span[^>]*>\s*([0-9]+(?:[.,][0-9]+)?)\s*G[bB]\s*</span>`)
+	sizeLeRe      = regexp.MustCompile(`(?i)Размер:\s*<span[^>]*>\s*([0-9]+(?:[.,][0-9]+)?)\s*(Mb|Gb|Tb)\s*</span>`)
 	qualityRe     = regexp.MustCompile(`(?i)\b([0-9]{3,4}p)\b`)
 	cleanSpaceRe  = regexp.MustCompile(`\s+`)
 
@@ -199,6 +199,21 @@ func (p *Parser) parsePage(ctx context.Context, pageURL, host, cat string, types
 				pir, _ = strconv.Atoi(m[1])
 			}
 
+			// Size
+			sizeName := ""
+			var sizeBytes int64
+			if m := sizeLeRe.FindStringSubmatch(around); len(m) > 2 {
+				sizeName = strings.ReplaceAll(m[1], ",", ".") + " " + m[2]
+				num, _ := strconv.ParseFloat(strings.ReplaceAll(m[1], ",", "."), 64)
+				switch strings.ToLower(m[2]) {
+				case "tb":
+					num *= 1024 * 1024
+				case "gb":
+					num *= 1024
+				}
+				sizeBytes = int64(num * 1048576) // MB → bytes
+			}
+
 			// Quality from filename
 			q := ""
 			if fn := extractMatch(fileNameRe, around); fn != "" {
@@ -242,6 +257,8 @@ func (p *Parser) parsePage(ctx context.Context, pageURL, host, cat string, types
 				Title: title,
 				Sid: sid,
 				Pir: pir,
+				SizeName: sizeName,
+				Size: sizeBytes,
 				CreateTime: now,
 				UpdateTime: now,
 				Name: nameRu,
