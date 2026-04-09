@@ -97,13 +97,9 @@ func New(cfg app.Config, db *filedb.DB, dataDir string) *Parser {
 	return p
 }
 
-func (p *Parser) getCookie() string {
-	if strings.TrimSpace(p.Config.NNMClub.Cookie) != "" {
-		return strings.TrimSpace(p.Config.NNMClub.Cookie)
-	}
-	return ""
+func (p *Parser) cookie() string {
+	return strings.TrimSpace(p.Config.NNMClub.Cookie)
 }
-
 
 func (p *Parser) Parse(ctx context.Context, page int) (ParseResult, error) {
 	p.mu.Lock()
@@ -303,7 +299,7 @@ func (p *Parser) ParseLatest(ctx context.Context, pages int) (string, error) {
 func (p *Parser) parsePage(ctx context.Context, cat string, page int) ([]filedb.TorrentDetails, error) {
 	rawURL := strings.TrimRight(requestHost(p.Config.NNMClub), "/") + "/forum/portal.php?c=" + cat + "&start=" + strconv.Itoa(page*20)
 	ts := p.Config.NNMClub
-	if c := p.getCookie(); c != "" {
+	if c := p.cookie(); c != "" {
 		ts.Cookie = c
 	}
 	data, status, err := p.Fetcher.Download(rawURL, ts)
@@ -320,7 +316,7 @@ func (p *Parser) parsePage(ctx context.Context, cat string, page int) ([]filedb.
 func (p *Parser) fetchCategoryRoot(ctx context.Context, cat string) (string, error) {
 	rawURL := strings.TrimRight(requestHost(p.Config.NNMClub), "/") + "/forum/portal.php?c=" + cat
 	ts := p.Config.NNMClub
-	if c := p.getCookie(); c != "" {
+	if c := p.cookie(); c != "" {
 		ts.Cookie = c
 	}
 	data, status, err := p.Fetcher.Download(rawURL, ts)

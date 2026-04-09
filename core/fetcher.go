@@ -56,6 +56,11 @@ func (f *Fetcher) UpdateConfig(cfg app.Config) {
 	f.cfg = cfg
 }
 
+// GetCFClient returns the tls-client instance for direct use by parsers (login, etc).
+func (f *Fetcher) GetCFClient() *CFClient {
+	return f.cfClient
+}
+
 // GetFlareCookies returns cached or freshly solved FlareSolverr cookies and user-agent for a URL's domain.
 // Returns empty strings if flaresolverr is not configured or solve fails.
 func (f *Fetcher) GetFlareCookies(rawURL string) (cookie, userAgent string) {
