@@ -121,8 +121,7 @@ func main() {
 	// Config hot-reload: check init.yaml mtime every 10 seconds
 	reloader := background.NewConfigReloader("init.yaml", cfg)
 	reloader.OnReload(func(newCfg app.Config) {
-		srv.Config = newCfg
-		db.Config = newCfg
+		srv.UpdateConfig(newCfg)
 	})
 	go reloader.Run(ctx)
 

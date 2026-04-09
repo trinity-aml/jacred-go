@@ -5,9 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"html"
-	"io"
 	"log"
-	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -92,7 +90,7 @@ type Parser struct {
 	Config  app.Config
 	DB      *filedb.DB
 	DataDir string
-	Client  *http.Client
+	Fetcher *core.Fetcher
 	mu      sync.Mutex
 	working bool
 	allWork bool
@@ -107,7 +105,7 @@ type ParseResult struct {
 }
 
 func New(cfg app.Config, db *filedb.DB, dataDir string) *Parser {
-	p := &Parser{Config: cfg, DB: db, DataDir: dataDir, Client: &http.Client{Timeout: 25 * time.Second}, tasks: map[string][]Task{}}
+	p := &Parser{Config: cfg, DB: db, DataDir: dataDir, Fetcher: core.NewFetcher(cfg), tasks: map[string][]Task{}}
 	_ = p.loadTasks()
 	return p
 }
@@ -464,20 +462,9 @@ func (p *Parser) ParseLatest(ctx context.Context, pages int) (string, error) {
 
 func (p *Parser) fetchPageRaw(ctx context.Context, cat string, page int) (string, error) {
 	host := strings.TrimRight(p.Config.Rutor.Host, "/")
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("%s/browse/%d/%s/0/0", host, page, cat), nil)
-	if err != nil {
-		return "", err
-	}
-	resp, err := p.Client.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 5<<20)) // 5 MB max
-	if err != nil {
-		return "", err
-	}
-	return string(body), nil
+	urlv := fmt.Sprintf("%s/browse/%d/%s/0/0", host, page, cat)
+	body, _, err := p.Fetcher.GetString(urlv, p.Config.Rutor)
+	return body, err
 }
 
 func (p *Parser) loadTasks() error {

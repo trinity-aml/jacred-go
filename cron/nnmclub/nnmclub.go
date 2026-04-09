@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"html"
-	"io"
 	"log"
 	"net/http"
 	"os"
@@ -72,6 +71,7 @@ type Parser struct {
 	DB      *filedb.DB
 	DataDir string
 	Client  *http.Client
+	Fetcher *core.Fetcher
 	loc     *time.Location
 
 	mu      sync.Mutex
@@ -92,7 +92,7 @@ func New(cfg app.Config, db *filedb.DB, dataDir string) *Parser {
 	if err != nil {
 		loc = time.Local
 	}
-	p := &Parser{Config: cfg, DB: db, DataDir: dataDir, Client: &http.Client{Timeout: 35 * time.Second}, loc: loc, tasks: map[string][]Task{}}
+	p := &Parser{Config: cfg, DB: db, DataDir: dataDir, Client: &http.Client{Timeout: 35 * time.Second}, Fetcher: core.NewFetcher(cfg), loc: loc, tasks: map[string][]Task{}}
 	_ = p.loadTasks()
 	return p
 }
@@ -302,55 +302,34 @@ func (p *Parser) ParseLatest(ctx context.Context, pages int) (string, error) {
 
 func (p *Parser) parsePage(ctx context.Context, cat string, page int) ([]filedb.TorrentDetails, error) {
 	rawURL := strings.TrimRight(requestHost(p.Config.NNMClub), "/") + "/forum/portal.php?c=" + cat + "&start=" + strconv.Itoa(page*20)
-	cookie := p.getCookie()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	ts := p.Config.NNMClub
+	if c := p.getCookie(); c != "" {
+		ts.Cookie = c
+	}
+	data, status, err := p.Fetcher.Download(rawURL, ts)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("User-Agent", "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:148.0) Gecko/20100101 Firefox/148.0")
-	if cookie != "" {
-		req.Header.Set("Cookie", cookie)
-	}
-	resp, err := p.Client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 5<<20))
-	if err != nil {
-		return nil, err
-	}
-	htmlBody := core.DecodeCP1251(body)
-	hasMarker := strings.Contains(htmlBody, validMarker)
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 || !hasMarker {
+	htmlBody := core.DecodeCP1251(data)
+	if status < 200 || status >= 300 || !strings.Contains(htmlBody, validMarker) {
 		return nil, nil
 	}
-	items := parsePageHTML(strings.TrimRight(p.Config.NNMClub.Host, "/"), cat, htmlBody, time.Now().UTC())
-	return items, nil
+	return parsePageHTML(strings.TrimRight(p.Config.NNMClub.Host, "/"), cat, htmlBody, time.Now().UTC()), nil
 }
 
 func (p *Parser) fetchCategoryRoot(ctx context.Context, cat string) (string, error) {
 	rawURL := strings.TrimRight(requestHost(p.Config.NNMClub), "/") + "/forum/portal.php?c=" + cat
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	ts := p.Config.NNMClub
+	if c := p.getCookie(); c != "" {
+		ts.Cookie = c
+	}
+	data, status, err := p.Fetcher.Download(rawURL, ts)
 	if err != nil {
 		return "", err
 	}
-	req.Header.Set("User-Agent", "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:148.0) Gecko/20100101 Firefox/148.0")
-	if cookie := p.getCookie(); cookie != "" {
-		req.Header.Set("Cookie", cookie)
-	}
-	resp, err := p.Client.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 5<<20))
-	if err != nil {
-		return "", err
-	}
-	htmlBody := core.DecodeCP1251(body)
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", fmt.Errorf("nnmclub status %d", resp.StatusCode)
+	htmlBody := core.DecodeCP1251(data)
+	if status < 200 || status >= 300 {
+		return "", fmt.Errorf("nnmclub status %d", status)
 	}
 	return htmlBody, nil
 }

@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"html"
-	"io"
 	"log"
 	"net/http"
 	"net/url"
@@ -40,6 +39,7 @@ type Parser struct {
 	DB      *filedb.DB
 	DataDir string
 	Client  *http.Client
+	Fetcher *core.Fetcher
 	mu      sync.Mutex
 	working bool
 	cookie  string
@@ -53,7 +53,7 @@ type ParseResult struct {
 }
 
 func New(cfg app.Config, db *filedb.DB, dataDir string) *Parser {
-	return &Parser{Config: cfg, DB: db, DataDir: dataDir, Client: &http.Client{
+	return &Parser{Config: cfg, DB: db, DataDir: dataDir, Fetcher: core.NewFetcher(cfg), Client: &http.Client{
 		Timeout: 30 * time.Second,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			return http.ErrUseLastResponse
@@ -332,45 +332,24 @@ func (p *Parser) saveTorrents(ctx context.Context, host string, torrents []filed
 }
 
 func (p *Parser) httpGet(ctx context.Context, rawURL string) (string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("User-Agent", "Mozilla/5.0")
+	ts := p.Config.Baibako
 	if c := p.getCookie(); c != "" {
-		req.Header.Set("Cookie", c)
+		ts.Cookie = c
 	}
-	resp, err := p.Client.Do(req)
+	data, _, err := p.Fetcher.Download(rawURL, ts)
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
-	b, err := io.ReadAll(io.LimitReader(resp.Body, 5<<20))
-	if err != nil {
-		return "", err
-	}
-	// Baibako uses CP1251
-	return core.DecodeCP1251(b), nil
+	return core.DecodeCP1251(data), nil
 }
 
 func (p *Parser) httpDownload(ctx context.Context, rawURL, referer string) ([]byte, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("User-Agent", "Mozilla/5.0")
+	ts := p.Config.Baibako
 	if c := p.getCookie(); c != "" {
-		req.Header.Set("Cookie", c)
+		ts.Cookie = c
 	}
-	if referer != "" {
-		req.Header.Set("Referer", referer)
-	}
-	resp, err := p.Client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	return io.ReadAll(io.LimitReader(resp.Body, 5<<20))
+	data, _, err := p.Fetcher.Download(rawURL, ts)
+	return data, err
 }
 
 func parseCreateTime(raw, layout string) time.Time {

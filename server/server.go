@@ -36,6 +36,8 @@ import (
 	"jacred/cron/selezen"
 	"jacred/cron/toloka"
 	"jacred/cron/torrentby"
+	"sync"
+
 	"jacred/filedb"
 	"jacred/tracks"
 )
@@ -49,6 +51,7 @@ type VersionInfo struct {
 
 type Server struct {
 	Config             app.Config
+	cfgMu              sync.RWMutex
 	DB                 *filedb.DB
 	WWWRoot            string
 	Version            VersionInfo
@@ -84,6 +87,67 @@ func New(cfg app.Config, db *filedb.DB, tracksDB *tracks.DB, wwwroot string) *Se
 	return &Server{Config: cfg, DB: db, WWWRoot: wwwroot, Version: VersionInfo{Version: "dev", GitSha: "unknown", GitBranch: "unknown", BuildDate: time.Now().UTC().Format("2006-01-02 15:04:05 UTC")}, KnabenParser: knaben.New(cfg, db), AnidubParser: anidub.New(cfg, db), AnilibertyParser: aniliberty.New(cfg, db), AnimelayerParser: animelayer.New(cfg, db), AnistarParser: anistar.New(cfg, db, "Data"), AnifilmParser: anifilm.New(cfg, db, "Data"), BaibakoParser: baibako.New(cfg, db, "Data"), BitruParser: bitru.New(cfg, db, "Data"), BitruAPIParser: bitruapi.New(cfg, db, "Data"), RutorParser: rutor.New(cfg, db, "Data"), MegapeerParser: megapeer.New(cfg, db), TorrentByParser: torrentby.New(cfg, db, "Data"), NNMClubParser: nnmclub.New(cfg, db, "Data"), LostfilmParser: lostfilm.New(cfg, db), RutrackerParser: rutracker.New(cfg, db, "Data"), KinozalParser: kinozal.New(cfg, db, "Data"), TolokaParser: toloka.New(cfg, db, "Data"), SelezenParser: selezen.New(cfg, db, "Data"), LeproductionParser: leproduction.New(cfg, db, "Data"), MazepaParser: mazepa.New(cfg, db, "Data"), TracksDB: tracksDB, cache: newSearchCache(5*time.Minute, 10000)}
 }
 
+// GetConfig returns a thread-safe copy of the current config.
+func (s *Server) GetConfig() app.Config {
+	s.cfgMu.RLock()
+	c := s.Config
+	s.cfgMu.RUnlock()
+	return c
+}
+
+// UpdateConfig atomically replaces the config for Server, DB, and all 20 parsers.
+func (s *Server) UpdateConfig(cfg app.Config) {
+	s.cfgMu.Lock()
+	s.Config = cfg
+	s.cfgMu.Unlock()
+
+	s.DB.SetConfig(cfg)
+
+	s.KnabenParser.Config = cfg
+	s.KnabenParser.Fetcher.UpdateConfig(cfg)
+	s.AnidubParser.Config = cfg
+	s.AnidubParser.Fetcher.UpdateConfig(cfg)
+	s.AnilibertyParser.Config = cfg
+	s.AnilibertyParser.Fetcher.UpdateConfig(cfg)
+	s.AnimelayerParser.Config = cfg
+	s.AnimelayerParser.Fetcher.UpdateConfig(cfg)
+	s.AnistarParser.Config = cfg
+	s.AnistarParser.Fetcher.UpdateConfig(cfg)
+	s.AnifilmParser.Config = cfg
+	s.AnifilmParser.Fetcher.UpdateConfig(cfg)
+	s.BaibakoParser.Config = cfg
+	s.BaibakoParser.Fetcher.UpdateConfig(cfg)
+	s.BitruParser.Config = cfg
+	s.BitruParser.Fetcher.UpdateConfig(cfg)
+	s.BitruAPIParser.Config = cfg
+	s.BitruAPIParser.Fetcher.UpdateConfig(cfg)
+	s.RutorParser.Config = cfg
+	s.RutorParser.Fetcher.UpdateConfig(cfg)
+	s.MegapeerParser.Config = cfg
+	s.MegapeerParser.Fetcher.UpdateConfig(cfg)
+	s.TorrentByParser.Config = cfg
+	s.TorrentByParser.Fetcher.UpdateConfig(cfg)
+	s.NNMClubParser.Config = cfg
+	s.NNMClubParser.Fetcher.UpdateConfig(cfg)
+	s.LostfilmParser.Config = cfg
+	s.LostfilmParser.Fetcher.UpdateConfig(cfg)
+	s.RutrackerParser.Config = cfg
+	s.RutrackerParser.Fetcher.UpdateConfig(cfg)
+	s.KinozalParser.Config = cfg
+	s.KinozalParser.Fetcher.UpdateConfig(cfg)
+	s.TolokaParser.Config = cfg
+	s.TolokaParser.Fetcher.UpdateConfig(cfg)
+	s.SelezenParser.Config = cfg
+	s.SelezenParser.Fetcher.UpdateConfig(cfg)
+	s.LeproductionParser.Config = cfg
+	s.LeproductionParser.Fetcher.UpdateConfig(cfg)
+	s.MazepaParser.Config = cfg
+	s.MazepaParser.Fetcher.UpdateConfig(cfg)
+
+	s.cache.Invalidate()
+	log.Printf("config: updated server, db and all 20 parsers")
+}
+
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", s.handleRoot)
@@ -116,6 +180,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/dev/fixknabennames", s.handleDevFixKnabenNames)
 	mux.HandleFunc("/dev/fixbitrunames", s.handleDevFixBitruNames)
 	mux.HandleFunc("/dev/removebucket", s.handleDevRemoveBucket)
+	mux.HandleFunc("/dev/testfetch", s.handleDevTestFetch)
 	mux.HandleFunc("/dev/fixemptysearchfields", s.handleDevFixEmptySearchFields)
 	mux.HandleFunc("/dev/migrateanilibertyurls", s.handleDevMigrateAnilibertyUrls)
 	mux.HandleFunc("/dev/removeduplicateaniliberty", s.handleDevRemoveDuplicateAniliberty)
@@ -204,7 +269,8 @@ func (s *Server) handleConf(w http.ResponseWriter, r *http.Request) {
 	if key == "" {
 		key = r.URL.Query().Get("apiKey")
 	}
-	valid := s.Config.APIKey == "" || (key != "" && subtle.ConstantTimeCompare([]byte(key), []byte(s.Config.APIKey)) == 1)
+	cfg := s.GetConfig()
+	valid := cfg.APIKey == "" || (key != "" && subtle.ConstantTimeCompare([]byte(key), []byte(cfg.APIKey)) == 1)
 	writeJSONOrdered(w, http.StatusOK, [][2]any{{"apikey", valid}})
 }
 
@@ -1063,7 +1129,8 @@ func (s *Server) middleware(next http.Handler) http.Handler {
 			}
 			return
 		}
-		if fromLocal && s.Config.DevKey != "" && isLocalOnlyPath(path) && !devKeyMatches(r, s.Config.DevKey) {
+		cfg := s.GetConfig()
+		if fromLocal && cfg.DevKey != "" && isLocalOnlyPath(path) && !devKeyMatches(r, cfg.DevKey) {
 			if r.Method == http.MethodOptions {
 				w.WriteHeader(http.StatusNoContent)
 			} else {
@@ -1071,9 +1138,9 @@ func (s *Server) middleware(next http.Handler) http.Handler {
 			}
 			return
 		}
-		if s.Config.APIKey != "" && !isPathWhitelisted(path) {
+		if cfg.APIKey != "" && !isPathWhitelisted(path) {
 			key := getAPIKey(r)
-			if key == "" || subtle.ConstantTimeCompare([]byte(key), []byte(s.Config.APIKey)) != 1 {
+			if key == "" || subtle.ConstantTimeCompare([]byte(key), []byte(cfg.APIKey)) != 1 {
 				if r.Method == http.MethodOptions {
 					w.WriteHeader(http.StatusNoContent)
 				} else {

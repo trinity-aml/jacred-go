@@ -48,7 +48,7 @@ type Parser struct {
 	Config  app.Config
 	DB      *filedb.DB
 	DataDir string
-	CF      *core.CFClient
+	Fetcher *core.Fetcher
 	mu      sync.Mutex
 	working bool
 }
@@ -59,11 +59,7 @@ type ParseResult struct {
 }
 
 func New(cfg app.Config, db *filedb.DB, dataDir string) *Parser {
-	cf, err := core.NewCFClientWithConfig(cfg.CFClient.Profile, cfg.CFClient.UserAgent)
-	if err != nil {
-		log.Printf("anistar: CFClient init error: %v, falling back to nil", err)
-	}
-	return &Parser{Config: cfg, DB: db, DataDir: dataDir, CF: cf}
+	return &Parser{Config: cfg, DB: db, DataDir: dataDir, Fetcher: core.NewFetcher(cfg)}
 }
 
 func (p *Parser) Parse(ctx context.Context, limitPage int) (ParseResult, error) {
@@ -334,11 +330,10 @@ func (p *Parser) saveTorrents(ctx context.Context, torrents []filedb.TorrentDeta
 }
 
 func (p *Parser) httpGet(_ context.Context, rawURL, referer string) (string, error) {
-	if p.CF == nil {
-		return "", fmt.Errorf("anistar: CFClient not initialized")
+	if p.Fetcher == nil {
+		return "", fmt.Errorf("anistar: Fetcher not initialized")
 	}
-	cookie := strings.TrimSpace(p.Config.Anistar.Cookie)
-	data, status, err := p.CF.Download(rawURL, cookie, referer)
+	data, status, err := p.Fetcher.Download(rawURL, p.Config.Anistar)
 	if err != nil {
 		return "", err
 	}
@@ -350,11 +345,10 @@ func (p *Parser) httpGet(_ context.Context, rawURL, referer string) (string, err
 }
 
 func (p *Parser) httpDownload(_ context.Context, rawURL, referer string) ([]byte, error) {
-	if p.CF == nil {
-		return nil, fmt.Errorf("anistar: CFClient not initialized")
+	if p.Fetcher == nil {
+		return nil, fmt.Errorf("anistar: Fetcher not initialized")
 	}
-	cookie := strings.TrimSpace(p.Config.Anistar.Cookie)
-	data, status, err := p.CF.Download(rawURL, cookie, referer)
+	data, status, err := p.Fetcher.Download(rawURL, p.Config.Anistar)
 	if err != nil {
 		return nil, err
 	}

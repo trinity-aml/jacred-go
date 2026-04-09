@@ -4,9 +4,7 @@ import (
 	"context"
 	"fmt"
 	"html"
-	"io"
 	"log"
-	"net/http"
 	"regexp"
 	"strconv"
 	"strings"
@@ -48,6 +46,7 @@ var (
 	pirLeRe       = regexp.MustCompile(`(?i)Качают:\s*</b>\s*<span[^>]*class="li_swing_m-le"[^>]*>\s*([0-9]+)\s*</span>`)
 	sizeLeRe      = regexp.MustCompile(`(?i)Размер:\s*<span[^>]*>\s*([0-9]+(?:[.,][0-9]+)?)\s*(Mb|Gb|Tb)\s*</span>`)
 	qualityRe     = regexp.MustCompile(`(?i)\b([0-9]{3,4}p)\b`)
+	episodeRe     = regexp.MustCompile(`(?i)\[([0-9]+(?:\s*[-,]\s*[0-9]+)*\s+из\s+[0-9]+)\]`)
 	cleanSpaceRe  = regexp.MustCompile(`\s+`)
 
 	inlineRe89769cRe = regexp.MustCompile(`\s*/\s*.*$`)
@@ -57,7 +56,7 @@ type Parser struct {
 	Config  app.Config
 	DB      *filedb.DB
 	DataDir string
-	Client  *http.Client
+	Fetcher *core.Fetcher
 	mu      sync.Mutex
 	working bool
 }
@@ -68,7 +67,7 @@ type ParseResult struct {
 }
 
 func New(cfg app.Config, db *filedb.DB, dataDir string) *Parser {
-	return &Parser{Config: cfg, DB: db, DataDir: dataDir, Client: &http.Client{Timeout: 30 * time.Second}}
+	return &Parser{Config: cfg, DB: db, DataDir: dataDir, Fetcher: core.NewFetcher(cfg)}
 }
 
 func (p *Parser) Parse(ctx context.Context, limitPage int) (ParseResult, error) {
@@ -93,6 +92,13 @@ func (p *Parser) Parse(ctx context.Context, limitPage int) (ParseResult, error) 
 			totalPages = p.detectLastPage(ctx, host, cat)
 		}
 		for page := 1; page <= totalPages; page++ {
+			if page > 1 && p.Config.Leproduction.ParseDelay > 0 {
+				select {
+				case <-ctx.Done():
+					return res, ctx.Err()
+				case <-time.After(time.Duration(p.Config.Leproduction.ParseDelay) * time.Millisecond):
+				}
+			}
 			pageURL := fmt.Sprintf("%s/%s/", host, cat)
 			if page > 1 {
 				pageURL = fmt.Sprintf("%s/%s/page/%d/", host, cat, page)
@@ -111,6 +117,7 @@ func (p *Parser) Parse(ctx context.Context, limitPage int) (ParseResult, error) 
 			res.Updated += u
 			res.Skipped += s
 			res.Failed += f
+			log.Printf("leproduction: cat=%s page %d/%d fetched=%d added=%d skipped=%d failed=%d", cat, page, totalPages, len(items), a, s, f)
 		}
 	}
 	log.Printf("leproduction: done fetched=%d added=%d skipped=%d failed=%d", res.Fetched, res.Added, res.Skipped, res.Failed)
@@ -214,11 +221,15 @@ func (p *Parser) parsePage(ctx context.Context, pageURL, host, cat string, types
 				sizeBytes = int64(num * 1048576) // MB → bytes
 			}
 
-			// Quality from filename
+			// Quality and episode info from filename
 			q := ""
+			ep := ""
 			if fn := extractMatch(fileNameRe, around); fn != "" {
 				if qm := qualityRe.FindStringSubmatch(fn); len(qm) > 1 {
 					q = qm[1]
+				}
+				if em := episodeRe.FindStringSubmatch(fn); len(em) > 1 {
+					ep = em[1]
 				}
 			}
 			qDigits := "0"
@@ -240,6 +251,9 @@ func (p *Parser) parsePage(ctx context.Context, pageURL, host, cat string, types
 			title := nameRu
 			if nameEn != "" {
 				title = nameRu + " / " + nameEn
+			}
+			if ep != "" {
+				title += " [" + ep + "]"
 			}
 			if relased > 0 {
 				title += fmt.Sprintf(" %d", relased)
@@ -271,13 +285,6 @@ func (p *Parser) parsePage(ctx context.Context, pageURL, host, cat string, types
 			}.ToMap())
 		}
 
-		if p.Config.Leproduction.ParseDelay > 0 {
-			select {
-			case <-ctx.Done():
-				return out, ctx.Err()
-			case <-time.After(time.Duration(p.Config.Leproduction.ParseDelay) * time.Millisecond):
-			}
-		}
 	}
 	return out, nil
 }
@@ -429,21 +436,8 @@ func takeAround(text, needle string, radius int) string {
 }
 
 func (p *Parser) httpGet(ctx context.Context, rawURL, referer string) (string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("User-Agent", "Mozilla/5.0")
-	if referer != "" {
-		req.Header.Set("Referer", referer)
-	}
-	resp, err := p.Client.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-	b, err := io.ReadAll(io.LimitReader(resp.Body, 5<<20))
-	return string(b), err
+	body, _, err := p.Fetcher.GetString(rawURL, p.Config.Leproduction)
+	return body, err
 }
 
 func asString(v any) string {

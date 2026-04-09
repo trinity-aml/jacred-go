@@ -268,6 +268,10 @@ func setTrackerKV(t *TrackerSettings, k, v string) {
 		t.Cookie = unquote(v)
 	case "useproxy":
 		t.UseProxy = parseBool(v)
+	case "fetchmode":
+		t.FetchMode = unquote(v)
+	case "insecureSkipVerify":
+		t.InsecureSkipVerify = parseBool(v)
 	case "reqMinute":
 		t.ReqMinute = parseInt(v)
 	case "parseDelay":
@@ -358,6 +362,8 @@ func setConfigKV(cfg *Config, k, v string) {
 		cfg.TimeSync = parseInt(v)
 	case "timeSyncSpidr":
 		cfg.TimeSyncSpidr = parseInt(v)
+	case "flaresolverr":
+		cfg.FlareSolverr = unquote(v)
 	case "synctrackers":
 		cfg.SyncTrackers = []string{}
 	case "disable_trackers":

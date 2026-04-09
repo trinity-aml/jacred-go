@@ -31,6 +31,7 @@ type TorrentInfo struct {
 
 type DB struct {
 	Config   app.Config
+	cfgMu    sync.RWMutex
 	DataDir  string
 	mu       sync.RWMutex
 	saveMu   sync.Mutex // serializes concurrent SaveChangesToFile calls
@@ -55,6 +56,21 @@ func New(cfg app.Config, dataDir string) *DB {
 	return db
 }
 
+// SetConfig atomically replaces the config.
+func (db *DB) SetConfig(cfg app.Config) {
+	db.cfgMu.Lock()
+	db.Config = cfg
+	db.cfgMu.Unlock()
+}
+
+// GetConfig returns a thread-safe copy of the current config.
+func (db *DB) GetConfig() app.Config {
+	db.cfgMu.RLock()
+	c := db.Config
+	db.cfgMu.RUnlock()
+	return c
+}
+
 // lockKey returns a per-key mutex for serializing writes to the same bucket file.
 func (db *DB) lockKey(key string) *sync.Mutex {
 	v, _ := db.keyLocks.LoadOrStore(key, &sync.Mutex{})
@@ -68,7 +84,7 @@ func (db *DB) PathDb(key string) string {
 	}
 	md5key := core.MD5(key)
 	var path string
-	if db.Config.FDBPathLevels == 2 || db.Config.FDBPathLevels == 0 {
+	if db.GetConfig().FDBPathLevels == 2 || db.GetConfig().FDBPathLevels == 0 {
 		path = filepath.Join(db.DataDir, "fdb", md5key[:2], md5key[2:])
 	} else {
 		path = filepath.Join(db.DataDir, "fdb", md5key[:1], md5key)

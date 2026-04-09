@@ -27,14 +27,16 @@ type TracksIntervalConfig struct {
 }
 
 type TrackerSettings struct {
-	Host       string        `json:"host"`
-	Alias      string        `json:"alias,omitempty"`
-	Cookie     string        `json:"cookie,omitempty"`
-	Log        bool          `json:"log"`
-	UseProxy   bool          `json:"useproxy"`
-	ReqMinute  int           `json:"reqMinute"`
-	ParseDelay int           `json:"parseDelay"`
-	Login      LoginSettings `json:"login"`
+	Host               string        `json:"host"`
+	Alias              string        `json:"alias,omitempty"`
+	Cookie             string        `json:"cookie,omitempty"`
+	Log                bool          `json:"log"`
+	UseProxy           bool          `json:"useproxy"`
+	InsecureSkipVerify bool          `json:"insecureSkipVerify,omitempty"` // skip TLS certificate verification
+	FetchMode          string        `json:"fetchmode,omitempty"`          // "standard" (default), "flaresolverr"
+	ReqMinute          int           `json:"reqMinute"`
+	ParseDelay         int           `json:"parseDelay"`
+	Login              LoginSettings `json:"login"`
 }
 
 type CFClientConfig struct {
@@ -80,6 +82,7 @@ type Config struct {
 	TimeStatsUpdate    int                  `json:"timeStatsUpdate"`
 	TimeSync           int                  `json:"timeSync"`
 	TimeSyncSpidr      int                  `json:"timeSyncSpidr"`
+	FlareSolverr       string               `json:"flaresolverr,omitempty"` // FlareSolverr URL, e.g. "http://localhost:8191"
 	CFClient           CFClientConfig       `json:"cfclient"`
 	Rutor              TrackerSettings      `json:"Rutor"`
 	Megapeer           TrackerSettings      `json:"Megapeer"`
@@ -133,7 +136,7 @@ func DefaultConfig() Config {
 		LogFdbRetentionDays: 7,
 		Rutor:              TrackerSettings{Host: "https://rutor.is", ReqMinute: 8, ParseDelay: 7000},
 		Megapeer:           TrackerSettings{Host: "https://megapeer.vip", ReqMinute: 8, ParseDelay: 7000},
-		TorrentBy:          TrackerSettings{Host: "https://torrent.by", ReqMinute: 8, ParseDelay: 7000},
+		TorrentBy:          TrackerSettings{Host: "https://torrent.by", ReqMinute: 8, ParseDelay: 7000, InsecureSkipVerify: true},
 		Kinozal:            TrackerSettings{Host: "https://kinozal.tv", ReqMinute: 8, ParseDelay: 7000},
 		NNMClub:            TrackerSettings{Host: "https://nnmclub.to", ReqMinute: 8, ParseDelay: 7000},
 		Bitru:              TrackerSettings{Host: "https://bitru.org", ReqMinute: 8, ParseDelay: 7000},

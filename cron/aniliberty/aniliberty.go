@@ -4,9 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log"
-	"net/http"
 	"regexp"
 	"strconv"
 	"strings"
@@ -80,13 +78,13 @@ type ParseResult struct {
 type Parser struct {
 	Config  app.Config
 	DB      *filedb.DB
-	Client  *http.Client
+	Fetcher *core.Fetcher
 	mu      sync.Mutex
 	working bool
 }
 
 func New(cfg app.Config, db *filedb.DB) *Parser {
-	return &Parser{Config: cfg, DB: db, Client: &http.Client{Timeout: 30 * time.Second}}
+	return &Parser{Config: cfg, DB: db, Fetcher: core.NewFetcher(cfg)}
 }
 
 func (p *Parser) Parse(ctx context.Context, parseFrom, parseTo int) (ParseResult, error) {
@@ -295,21 +293,14 @@ func (p *Parser) saveTorrents(items []filedb.TorrentDetails) (int, int, int, int
 }
 
 func (p *Parser) fetch(ctx context.Context, urlv string) ([]byte, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, urlv, nil)
+	data, status, err := p.Fetcher.Download(urlv, p.Config.Aniliberty)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("User-Agent", "Mozilla/5.0")
-	req.Header.Set("Accept", "application/json, text/plain, */*")
-	resp, err := p.Client.Do(req)
-	if err != nil {
-		return nil, err
+	if status < 200 || status >= 300 {
+		return nil, fmt.Errorf("http status %d", status)
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("http status %d", resp.StatusCode)
-	}
-	return io.ReadAll(io.LimitReader(resp.Body, 5<<20))
+	return data, nil
 }
 
 func determineTypes(typeValue string) []string {

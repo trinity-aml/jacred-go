@@ -79,13 +79,12 @@ evercache:
   maxOpenWriteTask: 500 # Max buckets held in memory (reduce to 200-300 on 1 GB VPS)
   dropCacheTake: 100    # How many buckets to evict when the cap is hit
 
-# ── CloudFlare TLS client ─────────────────────────────────────────────────────
-# Used by: Megapeer, TorrentBy, Bitru, Mazepa, Anistar, Anifilm
-# Available profiles: chrome_146, chrome_133, chrome_144, firefox_117
+# ── FlareSolverr (CloudFlare bypass) ──────────────────────────────────────────
+# Solve CF challenges via FlareSolverr. Cookies cached 30 min per domain.
+# Used by trackers with fetchmode: "flaresolverr" (megapeer, bitru, anistar, etc.)
+# Install: https://github.com/FlareSolverr/FlareSolverr
 
-cfclient:
-  profile: "chrome_146"
-  useragent: ""   # Leave empty to use the profile's default User-Agent
+flaresolverr: ""   # e.g. "http://localhost:8191" (empty = disabled)
 
 # ── Multi-instance sync ───────────────────────────────────────────────────────
 # Pull torrent data from another jacred instance running elsewhere.
@@ -124,20 +123,23 @@ Rutor:
   reqMinute: 8
 
 # ── Megapeer ──────────────────────────────────────────────────────────────────
-# Client: CFClient (CloudFlare bypass)  |  Auth: not required
+# Client: standard or flaresolverr  |  Auth: not required
 # Supports: parse?maxpage=N
 
 Megapeer:
   host: "https://megapeer.vip"
+  fetchmode: "flaresolverr"   # CF-protected, needs FlareSolverr
   parseDelay: 3000
   reqMinute: 10
 
 # ── TorrentBy ─────────────────────────────────────────────────────────────────
-# Client: CFClient  |  Auth: not required
+# Client: standard or flaresolverr  |  Auth: not required
 # Supports: parse?page=N, updatetasksparse, parsealltask, parselatest?pages=N
 
 TorrentBy:
   host: "https://torrent.by"
+  fetchmode: "flaresolverr"   # CF-protected, needs FlareSolverr
+  insecureSkipVerify: true    # torrent.by uses certificate from unknown CA
   parseDelay: 5000
   reqMinute: 8
 
@@ -167,11 +169,12 @@ NNMClub:
   reqMinute: 8
 
 # ── Bitru ─────────────────────────────────────────────────────────────────────
-# Client: CFClient  |  Auth: not required
+# Client: standard or flaresolverr  |  Auth: not required
 # Supports: parse?page=N, updatetasksparse, parsealltask, parselatest?pages=N
 
 Bitru:
   host: "https://bitru.org"
+  fetchmode: "flaresolverr"   # CF-protected, needs FlareSolverr
   parseDelay: 3000
   reqMinute: 10
 
@@ -197,11 +200,12 @@ Toloka:
     p: ""   # your toloka.to password
 
 # ── Mazepa ────────────────────────────────────────────────────────────────────
-# Client: CFClient  |  Auth: login optional
+# Client: standard or flaresolverr  |  Auth: login optional
 # Parses 47+ categories. High parseDelay recommended.
 
 Mazepa:
   host: "https://mazepa.to"
+  fetchmode: "flaresolverr"   # CF-protected, needs FlareSolverr
   parseDelay: 10000   # many categories — be conservative
   reqMinute: 6
   login:
@@ -286,20 +290,22 @@ Knaben:
   reqMinute: 30
 
 # ── Anistar ───────────────────────────────────────────────────────────────────
-# Client: CFClient  |  Auth: not required
+# Client: standard or flaresolverr  |  Auth: not required
 # Supports: parse?limit_page=N  (0 = all pages, default 0)
 
 Anistar:
   host: "https://anistar.org"
+  fetchmode: "flaresolverr"   # CF-protected, needs FlareSolverr
   parseDelay: 3000
   reqMinute: 10
 
 # ── Anifilm ───────────────────────────────────────────────────────────────────
-# Client: CFClient  |  Auth: not required
+# Client: standard or flaresolverr  |  Auth: not required
 # Supports: parse?fullparse=false (incremental) or fullparse=true (all pages)
 
 Anifilm:
   host: "https://anifilm.pro"
+  fetchmode: "flaresolverr"   # CF-protected, needs FlareSolverr
   parseDelay: 3000
   reqMinute: 10
 

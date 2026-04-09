@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"html"
-	"io"
 	"log"
 	"net/http"
 	"net/url"
@@ -86,7 +85,7 @@ type Parser struct {
 	DB      *filedb.DB
 	DataDir string
 	Client  *http.Client
-	CF      *core.CFClient
+	Fetcher *core.Fetcher
 	loc     *time.Location
 
 	mu               sync.Mutex
@@ -110,11 +109,10 @@ func New(cfg app.Config, db *filedb.DB, dataDir string) *Parser {
 	if err != nil {
 		loc = time.FixedZone("+0200", 2*3600)
 	}
-	cf, _ := core.NewCFClientWithConfig(cfg.CFClient.Profile, cfg.CFClient.UserAgent)
 	p := &Parser{Config: cfg, DB: db, DataDir: dataDir, Client: &http.Client{
 		Timeout:   30 * time.Second,
 		Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}},
-	}, CF: cf, loc: loc, tasks: map[string][]Task{}}
+	}, Fetcher: core.NewFetcher(cfg), loc: loc, tasks: map[string][]Task{}}
 	_ = p.loadTasks()
 	return p
 }
@@ -400,35 +398,24 @@ func (p *Parser) fetchCategoryPage(ctx context.Context, cat string, page int) (s
 	return string(body), nil
 }
 
-// httpGet tries CFClient first, falls back to standard Client.
+// httpGet uses Fetcher with dynamic cookie override.
 func (p *Parser) httpGet(ctx context.Context, rawURL, cookie string) ([]byte, error) {
-	if p.CF != nil {
-		data, status, err := p.CF.Download(rawURL, cookie, "")
-		if err == nil && status >= 200 && status < 300 {
-			return data, nil
-		}
+	if p.Fetcher == nil {
+		return nil, fmt.Errorf("torrentby: Fetcher not initialized")
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36")
+	// Override cookie in tracker settings with dynamic cookie
+	ts := p.Config.TorrentBy
 	if cookie != "" {
-		req.Header.Set("Cookie", cookie)
+		ts.Cookie = cookie
 	}
-	resp, err := p.Client.Do(req)
+	data, status, err := p.Fetcher.Download(rawURL, ts)
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 5<<20))
-	if err != nil {
-		return nil, err
+	if status < 200 || status >= 300 {
+		return nil, fmt.Errorf("torrentby status %d", status)
 	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("torrentby status %d", resp.StatusCode)
-	}
-	return body, nil
+	return data, nil
 }
 
 func parsePageHTML(host, cat, htmlBody string, now time.Time) []filedb.TorrentDetails {
@@ -712,7 +699,7 @@ func parseTitle(cat, title string) (string, string, int) {
 		if m := inlineYearRe3.FindStringSubmatch(title); len(m) == 4 {
 			return strings.TrimSpace(m[1]), "", atoi(m[3])
 		}
-	case "serials":
+	case "serials", "series":
 		if m := inlineYearRe4.FindStringSubmatch(title); len(m) >= 4 {
 			return strings.TrimSpace(m[1]), strings.TrimSpace(m[2]), atoi(m[3])
 		}
@@ -759,7 +746,7 @@ func typesForCategory(cat string) []string {
 	switch cat {
 	case "films", "movies":
 		return []string{"movie"}
-	case "serials":
+	case "serials", "series":
 		return []string{"serial"}
 	case "tv", "humor":
 		return []string{"tvshow"}

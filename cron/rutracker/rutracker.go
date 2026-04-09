@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"html"
-	"io"
 	"log"
 	"net/http"
 	"net/url"
@@ -71,6 +70,7 @@ type Parser struct {
 	DB       *filedb.DB
 	DataDir  string
 	Client   *http.Client
+	Fetcher  *core.Fetcher
 	loc      *time.Location
 	mu       sync.Mutex
 	working  bool
@@ -93,7 +93,7 @@ func New(cfg app.Config, db *filedb.DB, dataDir string) *Parser {
 	if loc == nil {
 		loc = time.Local
 	}
-	p := &Parser{Config: cfg, DB: db, DataDir: dataDir, Client: &http.Client{Timeout: 35 * time.Second}, loc: loc, tasks: map[string][]Task{}}
+	p := &Parser{Config: cfg, DB: db, DataDir: dataDir, Client: &http.Client{Timeout: 35 * time.Second}, Fetcher: core.NewFetcher(cfg), loc: loc, tasks: map[string][]Task{}}
 	_ = p.loadTasks()
 	return p
 }
@@ -514,25 +514,16 @@ func (p *Parser) fetchPage(ctx context.Context, cat string, page int) (string, e
 func (p *Parser) fetchTopic(ctx context.Context, url string) (string, error) {
 	return p.fetch(ctx, url)
 }
-func (p *Parser) fetch(ctx context.Context, url string) (string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0 Safari/537.36")
+func (p *Parser) fetch(ctx context.Context, rawURL string) (string, error) {
+	ts := p.Config.Rutracker
 	if c := p.getCookie(); c != "" {
-		req.Header.Set("Cookie", c)
+		ts.Cookie = c
 	}
-	resp, err := p.Client.Do(req)
+	data, _, err := p.Fetcher.Download(rawURL, ts)
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 5<<20))
-	if err != nil {
-		return "", err
-	}
-	return core.DecodeCP1251(body), nil
+	return core.DecodeCP1251(data), nil
 }
 
 func (p *Parser) loadTasks() error {

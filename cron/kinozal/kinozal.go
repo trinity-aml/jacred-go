@@ -74,6 +74,7 @@ type Parser struct {
 	DB      *filedb.DB
 	DataDir string
 	Client  *http.Client
+	Fetcher *core.Fetcher
 	loc     *time.Location
 
 	mu               sync.Mutex
@@ -91,7 +92,7 @@ func New(cfg app.Config, db *filedb.DB, dataDir string) *Parser {
 	if loc == nil {
 		loc = time.Local
 	}
-	p := &Parser{Config: cfg, DB: db, DataDir: dataDir, Client: &http.Client{Timeout: 35 * time.Second}, loc: loc, tasks: map[string]map[string][]Task{}}
+	p := &Parser{Config: cfg, DB: db, DataDir: dataDir, Client: &http.Client{Timeout: 35 * time.Second}, Fetcher: core.NewFetcher(cfg), loc: loc, tasks: map[string]map[string][]Task{}}
 	_ = p.loadTasks()
 	return p
 }
@@ -527,25 +528,19 @@ func (p *Parser) resolveMagnet(ctx context.Context, detailURL string) (string, e
 
 func (p *Parser) fetchBrowse(ctx context.Context, cat string, page int, arg string) (string, error) {
 	rawURL := fmt.Sprintf("%s/browse.php?c=%s&page=%d%s", strings.TrimRight(requestHost(p.Config.Kinozal), "/"), cat, page, arg)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	ts := p.Config.Kinozal
+	if c := p.getCookie(); c != "" {
+		ts.Cookie = c
+	}
+	data, status, err := p.Fetcher.Download(rawURL, ts)
 	if err != nil {
 		return "", err
 	}
-	setKinozalHeaders(req, requestHost(p.Config.Kinozal), p.getCookie())
-	resp, err := p.Client.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 5<<20))
-	if err != nil {
-		return "", err
-	}
-	text := core.DecodeCP1251(body)
+	text := core.DecodeCP1251(data)
 	if !strings.Contains(text, "Кинозал") {
-		text = string(body)
+		text = string(data)
 	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+	if status < 200 || status >= 300 {
 		return "", nil
 	}
 	return text, nil

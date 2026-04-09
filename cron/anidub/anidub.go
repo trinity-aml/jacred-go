@@ -4,9 +4,7 @@ import (
 	"context"
 	"fmt"
 	"html"
-	"io"
 	"log"
-	"net/http"
 	"regexp"
 	"strconv"
 	"strings"
@@ -53,16 +51,16 @@ type ParseResult struct {
 }
 
 type Parser struct {
-	Config app.Config
-	DB     *filedb.DB
-	Client *http.Client
+	Config  app.Config
+	DB      *filedb.DB
+	Fetcher *core.Fetcher
 
 	mu      sync.Mutex
 	working bool
 }
 
 func New(cfg app.Config, db *filedb.DB) *Parser {
-	return &Parser{Config: cfg, DB: db, Client: &http.Client{Timeout: 35 * time.Second}}
+	return &Parser{Config: cfg, DB: db, Fetcher: core.NewFetcher(cfg)}
 }
 
 func (p *Parser) Parse(ctx context.Context, parseFrom, parseTo int) (ParseResult, error) {
@@ -291,44 +289,25 @@ func (p *Parser) saveTorrents(ctx context.Context, items []pendingTorrent) (int,
 }
 
 func (p *Parser) fetchText(ctx context.Context, urlv string) (string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, urlv, nil)
+	body, status, err := p.Fetcher.GetString(urlv, p.Config.Anidub)
 	if err != nil {
 		return "", err
 	}
-	req.Header.Set("User-Agent", "Mozilla/5.0")
-	resp, err := p.Client.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+	if status < 200 || status >= 300 {
 		return "", nil
 	}
-	b, err := io.ReadAll(io.LimitReader(resp.Body, 5<<20))
-	if err != nil {
-		return "", err
-	}
-	return string(b), nil
+	return body, nil
 }
 
 func (p *Parser) download(ctx context.Context, urlv, referer string) ([]byte, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, urlv, nil)
+	data, status, err := p.Fetcher.Download(urlv, p.Config.Anidub)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("User-Agent", "Mozilla/5.0")
-	if referer != "" {
-		req.Header.Set("Referer", referer)
-	}
-	resp, err := p.Client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+	if status < 200 || status >= 300 {
 		return nil, nil
 	}
-	return io.ReadAll(io.LimitReader(resp.Body, 5<<20))
+	return data, nil
 }
 
 func extractReleased(htmlBody string) int {

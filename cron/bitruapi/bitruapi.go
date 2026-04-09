@@ -33,6 +33,7 @@ type Parser struct {
 	Config  app.Config
 	DB      *filedb.DB
 	Client  *http.Client
+	Fetcher *core.Fetcher
 	DataDir string
 	mu      sync.Mutex
 	working bool
@@ -129,7 +130,7 @@ func New(cfg app.Config, db *filedb.DB, dataDir string) *Parser {
 	if strings.TrimSpace(dataDir) == "" {
 		dataDir = "Data"
 	}
-	return &Parser{Config: cfg, DB: db, DataDir: dataDir, Client: &http.Client{Timeout: 20 * time.Second}}
+	return &Parser{Config: cfg, DB: db, DataDir: dataDir, Client: &http.Client{Timeout: 20 * time.Second}, Fetcher: core.NewFetcher(cfg)}
 }
 
 func (p *Parser) Parse(ctx context.Context, limit int) (ParseResult, error) {
@@ -401,22 +402,14 @@ func (p *Parser) saveTorrentsAndMagnets(ctx context.Context, torrents []filedb.T
 }
 
 func (p *Parser) download(ctx context.Context, rawURL, referer string) ([]byte, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	data, status, err := p.Fetcher.Download(rawURL, p.Config.Bitru)
 	if err != nil {
 		return nil, err
 	}
-	if strings.TrimSpace(referer) != "" {
-		req.Header.Set("Referer", referer)
+	if status < 200 || status >= 300 {
+		return nil, fmt.Errorf("download status %d", status)
 	}
-	resp, err := p.Client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("download status %d", resp.StatusCode)
-	}
-	return io.ReadAll(io.LimitReader(resp.Body, 5<<20))
+	return data, nil
 }
 
 func (p *Parser) writeLastNewTor(torrents []filedb.TorrentDetails) error {

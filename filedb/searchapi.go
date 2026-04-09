@@ -158,7 +158,7 @@ func (db *DB) JackettSearch(p SearchParams) (JackettResult, error) {
 							for _, k := range fv {
 								keys[k] = struct{}{}
 							}
-							if db.limitReads() && len(keys) > db.Config.MaxReadFile {
+							if db.limitReads() && len(keys) > db.GetConfig().MaxReadFile {
 								break
 							}
 						}
@@ -208,7 +208,7 @@ func (db *DB) JackettSearch(p SearchParams) (JackettResult, error) {
 	}
 
 	items := orderTorrentValues(torrents)
-	if (!rqnum && db.Config.MergeDuplicates) || (rqnum && db.Config.MergeNumDuplicates) {
+	if (!rqnum && db.GetConfig().MergeDuplicates) || (rqnum && db.GetConfig().MergeNumDuplicates) {
 		items = mergeDuplicateMagnets(items)
 	}
 	if p.APIKey == "rus" {
@@ -275,8 +275,8 @@ func (db *DB) TorrentsSearch(p TorrentsParams) ([]TorrentDetails, error) {
 				keys = append(keys, key)
 			}
 		}
-		if db.limitReads() && len(keys) > db.Config.MaxReadFile {
-			keys = keys[:db.Config.MaxReadFile]
+		if db.limitReads() && len(keys) > db.GetConfig().MaxReadFile {
+			keys = keys[:db.GetConfig().MaxReadFile]
 		}
 	}
 	for _, key := range keys {
@@ -339,8 +339,8 @@ func (db *DB) Qualitys(name, originalname, typ string, page, take int) (map[stri
 	sort.Slice(keys, func(i, j int) bool {
 		return mdb[keys[i]].UpdateTime.After(mdb[keys[j]].UpdateTime)
 	})
-	if db.limitReads() && len(keys) > db.Config.MaxReadFile {
-		keys = keys[:db.Config.MaxReadFile]
+	if db.limitReads() && len(keys) > db.GetConfig().MaxReadFile {
+		keys = keys[:db.GetConfig().MaxReadFile]
 	}
 	result := map[string]map[int]*QualityRow{}
 	for _, key := range keys {
@@ -786,17 +786,17 @@ func filterTorrentResults(items []TorrentDetails, p TorrentsParams) []TorrentDet
 }
 
 func (db *DB) trackerAllowed(name string) bool {
-	if len(db.Config.SyncTrackers) > 0 && !containsStringFold(db.Config.SyncTrackers, name) {
+	if len(db.GetConfig().SyncTrackers) > 0 && !containsStringFold(db.GetConfig().SyncTrackers, name) {
 		return false
 	}
-	if len(db.Config.DisableTrackers) > 0 && containsStringFold(db.Config.DisableTrackers, name) {
+	if len(db.GetConfig().DisableTrackers) > 0 && containsStringFold(db.GetConfig().DisableTrackers, name) {
 		return false
 	}
 	return true
 }
 
 func (db *DB) limitReads() bool {
-	return !db.Config.Evercache.Enable || db.Config.Evercache.ValidHour > 0
+	return !db.GetConfig().Evercache.Enable || db.GetConfig().Evercache.ValidHour > 0
 }
 
 func (db *DB) limitKeysMap(keys map[string]struct{}) []string {
@@ -804,8 +804,8 @@ func (db *DB) limitKeysMap(keys map[string]struct{}) []string {
 	for key := range keys {
 		out = append(out, key)
 	}
-	if db.limitReads() && len(out) > db.Config.MaxReadFile {
-		out = out[:db.Config.MaxReadFile]
+	if db.limitReads() && len(out) > db.GetConfig().MaxReadFile {
+		out = out[:db.GetConfig().MaxReadFile]
 	}
 	return out
 }

@@ -5,6 +5,7 @@ import (
 	"crypto/md5"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/url"
@@ -37,7 +38,7 @@ func writeBareNotFound(w http.ResponseWriter) {
 }
 
 func (s *Server) handleStatsTrackers(w http.ResponseWriter, r *http.Request) {
-	if !s.Config.OpenStats {
+	if !s.GetConfig().OpenStats {
 		writeJSONArrayString(w, http.StatusOK, "[]")
 		return
 	}
@@ -77,7 +78,7 @@ func (s *Server) handleStatsTrackers(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleStatsTorrentsEx(w http.ResponseWriter, r *http.Request) {
-	if !s.Config.OpenStats {
+	if !s.GetConfig().OpenStats {
 		writeJSONArrayString(w, http.StatusOK, "[]")
 		return
 	}
@@ -157,7 +158,7 @@ func (s *Server) handleSyncConf(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleSyncFdb(w http.ResponseWriter, r *http.Request) {
-	if !s.Config.OpenSync {
+	if !s.GetConfig().OpenSync {
 		writeJSONArrayString(w, http.StatusOK, "[]")
 		return
 	}
@@ -226,7 +227,7 @@ func (s *Server) handleSyncFdbTorrents(w http.ResponseWriter, r *http.Request) {
 	}
 	spidr := parseBool(firstQuery(q, "spidr", "spider"))
 
-	if !s.Config.OpenSync || ft == 0 {
+	if !s.GetConfig().OpenSync || ft == 0 {
 		writeCanonicalJSON(w, http.StatusOK, map[string]any{
 			"collections": []any{},
 			"nextread":    false,
@@ -271,7 +272,7 @@ func (s *Server) handleSyncFdbTorrents(w http.ResponseWriter, r *http.Request) {
 			if t == nil {
 				continue
 			}
-			if !trackerAllowedByConfig(s.Config.DisableTrackers, asString(t["trackerName"])) {
+			if !trackerAllowedByConfig(s.GetConfig().DisableTrackers, asString(t["trackerName"])) {
 				continue
 			}
 
@@ -314,7 +315,7 @@ func (s *Server) handleSyncTorrents(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	ft, _ := strconv.ParseInt(firstQuery(q, "time", "fileTime"), 10, 64)
 	ft = filedb.NormalizeFileTime(ft)
-	if !s.Config.OpenSyncV1 || ft == 0 {
+	if !s.GetConfig().OpenSyncV1 || ft == 0 {
 		writeJSON(w, http.StatusOK, []any{})
 		return
 	}
@@ -339,7 +340,7 @@ func (s *Server) handleSyncTorrents(w http.ResponseWriter, r *http.Request) {
 		sort.Strings(keys)
 		for _, k := range keys {
 			t := bucket[k]
-			if t == nil || !trackerAllowedByConfig(s.Config.DisableTrackers, asString(t["trackerName"])) {
+			if t == nil || !trackerAllowedByConfig(s.GetConfig().DisableTrackers, asString(t["trackerName"])) {
 				continue
 			}
 			if trackerName != "" && !strings.EqualFold(asString(t["trackerName"]), trackerName) {
@@ -377,7 +378,7 @@ func (s *Server) handleJSONDBSave(w http.ResponseWriter, r *http.Request) {
 		writePlainUTF8(w, http.StatusOK, "work")
 		return
 	}
-	if strings.TrimSpace(s.Config.SyncAPI) != "" {
+	if strings.TrimSpace(s.GetConfig().SyncAPI) != "" {
 		writePlainUTF8(w, http.StatusOK, "syncapi")
 		return
 	}
@@ -1467,7 +1468,7 @@ func (s *Server) handleStatsRefresh(w http.ResponseWriter, r *http.Request) {
 
 // RunStatsLoop periodically generates Data/temp/stats.json.
 func (s *Server) RunStatsLoop(ctx context.Context) {
-	interval := time.Duration(s.Config.TimeStatsUpdate) * time.Minute
+	interval := time.Duration(s.GetConfig().TimeStatsUpdate) * time.Minute
 	if interval <= 0 {
 		interval = 60 * time.Minute
 	}
@@ -1491,7 +1492,7 @@ func (s *Server) RunStatsLoop(ctx context.Context) {
 }
 
 func (s *Server) generateStatsFile() {
-	if !s.Config.OpenStats {
+	if !s.GetConfig().OpenStats {
 		return
 	}
 	start := time.Now()
@@ -1610,4 +1611,130 @@ func (s *Server) generateStatsFile() {
 	log.Printf("stats: generated in %dms, trackers=%d", time.Since(start).Milliseconds(), len(trackers))
 	// Release memory held by all the bucket maps we just scanned.
 	runtime.GC()
+}
+
+// handleDevTestFetch performs a diagnostic fetch of a tracker page and reports results.
+// Usage: /dev/testfetch?tracker=megapeer
+func (s *Server) handleDevTestFetch(w http.ResponseWriter, r *http.Request) {
+	tracker := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("tracker")))
+	if tracker == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "tracker param required"})
+		return
+	}
+	cfg := s.GetConfig()
+	var host, cookie, alias string
+	switch tracker {
+	case "megapeer":
+		host = cfg.Megapeer.Host
+		cookie = cfg.Megapeer.Cookie
+		alias = cfg.Megapeer.Alias
+	case "bitru":
+		host = cfg.Bitru.Host
+		cookie = cfg.Bitru.Cookie
+		alias = cfg.Bitru.Alias
+	case "rutor":
+		host = cfg.Rutor.Host
+		cookie = cfg.Rutor.Cookie
+		alias = cfg.Rutor.Alias
+	case "torrentby":
+		host = cfg.TorrentBy.Host
+		cookie = cfg.TorrentBy.Cookie
+		alias = cfg.TorrentBy.Alias
+	default:
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown tracker: " + tracker})
+		return
+	}
+
+	testURL := strings.TrimRight(host, "/") + "/"
+	if alias != "" {
+		testURL = strings.TrimRight(alias, "/") + "/"
+	}
+
+	hasCookie := cookie != ""
+	cookiePreview := ""
+	if hasCookie && len(cookie) > 30 {
+		cookiePreview = cookie[:30] + "..."
+	} else if hasCookie {
+		cookiePreview = cookie
+	}
+
+	cfUA := cfg.CFClient.UserAgent
+	if cfUA == "" {
+		cfUA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36"
+	}
+	if qUA := r.URL.Query().Get("ua"); qUA != "" {
+		cfUA = qUA
+	}
+
+	// nocookie=true → test without cookie to check if CF blocks the IP itself
+	if r.URL.Query().Get("nocookie") == "true" {
+		cookie = ""
+		hasCookie = false
+	}
+
+	cf, _ := core.NewCFClientWithConfig(cfg.CFClient.Profile, cfUA)
+	result := map[string]any{
+		"tracker":       tracker,
+		"host":          host,
+		"alias":         alias,
+		"testURL":       testURL,
+		"hasCookie":     hasCookie,
+		"cookiePreview": cookiePreview,
+		"cfProfile":     cfg.CFClient.Profile,
+		"userAgent":     cfUA,
+	}
+
+	if cf != nil {
+		body, status, err := cf.Get(testURL, cookie, testURL)
+		errStr := ""
+		if err != nil {
+			errStr = err.Error()
+		}
+		snippet := ""
+		if len(body) > 300 {
+			snippet = body[:300]
+		} else {
+			snippet = body
+		}
+		result["cfClient"] = map[string]any{
+			"status":  status,
+			"bodyLen": len(body),
+			"error":   errStr,
+			"snippet": snippet,
+		}
+	}
+
+	// Also test with standard http.Client + cookie
+	if hasCookie {
+		client := &http.Client{Timeout: 15 * time.Second}
+		req, _ := http.NewRequestWithContext(r.Context(), http.MethodGet, testURL, nil)
+		req.Header.Set("User-Agent", cfUA)
+		req.Header.Set("Cookie", cookie)
+		resp, err := client.Do(req)
+		errStr := ""
+		if err != nil {
+			errStr = err.Error()
+		}
+		if resp != nil {
+			defer resp.Body.Close()
+			b, _ := io.ReadAll(io.LimitReader(resp.Body, 5<<20))
+			body := string(b)
+			snippet := ""
+			if len(body) > 300 {
+				snippet = body[:300]
+			} else {
+				snippet = body
+			}
+			result["stdClient"] = map[string]any{
+				"status":  resp.StatusCode,
+				"bodyLen": len(body),
+				"error":   errStr,
+				"snippet": snippet,
+			}
+		} else if errStr != "" {
+			result["stdClient"] = map[string]any{"error": errStr}
+		}
+	}
+
+	writeJSON(w, http.StatusOK, result)
 }

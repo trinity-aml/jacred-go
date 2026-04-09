@@ -146,6 +146,20 @@ func (c *CFClient) Download(rawURL, cookie, referer string) ([]byte, int, error)
 
 func (c *CFClient) setBrowserHeaders(req *http.Request, cookie, referer string) {
 	isChrome := strings.Contains(c.userAgent, "Chrome")
+	// Determine Sec-Fetch-Site from referer
+	fetchSite := "none"
+	if strings.TrimSpace(referer) != "" {
+		// same-origin if referer host matches request host
+		if reqHost := req.URL.Host; reqHost != "" {
+			refLower := strings.ToLower(referer)
+			if strings.Contains(refLower, "://"+strings.ToLower(reqHost)) {
+				fetchSite = "same-origin"
+			} else {
+				fetchSite = "cross-site"
+			}
+		}
+	}
+
 	req.Header = http.Header{
 		"User-Agent":                {c.userAgent},
 		"Accept":                    {"text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8"},
@@ -153,7 +167,10 @@ func (c *CFClient) setBrowserHeaders(req *http.Request, cookie, referer string) 
 		"Accept-Encoding":           {"gzip, deflate, br"},
 		"Sec-Fetch-Dest":            {"document"},
 		"Sec-Fetch-Mode":            {"navigate"},
-		"Sec-Fetch-Site":            {"none"},
+		"Sec-Fetch-Site":            {fetchSite},
+		"DNT":                       {"1"},
+		"Pragma":                    {"no-cache"},
+		"Cache-Control":             {"no-cache"},
 		"Upgrade-Insecure-Requests": {"1"},
 		"Connection":                {"keep-alive"},
 	}
@@ -173,6 +190,7 @@ func (c *CFClient) setBrowserHeaders(req *http.Request, cookie, referer string) 
 		req.Header[http.HeaderOrderKey] = []string{
 			"user-agent", "accept", "accept-language", "accept-encoding",
 			"sec-ch-ua", "sec-ch-ua-mobile", "sec-ch-ua-platform",
+			"dnt", "pragma", "cache-control",
 			"cookie", "referer", "content-type",
 			"sec-fetch-dest", "sec-fetch-mode", "sec-fetch-site", "sec-fetch-user",
 			"upgrade-insecure-requests", "connection",
@@ -180,6 +198,7 @@ func (c *CFClient) setBrowserHeaders(req *http.Request, cookie, referer string) 
 	} else {
 		req.Header[http.HeaderOrderKey] = []string{
 			"user-agent", "accept", "accept-language", "accept-encoding",
+			"dnt", "pragma", "cache-control",
 			"cookie", "referer", "content-type",
 			"sec-fetch-dest", "sec-fetch-mode", "sec-fetch-site",
 			"upgrade-insecure-requests", "connection",

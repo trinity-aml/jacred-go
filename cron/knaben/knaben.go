@@ -60,6 +60,7 @@ type Parser struct {
 	Config  app.Config
 	DB      *filedb.DB
 	Client  *http.Client
+	Fetcher *core.Fetcher
 	mu      sync.Mutex
 	working bool
 }
@@ -105,7 +106,7 @@ type hit struct {
 }
 
 func New(cfg app.Config, db *filedb.DB) *Parser {
-	return &Parser{Config: cfg, DB: db, Client: &http.Client{Timeout: 20 * time.Second}}
+	return &Parser{Config: cfg, DB: db, Client: &http.Client{Timeout: 20 * time.Second}, Fetcher: core.NewFetcher(cfg)}
 }
 
 func (p *Parser) Parse(ctx context.Context, from, size, pages int, query string, hours int, orderBy, categoriesRaw string) (ParseResult, error) {
@@ -278,22 +279,14 @@ func (p *Parser) saveTorrents(ctx context.Context, torrents []filedb.TorrentDeta
 }
 
 func (p *Parser) download(ctx context.Context, rawURL, referer string) ([]byte, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	data, status, err := p.Fetcher.Download(rawURL, p.Config.Knaben)
 	if err != nil {
 		return nil, err
 	}
-	if strings.TrimSpace(referer) != "" {
-		req.Header.Set("Referer", referer)
+	if status < 200 || status >= 300 {
+		return nil, fmt.Errorf("download status %d", status)
 	}
-	resp, err := p.Client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("download status %d", resp.StatusCode)
-	}
-	return io.ReadAll(io.LimitReader(resp.Body, 5<<20))
+	return data, nil
 }
 
 

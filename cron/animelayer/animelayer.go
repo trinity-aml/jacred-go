@@ -52,9 +52,9 @@ type ParseResult struct {
 }
 
 type Parser struct {
-	Config app.Config
-	DB     *filedb.DB
-	Client *http.Client
+	Config  app.Config
+	DB      *filedb.DB
+	Fetcher *core.Fetcher
 
 	mu               sync.Mutex
 	working          bool
@@ -64,7 +64,7 @@ type Parser struct {
 }
 
 func New(cfg app.Config, db *filedb.DB) *Parser {
-	return &Parser{Config: cfg, DB: db, Client: &http.Client{Timeout: 30 * time.Second}}
+	return &Parser{Config: cfg, DB: db, Fetcher: core.NewFetcher(cfg)}
 }
 
 func (p *Parser) Parse(ctx context.Context, maxpage int) (ParseResult, error) {
@@ -336,50 +336,33 @@ func (p *Parser) takeLogin(ctx context.Context) (string, error) {
 }
 
 func (p *Parser) fetchHTML(ctx context.Context, rawURL, cookie string) (string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	ts := p.Config.Animelayer
+	if cookie != "" {
+		ts.Cookie = cookie
+	}
+	body, status, err := p.Fetcher.GetString(rawURL, ts)
 	if err != nil {
 		return "", err
 	}
-	req.Header.Set("User-Agent", userAgent)
-	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-	req.Header.Set("Accept-Language", "en-US,en;q=0.5")
-	if strings.TrimSpace(cookie) != "" {
-		req.Header.Set("Cookie", cookie)
-	}
-	resp, err := p.Client.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+	if status < 200 || status >= 300 {
 		return "", nil
 	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 5<<20))
-	if err != nil {
-		return "", err
-	}
-	return string(body), nil
+	return body, nil
 }
 
 func (p *Parser) downloadTorrent(ctx context.Context, rawURL, cookie string) ([]byte, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	ts := p.Config.Animelayer
+	if cookie != "" {
+		ts.Cookie = cookie
+	}
+	data, status, err := p.Fetcher.Download(rawURL, ts)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("User-Agent", userAgent)
-	req.Header.Set("Accept", "*/*")
-	if strings.TrimSpace(cookie) != "" {
-		req.Header.Set("Cookie", cookie)
-	}
-	resp, err := p.Client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+	if status < 200 || status >= 300 {
 		return nil, nil
 	}
-	return io.ReadAll(io.LimitReader(resp.Body, 5<<20))
+	return data, nil
 }
 
 func ensureHTTPS(host string) string {

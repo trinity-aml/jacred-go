@@ -4,9 +4,7 @@ import (
 	"context"
 	"fmt"
 	"html"
-	"io"
 	"log"
-	"net/http"
 	"regexp"
 	"strconv"
 	"strings"
@@ -52,8 +50,7 @@ var categories = []string{"80", "79", "6", "5", "55", "57", "76"}
 type Parser struct {
 	Config  app.Config
 	DB      *filedb.DB
-	Client  *http.Client
-	CF      *core.CFClient
+	Fetcher *core.Fetcher
 	mu      sync.Mutex
 	working bool
 	browse  sync.Mutex
@@ -66,8 +63,7 @@ type ParseResult struct {
 }
 
 func New(cfg app.Config, db *filedb.DB) *Parser {
-	cf, _ := core.NewCFClientWithConfig(cfg.CFClient.Profile, cfg.CFClient.UserAgent)
-	return &Parser{Config: cfg, DB: db, Client: &http.Client{Timeout: 30 * time.Second}, CF: cf}
+	return &Parser{Config: cfg, DB: db, Fetcher: core.NewFetcher(cfg)}
 }
 
 func (p *Parser) Parse(ctx context.Context, maxpage int) (ParseResult, error) {
@@ -86,6 +82,9 @@ func (p *Parser) Parse(ctx context.Context, maxpage int) (ParseResult, error) {
 	if strings.TrimSpace(p.Config.Megapeer.Host) == "" {
 		return ParseResult{Status: "config missing"}, nil
 	}
+	if strings.TrimSpace(p.Config.Megapeer.Cookie) == "" {
+		log.Printf("megapeer: warning: cookie is empty, CF-protected pages will fail")
+	}
 	if maxpage <= 0 {
 		maxpage = 1
 	}
@@ -94,7 +93,8 @@ func (p *Parser) Parse(ctx context.Context, maxpage int) (ParseResult, error) {
 		for page := 0; page < maxpage; page++ {
 			items, err := p.fetchPage(ctx, cat, page)
 			if err != nil {
-				return res, err
+				log.Printf("megapeer: cat=%s page=%d error: %v", cat, page+1, err)
+				break // skip to next category
 			}
 			res.Fetched += len(items)
 			res.PerCategory[cat] += len(items)
@@ -139,41 +139,24 @@ func (p *Parser) fetchPage(ctx context.Context, cat string, page int) ([]filedb.
 func (p *Parser) getBrowsePage(ctx context.Context, rawURL, cat string) (string, error) {
 	p.browse.Lock()
 	defer p.browse.Unlock()
-	cookie := strings.TrimSpace(p.Config.Megapeer.Cookie)
 
-	// Try CFClient first, then standard http.Client
-	for attempt := 1; attempt <= 2; attempt++ {
-		var data []byte
-		var status int
-		var err error
-
-		if attempt == 1 && p.CF != nil {
-			data, status, err = p.CF.Download(rawURL, cookie, "")
-		} else {
-			req, reqErr := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
-			if reqErr != nil {
-				return "", reqErr
-			}
-			req.Header.Set("User-Agent", "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:148.0) Gecko/20100101 Firefox/148.0")
-			if cookie != "" {
-				req.Header.Set("Cookie", cookie)
-			}
-			resp, doErr := p.Client.Do(req)
-			if doErr != nil {
-				err = doErr
-			} else {
-				data, _ = io.ReadAll(io.LimitReader(resp.Body, 5<<20))
-				resp.Body.Close()
-				status = resp.StatusCode
-			}
-		}
+	for attempt := 0; attempt < 2; attempt++ {
+		data, status, err := p.Fetcher.Download(rawURL, p.Config.Megapeer)
 		if err != nil {
-			continue
+			log.Printf("megapeer: fetch error url=%s err=%v", rawURL, err)
+			return "", nil
 		}
 		body := core.DecodeCP1251(data)
 		if status >= 200 && status < 300 && strings.Contains(body, browsePageValidMarker) {
 			return body, nil
 		}
+		// CF block (403 or challenge page without marker) — invalidate and retry once
+		if attempt == 0 {
+			log.Printf("megapeer: invalid response status=%d hasMarker=%v bodyLen=%d url=%s — invalidating session, retry", status, strings.Contains(body, browsePageValidMarker), len(body), rawURL)
+			p.Fetcher.InvalidateSession(rawURL)
+			continue
+		}
+		log.Printf("megapeer: retry failed status=%d hasMarker=%v bodyLen=%d url=%s", status, strings.Contains(body, browsePageValidMarker), len(body), rawURL)
 	}
 	return "", nil
 }
@@ -213,10 +196,6 @@ func parsePageHTML(host, cat, body string) []filedb.TorrentDetails {
 		if pirRaw == "" {
 			pirRaw = reFind(mp9Re, 1)
 		}
-		downloadID := reFind(mp10Re, 1)
-		if downloadID == "" {
-			continue
-		}
 		name, original, relased := parseTitle(cat, title)
 		if strings.TrimSpace(name) == "" {
 			name = fallbackName(title)
@@ -240,7 +219,6 @@ func parsePageHTML(host, cat, body string) []filedb.TorrentDetails {
 			Name: name,
 			OriginalName: original,
 			Relased: relased,
-			DownloadID: downloadID,
 			SearchName: core.SearchName(name),
 			SearchOrig: core.SearchName(firstNonEmpty(original, name)),
 		}.ToMap())
@@ -283,7 +261,7 @@ func (p *Parser) saveTorrents(ctx context.Context, torrents []filedb.TorrentDeta
 		}
 		needMagnet := !exists || strings.TrimSpace(asString(existing["title"])) != strings.TrimSpace(asString(incoming["title"])) || strings.TrimSpace(asString(existing["magnet"])) == ""
 		if needMagnet {
-			magnet, err := p.downloadMagnet(ctx, asString(incoming["downloadId"]))
+			magnet, err := p.downloadMagnet(ctx, urlv)
 			if err != nil || strings.TrimSpace(magnet) == "" {
 				plog.WriteFailed(urlv, asString(incoming["title"]))
 				failed++
@@ -291,7 +269,6 @@ func (p *Parser) saveTorrents(ctx context.Context, torrents []filedb.TorrentDeta
 			}
 			incoming["magnet"] = magnet
 		}
-		delete(incoming, "downloadId")
 		var ex filedb.TorrentDetails
 		if exists {
 			ex = existing
@@ -319,47 +296,27 @@ func (p *Parser) saveTorrents(ctx context.Context, torrents []filedb.TorrentDeta
 	return added, updated, skipped, failed, nil
 }
 
-func (p *Parser) downloadMagnet(ctx context.Context, downloadID string) (string, error) {
-	if strings.TrimSpace(downloadID) == "" {
+var magnetRe = regexp.MustCompile(`(?i)href="(magnet:\?[^"]+)"`)
+
+func (p *Parser) downloadMagnet(ctx context.Context, torrentURL string) (string, error) {
+	if strings.TrimSpace(torrentURL) == "" {
 		return "", nil
 	}
-	rawURL := strings.TrimRight(p.Config.Megapeer.Host, "/") + "/download/" + strings.TrimSpace(downloadID)
-	cookie := strings.TrimSpace(p.Config.Megapeer.Cookie)
 
-	// Try CFClient first, then standard
-	for attempt := 1; attempt <= 2; attempt++ {
-		var data []byte
-		var status int
-		var err error
-
-		if attempt == 1 && p.CF != nil {
-			data, status, err = p.CF.Download(rawURL, cookie, "")
-		} else {
-			req, reqErr := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
-			if reqErr != nil {
-				return "", reqErr
-			}
-			req.Header.Set("User-Agent", "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:148.0) Gecko/20100101 Firefox/148.0")
-			if cookie != "" {
-				req.Header.Set("Cookie", cookie)
-			}
-			resp, doErr := p.Client.Do(req)
-			if doErr != nil {
-				err = doErr
-			} else {
-				data, _ = io.ReadAll(io.LimitReader(resp.Body, 5<<20))
-				resp.Body.Close()
-				status = resp.StatusCode
-			}
-		}
-		if err != nil {
-			continue
-		}
-		if status >= 200 && status < 300 {
-			return core.TorrentBytesToMagnet(data), nil
-		}
+	data, status, err := p.Fetcher.Download(torrentURL, p.Config.Megapeer)
+	if err != nil {
+		return "", fmt.Errorf("magnet page failed for %s: %w", torrentURL, err)
 	}
-	return "", fmt.Errorf("download failed for %s", downloadID)
+	if status < 200 || status >= 300 {
+		return "", fmt.Errorf("magnet page status=%d for %s", status, torrentURL)
+	}
+	body := core.DecodeCP1251(data)
+
+	m := magnetRe.FindStringSubmatch(body)
+	if len(m) < 2 {
+		return "", fmt.Errorf("magnet not found on page %s", torrentURL)
+	}
+	return html.UnescapeString(m[1]), nil
 }
 
 func parseTitle(cat, title string) (string, string, int) {

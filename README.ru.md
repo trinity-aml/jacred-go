@@ -119,15 +119,23 @@ gcpercent: 50    # Go GOGC: 50 = GC при +50% роста кучи (по умо
 
 `memlimit: 0` отключает жёсткий лимит (поведение Go по умолчанию).
 
-### CloudFlare TLS-клиент
+### FlareSolverr (обход CloudFlare)
 
-Используется трекерами, требующими TLS-отпечаток Chrome/Firefox (anistar, anifilm, bitru, megapeer, mazepa, torrentby).
+Для трекеров, защищённых CloudFlare (megapeer, bitru, anistar, anifilm, torrentby, mazepa), можно использовать [FlareSolverr](https://github.com/FlareSolverr/FlareSolverr) для решения CF-challenge. FlareSolverr вызывается один раз на домен, куки кешируются на 30 минут, все последующие запросы используют стандартный HTTP с кешированными куками.
 
 ```yaml
-cfclient:
-  profile: "chrome_146"      # TLS-профиль: chrome_146, chrome_133, chrome_144, firefox_117
-  useragent: ""              # Переопределить User-Agent (пусто = по умолчанию профиля)
+flaresolverr: "http://localhost:8191"   # Эндпоинт FlareSolverr (пусто = отключено)
 ```
+
+Включается для каждого трекера через `fetchmode`:
+
+```yaml
+Megapeer:
+  fetchmode: "flaresolverr"   # "standard" (по умолчанию) или "flaresolverr"
+  host: "https://megapeer.vip"
+```
+
+Если ответ — CF challenge-страница (403 или отсутствие маркера контента), сессия автоматически сбрасывается и FlareSolverr повторно решает challenge.
 
 ### Evercache (кэш bucket-ов в памяти)
 

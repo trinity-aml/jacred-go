@@ -112,7 +112,7 @@ type Parser struct {
 	DB       *filedb.DB
 	DataDir  string
 	Client   *http.Client
-	CF       *core.CFClient
+	Fetcher  *core.Fetcher
 	mu       sync.Mutex
 	working  bool
 	allWork  bool
@@ -129,16 +129,12 @@ type ParseResult struct {
 }
 
 func New(cfg app.Config, db *filedb.DB, dataDir string) *Parser {
-	cf, err := core.NewCFClientWithConfig(cfg.CFClient.Profile, cfg.CFClient.UserAgent)
-	if err != nil {
-		log.Printf("mazepa: CFClient init error: %v", err)
-	}
 	p := &Parser{Config: cfg, DB: db, DataDir: dataDir, Client: &http.Client{
 		Timeout: 30 * time.Second,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			return http.ErrUseLastResponse
 		},
-	}, CF: cf}
+	}, Fetcher: core.NewFetcher(cfg)}
 	_ = p.loadTasks()
 	return p
 }
@@ -648,10 +644,15 @@ func (p *Parser) saveTorrents(torrents []filedb.TorrentDetails) (int, int, int, 
 }
 
 func (p *Parser) httpGet(ctx context.Context, rawURL string) (string, error) {
-	if p.CF == nil {
-		return "", fmt.Errorf("mazepa: CFClient not initialized")
+	if p.Fetcher == nil {
+		return "", fmt.Errorf("mazepa: Fetcher not initialized")
 	}
-	body, status, err := p.CF.Get(rawURL, p.getCookie(), "")
+	// Override cookie in tracker settings with dynamic login cookie
+	ts := p.Config.Mazepa
+	if c := p.getCookie(); c != "" {
+		ts.Cookie = c
+	}
+	body, status, err := p.Fetcher.GetString(rawURL, ts)
 	if err != nil {
 		return "", err
 	}

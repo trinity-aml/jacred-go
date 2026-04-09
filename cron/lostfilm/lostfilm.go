@@ -6,7 +6,6 @@ import (
 	"html"
 	"io"
 	"log"
-	"net/http"
 	"net/url"
 	"regexp"
 	"sort"
@@ -44,9 +43,9 @@ var (
 )
 
 type Parser struct {
-	Config app.Config
-	DB     *filedb.DB
-	Client *http.Client
+	Config  app.Config
+	DB      *filedb.DB
+	Fetcher *core.Fetcher
 
 	mu      sync.Mutex
 	working bool
@@ -99,7 +98,7 @@ type pageCounters struct {
 }
 
 func New(cfg app.Config, db *filedb.DB) *Parser {
-	return &Parser{Config: cfg, DB: db, Client: &http.Client{Timeout: 45 * time.Second}}
+	return &Parser{Config: cfg, DB: db, Fetcher: core.NewFetcher(cfg)}
 }
 
 func (p *Parser) Parse(ctx context.Context) (ParseResult, error) {
@@ -848,26 +847,18 @@ func (p *Parser) fetchText(ctx context.Context, rawURL, cookie, referer string) 
 }
 
 func (p *Parser) fetchBytes(ctx context.Context, rawURL, cookie, referer string) ([]byte, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	ts := p.Config.Lostfilm
+	if cookie != "" {
+		ts.Cookie = cookie
+	}
+	data, status, err := p.Fetcher.Download(rawURL, ts)
 	if err != nil {
 		return nil, err
 	}
-	if strings.TrimSpace(cookie) != "" {
-		req.Header.Set("Cookie", cookie)
+	if status < 200 || status >= 300 {
+		return nil, fmt.Errorf("status %d", status)
 	}
-	if strings.TrimSpace(referer) != "" {
-		req.Header.Set("Referer", referer)
-	}
-	req.Header.Set("User-Agent", "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:148.0) Gecko/20100101 Firefox/148.0")
-	resp, err := p.Client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("status %d", resp.StatusCode)
-	}
-	return io.ReadAll(io.LimitReader(resp.Body, 5<<20))
+	return data, nil
 }
 
 func buildHorBreakerNameMap(htmlBody string) map[string][2]string {

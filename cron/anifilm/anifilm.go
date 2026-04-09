@@ -2,9 +2,13 @@ package anifilm
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"html"
+	"io"
 	"log"
+	"net/http"
+	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
@@ -22,13 +26,18 @@ const trackerName = "anifilm"
 
 var catPages = []struct {
 	cat      string
+	types    []string
 	fullMax  int
 	quickMax int
 }{
-	{"serials", 70, 2},
-	{"ova", 32, 2},
-	{"ona", 2, 2},
-	{"movies", 17, 2},
+	{"serials", []string{"anime"}, 70, 2},
+	{"ova", []string{"anime"}, 32, 2},
+	{"ona", []string{"anime"}, 2, 2},
+	{"movies", []string{"anime"}, 17, 2},
+	{"dorams", []string{"serial"}, 10, 2},
+	{"special", []string{"anime"}, 5, 2},
+	{"hentai", []string{"anime"}, 5, 2},
+	{"short-serials", []string{"anime"}, 5, 2},
 }
 
 var (
@@ -41,15 +50,22 @@ var (
 	yearAltRe    = regexp.MustCompile(`(?i)table-list__value[^>]*>[^<]*(\d{4})`)
 	tidRe        = regexp.MustCompile(`(?i)href="/(releases/download-torrent/[0-9]+)"[^>]*>скачать</a>`)
 	cleanSpaceRe = regexp.MustCompile(`[\n\r\t ]+`)
+	csrfInputRe = regexp.MustCompile(`(?i)<input[^>]+name="([^"]*CSRF[^"]*)"[^>]+value="([^"]+)"`)
+	csrfInputRe2 = regexp.MustCompile(`(?i)<input[^>]+value="([^"]+)"[^>]+name="([^"]*CSRF[^"]*)"`)
 )
 
 type Parser struct {
 	Config  app.Config
 	DB      *filedb.DB
 	DataDir string
-	CF      *core.CFClient
+	Fetcher *core.Fetcher
+	Client  *http.Client
 	mu      sync.Mutex
 	working bool
+
+	cookieMu         sync.Mutex
+	dynCookie        string
+	lastLoginAttempt time.Time
 }
 
 type ParseResult struct {
@@ -58,11 +74,19 @@ type ParseResult struct {
 }
 
 func New(cfg app.Config, db *filedb.DB, dataDir string) *Parser {
-	cf, err := core.NewCFClientWithConfig(cfg.CFClient.Profile, cfg.CFClient.UserAgent)
-	if err != nil {
-		log.Printf("anifilm: CFClient init error: %v", err)
+	return &Parser{
+		Config:  cfg,
+		DB:      db,
+		DataDir: dataDir,
+		Fetcher: core.NewFetcher(cfg),
+		Client: &http.Client{
+			Timeout:   20 * time.Second,
+			Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}},
+			CheckRedirect: func(req *http.Request, via []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
+		},
 	}
-	return &Parser{Config: cfg, DB: db, DataDir: dataDir, CF: cf}
 }
 
 func (p *Parser) Parse(ctx context.Context, fullparse bool) (ParseResult, error) {
@@ -79,6 +103,8 @@ func (p *Parser) Parse(ctx context.Context, fullparse bool) (ParseResult, error)
 	if host == "" {
 		return ParseResult{Status: "config missing"}, nil
 	}
+
+	p.ensureLogin(ctx)
 
 	res := ParseResult{Status: "ok"}
 
@@ -101,7 +127,7 @@ func (p *Parser) Parse(ctx context.Context, fullparse bool) (ParseResult, error)
 				createTime = time.Now().UTC().AddDate(0, 0, -(2 * page))
 			}
 
-			items, err := p.fetchPage(ctx, host, cp.cat, page, createTime)
+			items, err := p.fetchPage(ctx, host, cp.cat, cp.types, page, createTime)
 			if err != nil {
 				continue
 			}
@@ -119,13 +145,14 @@ func (p *Parser) Parse(ctx context.Context, fullparse bool) (ParseResult, error)
 			res.Updated += u
 			res.Skipped += s
 			res.Failed += f
+			log.Printf("anifilm: cat=%s page %d/%d fetched=%d added=%d skipped=%d failed=%d", cp.cat, page, maxPage, len(items), a, s, f)
 		}
 	}
 	log.Printf("anifilm: done fetched=%d added=%d skipped=%d failed=%d", res.Fetched, res.Added, res.Skipped, res.Failed)
 	return res, nil
 }
 
-func (p *Parser) fetchPage(ctx context.Context, host, cat string, page int, createTime time.Time) ([]filedb.TorrentDetails, error) {
+func (p *Parser) fetchPage(ctx context.Context, host, cat string, types []string, page int, createTime time.Time) ([]filedb.TorrentDetails, error) {
 	pageURL := fmt.Sprintf("%s/releases/page/%d?category=%s", host, page, cat)
 	body, err := p.httpGet(ctx, pageURL, "")
 	if err != nil {
@@ -193,7 +220,7 @@ func (p *Parser) fetchPage(ctx context.Context, host, cat string, page int, crea
 
 		out = append(out, filedb.TorrentRecord{
 			TrackerName: trackerName,
-			Types: []string{"anime"},
+			Types: types,
 			URL: fullURL,
 			Title: title,
 			Sid: 1,
@@ -325,15 +352,6 @@ func (p *Parser) saveTorrents(ctx context.Context, host string, torrents []filed
 			plog.WriteAdded(urlv, asString(incoming["title"]))
 			added++
 		}
-
-		// Delay between detail page fetches
-		if p.Config.Anifilm.ParseDelay > 0 {
-			select {
-			case <-ctx.Done():
-				return added, updated, skipped, failed, ctx.Err()
-			case <-time.After(time.Duration(p.Config.Anifilm.ParseDelay) * time.Millisecond):
-			}
-		}
 	}
 	for key, when := range changed {
 		if err := p.DB.SaveBucket(key, bucketCache[key], when); err != nil {
@@ -343,12 +361,164 @@ func (p *Parser) saveTorrents(ctx context.Context, host string, torrents []filed
 	return added, updated, skipped, failed, nil
 }
 
-func (p *Parser) httpGet(_ context.Context, rawURL, referer string) (string, error) {
-	if p.CF == nil {
-		return "", fmt.Errorf("anifilm: CFClient not initialized")
+func (p *Parser) cookie() string {
+	p.cookieMu.Lock()
+	defer p.cookieMu.Unlock()
+	if p.dynCookie != "" {
+		return p.dynCookie
 	}
-	cookie := strings.TrimSpace(p.Config.Anifilm.Cookie)
-	body, status, err := p.CF.Get(rawURL, cookie, referer)
+	return strings.TrimSpace(p.Config.Anifilm.Cookie)
+}
+
+func (p *Parser) takeLogin(ctx context.Context) error {
+	p.cookieMu.Lock()
+	if time.Since(p.lastLoginAttempt) < 2*time.Minute {
+		p.cookieMu.Unlock()
+		return nil
+	}
+	p.lastLoginAttempt = time.Now()
+	p.cookieMu.Unlock()
+
+	host := strings.TrimRight(p.Config.Anifilm.Host, "/")
+	if host == "" || strings.TrimSpace(p.Config.Anifilm.Login.U) == "" {
+		return fmt.Errorf("anifilm: no host or login configured")
+	}
+	log.Printf("anifilm: attempting login to %s as %s", host, p.Config.Anifilm.Login.U)
+
+	// If flaresolverr mode, get CF cookies first
+	var flareCookie, flareUA string
+	if strings.EqualFold(strings.TrimSpace(p.Config.Anifilm.FetchMode), "flaresolverr") && p.Fetcher != nil {
+		flareCookie, flareUA = p.Fetcher.GetFlareCookies(host + "/")
+		if flareCookie != "" {
+			log.Printf("anifilm: using flaresolverr cookies for login")
+		}
+	}
+	ua := "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+	if flareUA != "" {
+		ua = flareUA
+	}
+
+	// Step 1: GET login page to obtain CSRF token cookie
+	loginPageURL := host + "/account/login"
+	getReq, err := http.NewRequestWithContext(ctx, http.MethodGet, loginPageURL, nil)
+	if err != nil {
+		return err
+	}
+	getReq.Header.Set("User-Agent", ua)
+	if flareCookie != "" {
+		getReq.Header.Set("Cookie", flareCookie)
+	}
+	getResp, err := p.Client.Do(getReq)
+	if err != nil {
+		log.Printf("anifilm: login page error: %v", err)
+		return err
+	}
+	pageBody, _ := io.ReadAll(io.LimitReader(getResp.Body, 512*1024))
+	getResp.Body.Close()
+
+	// Collect all cookies: flare + login page Set-Cookie
+	allCookies := flareCookie
+	for _, line := range getResp.Header.Values("Set-Cookie") {
+		part := strings.TrimSpace(strings.SplitN(line, ";", 2)[0])
+		if part != "" {
+			allCookies = core.MergeCookieStrings(allCookies, part)
+		}
+	}
+
+	// Extract CSRF token from HTML: <input name="*CSRF*" value="...">
+	csrfName, csrfToken := "", ""
+	pageHTML := string(pageBody)
+	if m := csrfInputRe.FindStringSubmatch(pageHTML); len(m) > 2 {
+		csrfName = m[1]
+		csrfToken = html.UnescapeString(m[2])
+	} else if m := csrfInputRe2.FindStringSubmatch(pageHTML); len(m) > 2 {
+		csrfName = m[2]
+		csrfToken = html.UnescapeString(m[1])
+	}
+	if csrfToken != "" {
+		log.Printf("anifilm: found CSRF field %s", csrfName)
+	} else {
+		log.Printf("anifilm: CSRF token not found in login page")
+		return fmt.Errorf("anifilm: CSRF token not found")
+	}
+	log.Printf("anifilm: login page status=%d", getResp.StatusCode)
+
+	// Step 2: POST login as form (Yii expects form POST, not JSON)
+	form := url.Values{}
+	form.Set(csrfName, csrfToken)
+	form.Set("LoginForm[username]", p.Config.Anifilm.Login.U)
+	form.Set("LoginForm[password]", p.Config.Anifilm.Login.P)
+	form.Set("LoginForm[pass]", "") // honeypot field, must be empty
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, host+"/account/login", strings.NewReader(form.Encode()))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("User-Agent", ua)
+	req.Header.Set("Referer", loginPageURL)
+	if allCookies != "" {
+		req.Header.Set("Cookie", allCookies)
+	}
+
+	resp, err := p.Client.Do(req)
+	if err != nil {
+		log.Printf("anifilm: login error: %v", err)
+		return err
+	}
+	defer resp.Body.Close()
+
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+	log.Printf("anifilm: login response status=%d body=%s", resp.StatusCode, string(respBody))
+
+	if resp.StatusCode != 302 && (resp.StatusCode < 200 || resp.StatusCode >= 300) {
+		return fmt.Errorf("anifilm: login failed status=%d", resp.StatusCode)
+	}
+
+	// Collect login cookies and merge with all prior cookies
+	finalCookies := allCookies
+	var loginCount int
+	for _, line := range resp.Header.Values("Set-Cookie") {
+		part := strings.TrimSpace(strings.SplitN(line, ";", 2)[0])
+		if part != "" {
+			finalCookies = core.MergeCookieStrings(finalCookies, part)
+			loginCount++
+		}
+	}
+	if loginCount > 0 || finalCookies != "" {
+		p.cookieMu.Lock()
+		p.dynCookie = finalCookies
+		p.cookieMu.Unlock()
+		log.Printf("anifilm: login OK, new cookies=%d", loginCount)
+		return nil
+	}
+	log.Printf("anifilm: login FAILED — no cookies in response")
+	return fmt.Errorf("anifilm: login failed")
+}
+
+func (p *Parser) ensureLogin(ctx context.Context) {
+	if p.cookie() != "" {
+		return
+	}
+	if strings.TrimSpace(p.Config.Anifilm.Login.U) == "" {
+		return
+	}
+	_ = p.takeLogin(ctx)
+}
+
+func (p *Parser) trackerSettings() app.TrackerSettings {
+	ts := p.Config.Anifilm
+	if c := p.cookie(); c != "" {
+		ts.Cookie = c
+	}
+	return ts
+}
+
+func (p *Parser) httpGet(_ context.Context, rawURL, referer string) (string, error) {
+	if p.Fetcher == nil {
+		return "", fmt.Errorf("anifilm: Fetcher not initialized")
+	}
+	body, status, err := p.Fetcher.GetString(rawURL, p.trackerSettings())
 	if err != nil {
 		return "", err
 	}
@@ -359,11 +529,10 @@ func (p *Parser) httpGet(_ context.Context, rawURL, referer string) (string, err
 }
 
 func (p *Parser) httpDownload(_ context.Context, rawURL, referer string) ([]byte, error) {
-	if p.CF == nil {
-		return nil, fmt.Errorf("anifilm: CFClient not initialized")
+	if p.Fetcher == nil {
+		return nil, fmt.Errorf("anifilm: Fetcher not initialized")
 	}
-	cookie := strings.TrimSpace(p.Config.Anifilm.Cookie)
-	data, status, err := p.CF.Download(rawURL, cookie, referer)
+	data, status, err := p.Fetcher.Download(rawURL, p.trackerSettings())
 	if err != nil {
 		return nil, err
 	}
@@ -371,6 +540,19 @@ func (p *Parser) httpDownload(_ context.Context, rawURL, referer string) ([]byte
 		return nil, fmt.Errorf("anifilm: 403 Forbidden (cookie expired?)")
 	}
 	return data, nil
+}
+
+func extractCSRFCookie(cookieStr string) (name, value string) {
+	for _, part := range strings.Split(cookieStr, ";") {
+		part = strings.TrimSpace(part)
+		if eq := strings.IndexByte(part, '='); eq > 0 {
+			k := strings.TrimSpace(part[:eq])
+			if strings.Contains(strings.ToUpper(k), "CSRF") {
+				return k, strings.TrimSpace(part[eq+1:])
+			}
+		}
+	}
+	return "", ""
 }
 
 func asString(v any) string {

@@ -72,7 +72,8 @@ func formatFileTime(ft int64) string {
 
 // RunSyncCron periodically syncs torrents from a remote jacred instance.
 func RunSyncCron(ctx context.Context, cfg app.Config, db *filedb.DB) {
-	syncAPI := strings.TrimSpace(cfg.SyncAPI)
+	_ = cfg // initial config used only for startup check
+	syncAPI := strings.TrimSpace(db.GetConfig().SyncAPI)
 	if syncAPI == "" {
 		return
 	}
@@ -143,11 +144,12 @@ func RunSyncCron(ctx context.Context, cfg app.Config, db *filedb.DB) {
 
 					for tURL, t := range col.Value.Torrents {
 						tn := asString(t["trackerName"])
-						if len(cfg.SyncTrackers) > 0 && tn != "" && !containsIgnoreCase(cfg.SyncTrackers, tn) {
+						liveCfg := db.GetConfig()
+						if len(liveCfg.SyncTrackers) > 0 && tn != "" && !containsIgnoreCase(liveCfg.SyncTrackers, tn) {
 							filteredTracker++
 							continue
 						}
-						if !cfg.SyncSport && isSportType(t["types"]) {
+						if !liveCfg.SyncSport && isSportType(t["types"]) {
 							filteredSport++
 							continue
 						}
@@ -227,10 +229,11 @@ func RunSyncCron(ctx context.Context, cfg app.Config, db *filedb.DB) {
 				imported := 0
 				for _, entry := range root.Torrents {
 					tn := asString(entry.Value["trackerName"])
-					if len(cfg.SyncTrackers) > 0 && tn != "" && !containsIgnoreCase(cfg.SyncTrackers, tn) {
+					liveCfg := db.GetConfig()
+					if len(liveCfg.SyncTrackers) > 0 && tn != "" && !containsIgnoreCase(liveCfg.SyncTrackers, tn) {
 						continue
 					}
-					if !cfg.SyncSport && isSportType(entry.Value["types"]) {
+					if !liveCfg.SyncSport && isSportType(entry.Value["types"]) {
 						continue
 					}
 					importTorrent(db, entry.Value, entry.Key)
@@ -257,7 +260,7 @@ func RunSyncCron(ctx context.Context, cfg app.Config, db *filedb.DB) {
 	wait:
 		// Random delay 60-300 seconds + configured timeSync minutes
 		randomDelay := time.Duration(60+rand.Intn(240)) * time.Second
-		syncMinutes := cfg.TimeSync
+		syncMinutes := db.GetConfig().TimeSync
 		if syncMinutes < 20 {
 			syncMinutes = 20
 		}
@@ -273,8 +276,10 @@ func RunSyncCron(ctx context.Context, cfg app.Config, db *filedb.DB) {
 
 // RunSyncSpidr periodically syncs spidr data from remote.
 func RunSyncSpidr(ctx context.Context, cfg app.Config, db *filedb.DB) {
-	syncAPI := strings.TrimSpace(cfg.SyncAPI)
-	if syncAPI == "" || !cfg.SyncSpidr {
+	_ = cfg // initial config used only for startup check
+	initCfg := db.GetConfig()
+	syncAPI := strings.TrimSpace(initCfg.SyncAPI)
+	if syncAPI == "" || !initCfg.SyncSpidr {
 		return
 	}
 	syncAPI = strings.TrimRight(syncAPI, "/")
@@ -282,7 +287,7 @@ func RunSyncSpidr(ctx context.Context, cfg app.Config, db *filedb.DB) {
 	client := &http.Client{Timeout: 300 * time.Second}
 
 	for {
-		spidrMinutes := cfg.TimeSyncSpidr
+		spidrMinutes := db.GetConfig().TimeSyncSpidr
 		if spidrMinutes < 20 {
 			spidrMinutes = 20
 		}

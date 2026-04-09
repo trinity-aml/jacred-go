@@ -119,15 +119,23 @@ gcpercent: 50    # Go's GOGC knob: 50 = GC at +50% heap growth (default 50, Go d
 
 `memlimit: 0` disables the hard cap (Go default behaviour).
 
-### CloudFlare TLS Client
+### FlareSolverr (CloudFlare Bypass)
 
-Used by trackers that require Chrome/Firefox TLS fingerprint (anistar, anifilm, bitru, megapeer, mazepa, torrentby).
+For trackers protected by CloudFlare (megapeer, bitru, anistar, anifilm, torrentby, mazepa), you can use [FlareSolverr](https://github.com/FlareSolverr/FlareSolverr) to solve CF challenges. FlareSolverr is called once per domain, cookies are cached for 30 minutes, all subsequent requests use standard HTTP with cached cookies.
 
 ```yaml
-cfclient:
-  profile: "chrome_146"      # TLS profile: chrome_146, chrome_133, chrome_144, firefox_117
-  useragent: ""              # Override User-Agent (empty = profile default)
+flaresolverr: "http://localhost:8191"   # FlareSolverr endpoint (empty = disabled)
 ```
+
+Enable per tracker via `fetchmode`:
+
+```yaml
+Megapeer:
+  fetchmode: "flaresolverr"   # "standard" (default) or "flaresolverr"
+  host: "https://megapeer.vip"
+```
+
+If the response is a CF challenge page (403 or missing content marker), the session is automatically invalidated and FlareSolverr re-solves the challenge.
 
 ### Evercache (In-Memory Bucket Cache)
 

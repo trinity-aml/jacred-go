@@ -21,7 +21,7 @@ var (
 
 // ecEnabled reports whether evercache is active for the given DB config.
 func (db *DB) ecEnabled() bool {
-	return db.Config.Evercache.Enable && db.Config.Evercache.ValidHour > 0
+	return db.GetConfig().Evercache.Enable && db.GetConfig().Evercache.ValidHour > 0
 }
 
 // ecGet returns a deep copy of the cached bucket for path, or nil if not cached / expired.
@@ -37,7 +37,7 @@ func (db *DB) ecGet(path string) map[string]TorrentDetails {
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	cutoff := time.Now().Add(-time.Duration(db.Config.Evercache.ValidHour) * time.Hour)
+	cutoff := time.Now().Add(-time.Duration(db.GetConfig().Evercache.ValidHour) * time.Hour)
 	if e.accessedAt.Before(cutoff) {
 		return nil
 	}
@@ -55,11 +55,11 @@ func (db *DB) ecPut(path string, bucket map[string]TorrentDetails) {
 	entry := &bucketCacheEntry{bucket: cp, accessedAt: time.Now()}
 	ecMu.Lock()
 	ecStore[path] = entry
-	maxSize := db.Config.Evercache.MaxOpenWriteTask
+	maxSize := db.GetConfig().Evercache.MaxOpenWriteTask
 	overflow := maxSize > 0 && len(ecStore) > maxSize
 	ecMu.Unlock()
 	if overflow {
-		take := db.Config.Evercache.DropCacheTake
+		take := db.GetConfig().Evercache.DropCacheTake
 		if take <= 0 {
 			take = 200
 		}
@@ -107,7 +107,7 @@ func (db *DB) EvictCache(take int) int {
 	if !db.ecEnabled() {
 		return 0
 	}
-	cutoff := time.Now().Add(-time.Duration(db.Config.Evercache.ValidHour) * time.Hour)
+	cutoff := time.Now().Add(-time.Duration(db.GetConfig().Evercache.ValidHour) * time.Hour)
 
 	ecMu.Lock()
 	defer ecMu.Unlock()

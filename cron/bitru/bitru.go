@@ -78,7 +78,7 @@ type Parser struct {
 	Config  app.Config
 	DB      *filedb.DB
 	DataDir string
-	CF      *core.CFClient
+	Fetcher *core.Fetcher
 
 	mu          sync.Mutex
 	working     bool
@@ -90,11 +90,7 @@ type Parser struct {
 }
 
 func New(cfg app.Config, db *filedb.DB, dataDir string) *Parser {
-	cf, err := core.NewCFClientWithConfig(cfg.CFClient.Profile, cfg.CFClient.UserAgent)
-	if err != nil {
-		log.Printf("bitru: CFClient init error: %v", err)
-	}
-	p := &Parser{Config: cfg, DB: db, DataDir: dataDir, CF: cf, tasks: map[string][]Task{}}
+	p := &Parser{Config: cfg, DB: db, DataDir: dataDir, Fetcher: core.NewFetcher(cfg), tasks: map[string][]Task{}}
 	_ = p.loadTasks()
 	return p
 }
@@ -118,7 +114,8 @@ func (p *Parser) Parse(ctx context.Context, page int) (ParseResult, error) {
 	for _, cat := range []string{"movie", "serial"} {
 		items, err := p.parsePage(ctx, cat, page)
 		if err != nil {
-			return res, err
+			log.Printf("bitru: cat=%s error: %v", cat, err)
+			continue // skip to next category
 		}
 		res.Fetched += len(items)
 		res.PerCategory[cat] = len(items)
@@ -522,32 +519,40 @@ func (p *Parser) rateWait() {
 }
 
 func (p *Parser) fetchBrowse(ctx context.Context, cat string, page int) (string, error) {
-	if p.CF == nil {
-		return "", fmt.Errorf("bitru: CFClient not initialized")
+	if p.Fetcher == nil {
+		return "", fmt.Errorf("bitru: Fetcher not initialized")
 	}
 	if page <= 0 {
 		page = 1
 	}
 	urlv := strings.TrimRight(p.Config.Bitru.Host, "/") + "/browse.php?tmp=" + cat + "&page=" + strconv.Itoa(page)
-	cookie := strings.TrimSpace(p.Config.Bitru.Cookie)
-	p.rateWait()
-	body, status, err := p.CF.Get(urlv, cookie, "")
-	if err != nil {
-		return "", err
-	}
-	if status < 200 || status >= 300 {
+	for attempt := 0; attempt < 2; attempt++ {
+		p.rateWait()
+		body, status, err := p.Fetcher.GetString(urlv, p.Config.Bitru)
+		if err != nil {
+			return "", err
+		}
+		if status >= 200 && status < 300 && strings.Contains(body, `id="logo"`) {
+			return body, nil
+		}
+		// CF block (403 or challenge page) — invalidate and retry once
+		if attempt == 0 {
+			log.Printf("bitru: invalid response status=%d hasMarker=%v bodyLen=%d url=%s — invalidating session, retry", status, strings.Contains(body, `id="logo"`), len(body), urlv)
+			p.Fetcher.InvalidateSession(urlv)
+			continue
+		}
+		log.Printf("bitru: retry failed status=%d bodyLen=%d url=%s", status, len(body), urlv)
 		return "", fmt.Errorf("bitru status %d", status)
 	}
-	return body, nil
+	return "", nil
 }
 
 func (p *Parser) download(ctx context.Context, rawURL, referer string) ([]byte, error) {
-	if p.CF == nil {
-		return nil, fmt.Errorf("bitru: CFClient not initialized")
+	if p.Fetcher == nil {
+		return nil, fmt.Errorf("bitru: Fetcher not initialized")
 	}
-	cookie := strings.TrimSpace(p.Config.Bitru.Cookie)
 	p.rateWait()
-	data, status, err := p.CF.Download(rawURL, cookie, referer)
+	data, status, err := p.Fetcher.Download(rawURL, p.Config.Bitru)
 	if err != nil {
 		return nil, err
 	}

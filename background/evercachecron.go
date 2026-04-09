@@ -12,11 +12,11 @@ import (
 // Runs every 10 minutes regardless of validHour (validHour controls staleness cutoff).
 // Does nothing when evercache is disabled or validHour <= 0.
 func RunEvercacheCron(ctx context.Context, db *filedb.DB) {
-	cfg := db.Config.Evercache
-	if !cfg.Enable || cfg.ValidHour <= 0 {
+	ecCfg := db.GetConfig().Evercache
+	if !ecCfg.Enable || ecCfg.ValidHour <= 0 {
 		return
 	}
-	take := cfg.DropCacheTake
+	take := ecCfg.DropCacheTake
 	if take <= 0 {
 		take = 100
 	}

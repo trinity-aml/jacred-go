@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"html"
-	"io"
 	"log"
 	"net/http"
 	"net/url"
@@ -80,6 +79,7 @@ type Parser struct {
 	DB      *filedb.DB
 	DataDir string
 	Client  *http.Client
+	Fetcher *core.Fetcher
 
 	mu               sync.Mutex
 	working          bool
@@ -101,7 +101,7 @@ type ParseResult struct {
 }
 
 func New(cfg app.Config, db *filedb.DB, dataDir string) *Parser {
-	p := &Parser{Config: cfg, DB: db, DataDir: dataDir, Client: &http.Client{Timeout: 25 * time.Second}}
+	p := &Parser{Config: cfg, DB: db, DataDir: dataDir, Client: &http.Client{Timeout: 25 * time.Second}, Fetcher: core.NewFetcher(cfg)}
 	_ = p.loadTasks()
 	return p
 }
@@ -395,32 +395,18 @@ func (p *Parser) takeLogin(ctx context.Context) (string, error) {
 }
 
 func (p *Parser) fetchText(ctx context.Context, urlv, cookie, referer string) (string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, urlv, nil)
+	ts := p.Config.Selezen
+	if cookie != "" {
+		ts.Cookie = cookie
+	}
+	body, status, err := p.Fetcher.GetString(urlv, ts)
 	if err != nil {
 		return "", err
 	}
-	req.Header.Set("User-Agent", selezenUA)
-	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
-	if strings.TrimSpace(referer) != "" {
-		req.Header.Set("Referer", referer)
-	}
-	if strings.TrimSpace(cookie) != "" {
-		req.Header.Set("Cookie", cookie)
-	}
-	resp, err := p.Client.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+	if status < 200 || status >= 300 {
 		return "", nil
 	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 5<<20))
-	if err != nil {
-		return "", err
-	}
-	return string(body), nil
+	return body, nil
 }
 
 func (p *Parser) fetchMagnet(ctx context.Context, cookie, urlv string) (string, error) {
