@@ -28,11 +28,13 @@ Megapeer:
   host: "https://megapeer.vip"
   parseDelay: 3000
   reqMinute: 10
+  fetchmode: "flaresolverr"
 
 TorrentBy:
   host: "https://torrent.by"
   parseDelay: 5000
   reqMinute: 8
+  fetchmode: "flaresolverr"
 
 Kinozal:
   host: "https://kinozal.tv"
@@ -52,6 +54,7 @@ Bitru:
   host: "https://bitru.org"
   parseDelay: 3000
   reqMinute: 10
+  fetchmode: "flaresolverr"
 
 Bitruapi:
   host: "https://bitru.org"
@@ -70,6 +73,7 @@ Mazepa:
   host: "https://mazepa.to"
   parseDelay: 10000
   reqMinute: 6
+  fetchmode: "flaresolverr"
   login:
     u: ""
     p: ""
@@ -117,11 +121,13 @@ Anistar:
   host: "https://anistar.org"
   parseDelay: 3000
   reqMinute: 10
+  fetchmode: "flaresolverr"
 
 Anifilm:
   host: "https://anifilm.pro"
   parseDelay: 3000
   reqMinute: 10
+  fetchmode: "flaresolverr"
 
 Leproduction:
   host: "https://www.le-production.tv"

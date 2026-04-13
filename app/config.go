@@ -26,6 +26,7 @@ func parseYAMLIntoConfig(text string, cfg *Config) {
 	inTracksInterval := false
 	inEvercache := false
 	inCFClient := false
+	inFlareSolverrGo := false
 	currentListTarget := ""
 
 	for _, rawLine := range lines {
@@ -44,6 +45,7 @@ func parseYAMLIntoConfig(text string, cfg *Config) {
 			inTracksInterval = false
 			inEvercache = false
 			inCFClient = false
+			inFlareSolverrGo = false
 			currentListTarget = ""
 			if section == "globalproxy" {
 				cfg.GlobalProxy = nil
@@ -142,6 +144,18 @@ func parseYAMLIntoConfig(text string, cfg *Config) {
 			}
 			continue
 		}
+		if section == "flaresolverr_go" && indent == 2 && strings.Contains(trimmed, ":") {
+			inFlareSolverrGo = true
+			k, v := splitKV(trimmed)
+			switch k {
+			case "browser_path":
+				cfg.FlareSolverrGo.BrowserPath = unquote(v)
+			case "headless":
+				val := parseBool(v)
+				cfg.FlareSolverrGo.Headless = &val
+			}
+			continue
+		}
 
 		if indent == 0 && strings.Contains(trimmed, ":") {
 			k, v := splitKV(trimmed)
@@ -163,6 +177,10 @@ func parseYAMLIntoConfig(text string, cfg *Config) {
 				inCFClient = true
 				continue
 			}
+			if k == "flaresolverr_go" {
+				inFlareSolverrGo = true
+				continue
+			}
 		}
 
 		if indent == 2 && strings.HasPrefix(trimmed, "- ") {
@@ -179,6 +197,7 @@ func parseYAMLIntoConfig(text string, cfg *Config) {
 		_ = inTracksInterval
 		_ = inEvercache
 		_ = inCFClient
+		_ = inFlareSolverrGo
 	}
 }
 

@@ -1,9 +1,8 @@
 package core
 
 import (
-	"bytes"
+	"context"
 	"crypto/tls"
-	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -14,7 +13,45 @@ import (
 	"time"
 
 	"jacred/app"
+
+	flaresolverr "github.com/trinity-aml/flaresolverr-go/server"
 )
+
+// Shared flaresolverr-go service singleton (one Chrome for all parsers).
+var (
+	flareSvcOnce sync.Once
+	flareSvc     *flaresolverr.Service
+	flareSvcCfg  app.FlareSolverrGoConfig
+)
+
+// InitFlareService initializes the shared flaresolverr-go service. Call once at startup.
+func InitFlareService(cfg app.FlareSolverrGoConfig) {
+	flareSvcCfg = cfg
+}
+
+// CloseFlareService shuts down the shared flaresolverr-go service. Call on shutdown.
+func CloseFlareService() {
+	if flareSvc != nil {
+		flareSvc.Close()
+	}
+}
+
+func getFlareService() *flaresolverr.Service {
+	flareSvcOnce.Do(func() {
+		flareCfg := flaresolverr.Config{
+			Headless: true,
+		}
+		if flareSvcCfg.BrowserPath != "" {
+			flareCfg.BrowserPath = flareSvcCfg.BrowserPath
+		}
+		if flareSvcCfg.Headless != nil {
+			flareCfg.Headless = *flareSvcCfg.Headless
+		}
+		flareSvc = flaresolverr.NewService(flareCfg)
+		log.Printf("fetcher: flaresolverr-go service initialized")
+	})
+	return flareSvc
+}
 
 // Fetcher provides unified HTTP fetching with configurable mode per tracker.
 type Fetcher struct {
@@ -22,12 +59,12 @@ type Fetcher struct {
 	stdClient *http.Client
 	cfClient  *CFClient // tls-client for CF-protected sites (Chrome TLS fingerprint)
 
-	// FlareSolverr cookie cache: domain -> cached session
+	// Cookie cache: domain -> cached session
 	flareMu    sync.RWMutex
 	flareCache map[string]*flareSession
 }
 
-// flareSession holds cookies obtained from FlareSolverr for a domain.
+// flareSession holds cookies obtained from flaresolverr for a domain.
 type flareSession struct {
 	cookies    string
 	userAgent  string
@@ -37,7 +74,7 @@ type flareSession struct {
 
 const flareSessionTTL = 30 * time.Minute
 
-// NewFetcher creates a Fetcher with standard HTTP, tls-client and FlareSolverr backends.
+// NewFetcher creates a Fetcher with standard HTTP and tls-client backends.
 func NewFetcher(cfg app.Config) *Fetcher {
 	cf, err := NewCFClientWithConfig(cfg.CFClient.Profile, cfg.CFClient.UserAgent)
 	if err != nil {
@@ -61,8 +98,7 @@ func (f *Fetcher) GetCFClient() *CFClient {
 	return f.cfClient
 }
 
-// GetFlareCookies returns cached or freshly solved FlareSolverr cookies and user-agent for a URL's domain.
-// Returns empty strings if flaresolverr is not configured or solve fails.
+// GetFlareCookies returns cached or freshly solved flaresolverr cookies and user-agent for a URL's domain.
 func (f *Fetcher) GetFlareCookies(rawURL string) (cookie, userAgent string) {
 	domain := extractDomain(rawURL)
 	if sess := f.getFlareSession(domain); sess != nil {
@@ -72,15 +108,14 @@ func (f *Fetcher) GetFlareCookies(rawURL string) (cookie, userAgent string) {
 	if idx := strings.IndexByte(solveURL, '?'); idx > 0 {
 		solveURL = solveURL[:idx]
 	}
-	sess, err := f.solveFlareSolverr(solveURL, domain)
+	sess, err := f.solveFlare(solveURL, domain)
 	if err != nil {
 		return "", ""
 	}
 	return sess.cookies, sess.userAgent
 }
 
-// InvalidateSession clears cached FlareSolverr cookies for a URL's domain.
-// Call this when the response body indicates a CF challenge despite 200 status.
+// InvalidateSession clears cached flaresolverr cookies for a URL's domain.
 func (f *Fetcher) InvalidateSession(rawURL string) {
 	domain := extractDomain(rawURL)
 	f.clearFlareSession(domain)
@@ -104,7 +139,6 @@ func (f *Fetcher) Get(rawURL string, tracker app.TrackerSettings) (*FetchResult,
 	cookie := strings.TrimSpace(tracker.Cookie)
 	proxy := ProxyForURL(rawURL, tracker.UseProxy, f.cfg)
 
-	// Apply InsecureSkipVerify if configured
 	if tracker.InsecureSkipVerify {
 		if proxy != nil {
 			if proxy.TLSClientConfig == nil {
@@ -173,8 +207,8 @@ func (f *Fetcher) doHTTP(rawURL, cookie, userAgent string, transport *http.Trans
 	return &FetchResult{Body: data, StatusCode: resp.StatusCode}, nil
 }
 
-// fetchViaFlare uses FlareSolverr to obtain CF cookies, then fetches via standard HTTP.
-// If cookies don't work with standard HTTP (TLS fingerprint check), uses CFClient (tls-client with Chrome fingerprint).
+// fetchViaFlare uses embedded flaresolverr-go to obtain CF cookies, then fetches via standard HTTP.
+// If cookies don't work with standard HTTP (TLS fingerprint check), uses CFClient fallback.
 func (f *Fetcher) fetchViaFlare(rawURL, cookie string, transport *http.Transport) (*FetchResult, error) {
 	domain := extractDomain(rawURL)
 
@@ -198,12 +232,12 @@ func (f *Fetcher) fetchViaFlare(rawURL, cookie string, transport *http.Transport
 		f.clearFlareSession(domain)
 	}
 
-	// Solve CF challenge via FlareSolverr
+	// Solve CF challenge via embedded flaresolverr-go
 	solveURL := rawURL
 	if idx := strings.IndexByte(solveURL, '?'); idx > 0 {
 		solveURL = solveURL[:idx]
 	}
-	newSess, err := f.solveFlareSolverr(solveURL, domain)
+	newSess, err := f.solveFlare(solveURL, domain)
 	if err != nil {
 		log.Printf("flaresolverr: solve failed for %s: %v", domain, err)
 		return f.doHTTP(rawURL, cookie, "Mozilla/5.0", transport)
@@ -232,7 +266,7 @@ func (f *Fetcher) fetchViaFlare(rawURL, cookie string, transport *http.Transport
 	return f.fetchViaCFClient(rawURL, cookie, newSess)
 }
 
-// fetchViaCFClient fetches via tls-client (Chrome TLS fingerprint) with FlareSolverr cookies.
+// fetchViaCFClient fetches via tls-client (Chrome TLS fingerprint) with flaresolverr cookies.
 func (f *Fetcher) fetchViaCFClient(rawURL, cookie string, sess *flareSession) (*FetchResult, error) {
 	if f.cfClient == nil {
 		return nil, fmt.Errorf("cfclient not available")
@@ -261,59 +295,43 @@ func (f *Fetcher) clearFlareSession(domain string) {
 	f.flareMu.Unlock()
 }
 
-// solveFlareSolverr calls FlareSolverr to solve CF challenge and caches the resulting cookies.
-func (f *Fetcher) solveFlareSolverr(solveURL, domain string) (*flareSession, error) {
-	endpoint := strings.TrimSpace(f.cfg.FlareSolverr)
-	if endpoint == "" {
-		return nil, fmt.Errorf("flaresolverr URL not configured")
-	}
-	endpoint = strings.TrimRight(endpoint, "/") + "/v1"
-	freq := flareRequest{
-		Cmd:        "request.get",
-		URL:        solveURL,
-		MaxTimeout: 60000,
-	}
-
-	body, err := json.Marshal(freq)
-	if err != nil {
-		return nil, err
+// solveFlare calls the shared flaresolverr-go service to solve CF challenge.
+func (f *Fetcher) solveFlare(solveURL, domain string) (*flareSession, error) {
+	svc := getFlareService()
+	if svc == nil {
+		return nil, fmt.Errorf("flaresolverr service not initialized")
 	}
 
 	log.Printf("flaresolverr: solving challenge for %s", domain)
 
-	client := &http.Client{Timeout: 90 * time.Second}
-	resp, err := client.Post(endpoint, "application/json", bytes.NewReader(body))
-	if err != nil {
-		return nil, fmt.Errorf("flaresolverr request failed: %w", err)
-	}
-	defer resp.Body.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
 
-	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
-	if err != nil {
-		return nil, err
-	}
+	resp, _ := svc.ControllerV1(ctx, &flaresolverr.V1Request{
+		Cmd:        "request.get",
+		URL:        solveURL,
+		MaxTimeout: 60000,
+	})
 
-	var fresp flareResponse
-	if err := json.Unmarshal(respBody, &fresp); err != nil {
-		return nil, fmt.Errorf("flaresolverr response parse error: %w", err)
+	if resp.Status != "ok" {
+		return nil, fmt.Errorf("flaresolverr status=%s message=%s", resp.Status, resp.Message)
 	}
-
-	if fresp.Status != "ok" {
-		return nil, fmt.Errorf("flaresolverr status=%s message=%s", fresp.Status, fresp.Message)
+	if resp.Solution == nil {
+		return nil, fmt.Errorf("flaresolverr: no solution returned")
 	}
 
 	// Build cookie string from solution cookies
 	var cookieParts []string
-	for _, c := range fresp.Solution.Cookies {
+	for _, c := range resp.Solution.Cookies {
 		cookieParts = append(cookieParts, c.Name+"="+c.Value)
 	}
 	cookieStr := strings.Join(cookieParts, "; ")
-	ua := fresp.Solution.UserAgent
+	ua := resp.Solution.UserAgent
 	if ua == "" {
 		ua = "Mozilla/5.0"
 	}
 
-	log.Printf("flaresolverr: solved %s cookies=%d ua=%s", domain, len(fresp.Solution.Cookies), ua)
+	log.Printf("flaresolverr: solved %s cookies=%d ua=%s", domain, len(resp.Solution.Cookies), ua)
 
 	sess := &flareSession{
 		cookies:   cookieStr,
@@ -326,30 +344,6 @@ func (f *Fetcher) solveFlareSolverr(solveURL, domain string) (*flareSession, err
 	f.flareMu.Unlock()
 
 	return sess, nil
-}
-
-// flaresolverr request/response types
-type flareRequest struct {
-	Cmd        string `json:"cmd"`
-	URL        string `json:"url"`
-	MaxTimeout int    `json:"maxTimeout"`
-}
-
-type flareResponse struct {
-	Status   string `json:"status"`
-	Message  string `json:"message"`
-	Solution struct {
-		URL       string        `json:"url"`
-		Status    int           `json:"status"`
-		Response  string        `json:"response"`
-		Cookies   []flareCookie `json:"cookies"`
-		UserAgent string        `json:"userAgent"`
-	} `json:"solution"`
-}
-
-type flareCookie struct {
-	Name  string `json:"name"`
-	Value string `json:"value"`
 }
 
 func extractDomain(rawURL string) string {
@@ -375,7 +369,6 @@ func mergeCookies(configCookie, flareCookie string) string {
 		return configCookie
 	}
 
-	// Parse flare cookies into map for dedup
 	flareMap := make(map[string]string)
 	for _, part := range strings.Split(flareCookie, ";") {
 		part = strings.TrimSpace(part)
@@ -384,7 +377,6 @@ func mergeCookies(configCookie, flareCookie string) string {
 		}
 	}
 
-	// Start with config cookies, skip ones overridden by flare
 	var parts []string
 	for _, part := range strings.Split(configCookie, ";") {
 		part = strings.TrimSpace(part)
@@ -396,7 +388,6 @@ func mergeCookies(configCookie, flareCookie string) string {
 		}
 	}
 
-	// Add all flare cookies
 	for _, part := range strings.Split(flareCookie, ";") {
 		part = strings.TrimSpace(part)
 		if part != "" {

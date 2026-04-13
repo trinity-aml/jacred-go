@@ -16,6 +16,7 @@ import (
 
 	"jacred/app"
 	"jacred/background"
+	"jacred/core"
 	"jacred/filedb"
 	"jacred/server"
 	"jacred/tracks"
@@ -88,6 +89,9 @@ func main() {
 		}
 		cleanOldLogs(filepath.Join("Data", "log"), 14)
 	}
+
+	// Initialize shared flaresolverr-go service (one Chrome for all parsers)
+	core.InitFlareService(cfg.FlareSolverrGo)
 
 	db := filedb.New(cfg, "Data")
 	if err := db.RebuildIndexes(); err != nil {
@@ -163,6 +167,9 @@ func main() {
 	if err := httpServer.Shutdown(shutdownCtx); err != nil {
 		log.Printf("http server shutdown error: %v", err)
 	}
+
+	// Shutdown flaresolverr-go (close Chrome)
+	core.CloseFlareService()
 
 	// Сохраняем masterDb перед выходом
 	log.Println("saving database...")

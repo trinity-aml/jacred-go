@@ -44,6 +44,11 @@ type CFClientConfig struct {
 	UserAgent string `json:"useragent"` // Custom User-Agent string
 }
 
+type FlareSolverrGoConfig struct {
+	BrowserPath string `json:"browser_path,omitempty"` // path to Chrome/Chromium binary
+	Headless    *bool  `json:"headless,omitempty"`     // nil = default (true)
+}
+
 type Config struct {
 	ListenIP           string               `json:"listenip"`
 	ListenPort         int                  `json:"listenport"`
@@ -82,7 +87,8 @@ type Config struct {
 	TimeStatsUpdate    int                  `json:"timeStatsUpdate"`
 	TimeSync           int                  `json:"timeSync"`
 	TimeSyncSpidr      int                  `json:"timeSyncSpidr"`
-	FlareSolverr       string               `json:"flaresolverr,omitempty"` // FlareSolverr URL, e.g. "http://localhost:8191"
+	FlareSolverr       string               `json:"flaresolverr,omitempty"`   // Legacy: FlareSolverr URL (ignored, kept for config compat)
+	FlareSolverrGo     FlareSolverrGoConfig `json:"flaresolverr_go"`          // Embedded flaresolverr-go settings
 	CFClient           CFClientConfig       `json:"cfclient"`
 	Rutor              TrackerSettings      `json:"Rutor"`
 	Megapeer           TrackerSettings      `json:"Megapeer"`
