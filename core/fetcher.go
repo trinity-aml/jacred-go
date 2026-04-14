@@ -3,11 +3,14 @@ package core
 import (
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"net/url"
+	"os"
+	"os/exec"
 	"strings"
 	"sync"
 	"time"
@@ -22,17 +25,81 @@ var (
 	flareSvcOnce sync.Once
 	flareSvc     *flaresolverr.Service
 	flareSvcCfg  app.FlareSolverrGoConfig
+	xvfbCmd      *exec.Cmd
 )
 
-// InitFlareService initializes the shared flaresolverr-go service. Call once at startup.
+// InitFlareService initializes the shared Xvfb display and flaresolverr-go config. Call once at startup.
 func InitFlareService(cfg app.FlareSolverrGoConfig) {
 	flareSvcCfg = cfg
+	// Start persistent Xvfb if no DISPLAY and not on a desktop
+	if os.Getenv("DISPLAY") == "" {
+		startXvfb()
+	}
 }
 
-// CloseFlareService shuts down the shared flaresolverr-go service. Call on shutdown.
+// CloseFlareService shuts down the shared flaresolverr-go service and Xvfb. Call on shutdown.
 func CloseFlareService() {
 	if flareSvc != nil {
 		flareSvc.Close()
+	}
+	stopXvfb()
+}
+
+// startXvfb starts a persistent Xvfb on the first free display :99-:119.
+// Sets DISPLAY env so flaresolverr-go uses it instead of spawning its own.
+func startXvfb() {
+	xvfbPath, err := exec.LookPath("Xvfb")
+	if err != nil {
+		log.Printf("xvfb: not found, flaresolverr-go will use headless Chrome")
+		return
+	}
+
+	for displayNum := 99; displayNum < 120; displayNum++ {
+		socketPath := fmt.Sprintf("/tmp/.X11-unix/X%d", displayNum)
+
+		// Clean up stale socket if no process owns it
+		if _, err := os.Stat(socketPath); err == nil {
+			os.Remove(socketPath)
+		}
+
+		display := fmt.Sprintf(":%d", displayNum)
+		cmd := exec.Command(xvfbPath, display, "-screen", "0", "1920x1080x24", "-nolisten", "tcp")
+		cmd.Stdout = nil
+		cmd.Stderr = nil
+		if err := cmd.Start(); err != nil {
+			continue
+		}
+
+		// Wait for socket to appear
+		ok := false
+		for i := 0; i < 50; i++ {
+			if _, err := os.Stat(socketPath); err == nil {
+				ok = true
+				break
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+		if !ok {
+			_ = cmd.Process.Kill()
+			_, _ = cmd.Process.Wait()
+			continue
+		}
+
+		xvfbCmd = cmd
+		os.Setenv("DISPLAY", display)
+		log.Printf("xvfb: started on %s (pid %d)", display, cmd.Process.Pid)
+		return
+	}
+
+	log.Printf("xvfb: failed to start on any display :99-:119")
+}
+
+func stopXvfb() {
+	if xvfbCmd != nil && xvfbCmd.Process != nil {
+		_ = xvfbCmd.Process.Kill()
+		_, _ = xvfbCmd.Process.Wait()
+		log.Printf("xvfb: stopped")
+		xvfbCmd = nil
 	}
 }
 
@@ -66,10 +133,16 @@ type Fetcher struct {
 
 // flareSession holds cookies obtained from flaresolverr for a domain.
 type flareSession struct {
-	cookies    string
-	userAgent  string
-	obtained   time.Time
-	cookieFail bool // true if cookies don't work via standard HTTP — use cfclient instead
+	cookies   string
+	userAgent string
+	obtained  time.Time
+}
+
+// flareSolveResult holds the full result from a solve: cookies + page body.
+type flareSolveResult struct {
+	session *flareSession
+	body    []byte // page HTML returned by the browser
+	status  int
 }
 
 const flareSessionTTL = 30 * time.Minute
@@ -104,15 +177,11 @@ func (f *Fetcher) GetFlareCookies(rawURL string) (cookie, userAgent string) {
 	if sess := f.getFlareSession(domain); sess != nil {
 		return sess.cookies, sess.userAgent
 	}
-	solveURL := rawURL
-	if idx := strings.IndexByte(solveURL, '?'); idx > 0 {
-		solveURL = solveURL[:idx]
-	}
-	sess, err := f.solveFlare(solveURL, domain)
+	result, err := f.solveFlare(rawURL, domain)
 	if err != nil {
 		return "", ""
 	}
-	return sess.cookies, sess.userAgent
+	return result.session.cookies, result.session.userAgent
 }
 
 // InvalidateSession clears cached flaresolverr cookies for a URL's domain.
@@ -207,76 +276,63 @@ func (f *Fetcher) doHTTP(rawURL, cookie, userAgent string, transport *http.Trans
 	return &FetchResult{Body: data, StatusCode: resp.StatusCode}, nil
 }
 
-// fetchViaFlare uses embedded flaresolverr-go to obtain CF cookies, then fetches via standard HTTP.
-// If cookies don't work with standard HTTP (TLS fingerprint check), uses CFClient fallback.
+// fetchViaFlare uses embedded flaresolverr-go to solve CF and fetch pages.
+// Strategy:
+//   1. Try cached cookies via cfclient (fast path, Chrome TLS fingerprint)
+//   2. If no cache or 403: solve via flaresolverr-go browser
+//   3. Use browser's response body if available
+//   4. Otherwise use cookies via cfclient (Chrome TLS fingerprint)
+//   5. Cache cookies for subsequent requests
 func (f *Fetcher) fetchViaFlare(rawURL, cookie string, transport *http.Transport) (*FetchResult, error) {
 	domain := extractDomain(rawURL)
 
-	sess := f.getFlareSession(domain)
-
-	// If domain needs cfclient (cookies failed with standard HTTP before)
-	if sess != nil && sess.cookieFail {
-		return f.fetchViaCFClient(rawURL, cookie, sess)
-	}
-
-	// Try with cached flare cookies via standard HTTP first
-	if sess != nil {
-		merged := mergeCookies(cookie, sess.cookies)
-		res, err := f.doHTTP(rawURL, merged, sess.userAgent, transport)
-		if err == nil {
-			if res.StatusCode != 403 {
-				return res, nil
-			}
-			log.Printf("flaresolverr: cached cookies expired for %s (got 403)", domain)
+	// Try with cached flare cookies via cfclient (Chrome TLS fingerprint)
+	if sess := f.getFlareSession(domain); sess != nil {
+		res, err := f.fetchWithCookies(rawURL, cookie, sess, transport)
+		if err == nil && res.StatusCode != 403 {
+			return res, nil
 		}
+		log.Printf("flaresolverr: cached cookies expired for %s (got 403)", domain)
 		f.clearFlareSession(domain)
 	}
 
-	// Solve CF challenge via embedded flaresolverr-go
-	solveURL := rawURL
-	if idx := strings.IndexByte(solveURL, '?'); idx > 0 {
-		solveURL = solveURL[:idx]
-	}
-	newSess, err := f.solveFlare(solveURL, domain)
+	// Solve via flaresolverr-go browser — returns cookies + page body
+	result, err := f.solveFlare(rawURL, domain)
 	if err != nil {
 		log.Printf("flaresolverr: solve failed for %s: %v", domain, err)
 		return f.doHTTP(rawURL, cookie, "Mozilla/5.0", transport)
 	}
 
-	// Try fetching with new cookies via standard HTTP
-	merged := mergeCookies(cookie, newSess.cookies)
-	res, err := f.doHTTP(rawURL, merged, newSess.userAgent, transport)
-	if err == nil && res.StatusCode != 403 {
-		return res, nil
+	// Use browser's response body directly if available
+	if len(result.body) > 0 {
+		return &FetchResult{Body: result.body, StatusCode: result.status}, nil
 	}
 
-	// Standard HTTP got 403 — CF checks TLS fingerprint. Switch to cfclient mode.
-	if f.cfClient == nil {
-		log.Printf("flaresolverr: cookies don't work for %s and cfclient not available", domain)
-		f.clearFlareSession(domain)
-		return res, err
-	}
-
-	log.Printf("flaresolverr: cookies don't work with standard HTTP for %s, switching to cfclient", domain)
-	newSess.cookieFail = true
-	f.flareMu.Lock()
-	f.flareCache[domain] = newSess
-	f.flareMu.Unlock()
-
-	return f.fetchViaCFClient(rawURL, cookie, newSess)
+	// Browser body empty — fetch via cfclient with solved cookies (Chrome TLS fingerprint)
+	return f.fetchWithCookies(rawURL, cookie, result.session, transport)
 }
 
-// fetchViaCFClient fetches via tls-client (Chrome TLS fingerprint) with flaresolverr cookies.
-func (f *Fetcher) fetchViaCFClient(rawURL, cookie string, sess *flareSession) (*FetchResult, error) {
-	if f.cfClient == nil {
-		return nil, fmt.Errorf("cfclient not available")
-	}
+// fetchWithCookies tries cfclient first (Chrome TLS fingerprint), falls back to standard HTTP.
+func (f *Fetcher) fetchWithCookies(rawURL, cookie string, sess *flareSession, transport *http.Transport) (*FetchResult, error) {
 	merged := mergeCookies(cookie, sess.cookies)
-	body, status, err := f.cfClient.Download(rawURL, merged, "")
-	if err != nil {
-		return nil, err
+	ua := sess.userAgent
+	if ua == "" {
+		ua = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36"
 	}
-	return &FetchResult{Body: body, StatusCode: status}, nil
+
+	// Try cfclient (tls-client with Chrome TLS fingerprint)
+	if f.cfClient != nil {
+		body, status, err := f.cfClient.Download(rawURL, merged, "")
+		if err == nil && status != 403 {
+			return &FetchResult{Body: body, StatusCode: status}, nil
+		}
+		if err != nil {
+			log.Printf("flaresolverr: cfclient failed for %s: %v", extractDomain(rawURL), err)
+		}
+	}
+
+	// Fallback: standard HTTP
+	return f.doHTTP(rawURL, merged, ua, transport)
 }
 
 func (f *Fetcher) getFlareSession(domain string) *flareSession {
@@ -296,7 +352,8 @@ func (f *Fetcher) clearFlareSession(domain string) {
 }
 
 // solveFlare calls the shared flaresolverr-go service to solve CF challenge.
-func (f *Fetcher) solveFlare(solveURL, domain string) (*flareSession, error) {
+// Returns cookies (cached for future requests) + the page body from the browser.
+func (f *Fetcher) solveFlare(rawURL, domain string) (*flareSolveResult, error) {
 	svc := getFlareService()
 	if svc == nil {
 		return nil, fmt.Errorf("flaresolverr service not initialized")
@@ -307,11 +364,28 @@ func (f *Fetcher) solveFlare(solveURL, domain string) (*flareSession, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 
-	resp, _ := svc.ControllerV1(ctx, &flaresolverr.V1Request{
-		Cmd:        "request.get",
-		URL:        solveURL,
-		MaxTimeout: 60000,
+	resp, httpStatus := svc.ControllerV1(ctx, &flaresolverr.V1Request{
+		Cmd:           "request.get",
+		URL:           rawURL,
+		MaxTimeout:    60000,
+		WaitInSeconds: 2,
 	})
+
+	log.Printf("flaresolverr: response status=%s httpStatus=%d message=%q", resp.Status, httpStatus, resp.Message)
+
+	// DEBUG: dump full response (Solution fields), truncating Response body for readability
+	if dump, derr := json.Marshal(resp); derr == nil {
+		s := string(dump)
+		if len(s) > 2000 {
+			s = s[:2000] + "...(truncated)"
+		}
+		log.Printf("flaresolverr: raw response JSON: %s", s)
+	}
+	if resp.Solution != nil {
+		log.Printf("flaresolverr: Solution struct: URL=%q Status=%d UserAgent=%q ResponseLen=%d CookiesLen=%d HeadersLen=%d",
+			resp.Solution.URL, resp.Solution.Status, resp.Solution.UserAgent,
+			len(resp.Solution.Response), len(resp.Solution.Cookies), len(resp.Solution.Headers))
+	}
 
 	if resp.Status != "ok" {
 		return nil, fmt.Errorf("flaresolverr status=%s message=%s", resp.Status, resp.Message)
@@ -324,14 +398,14 @@ func (f *Fetcher) solveFlare(solveURL, domain string) (*flareSession, error) {
 	var cookieParts []string
 	for _, c := range resp.Solution.Cookies {
 		cookieParts = append(cookieParts, c.Name+"="+c.Value)
+		log.Printf("flaresolverr:   cookie: %s=%s (domain=%s)", c.Name, c.Value[:min(len(c.Value), 30)], c.Domain)
 	}
 	cookieStr := strings.Join(cookieParts, "; ")
 	ua := resp.Solution.UserAgent
+	log.Printf("flaresolverr: solved %s cookies=%d ua=%q bodyLen=%d solURL=%s", domain, len(resp.Solution.Cookies), ua, len(resp.Solution.Response), resp.Solution.URL)
 	if ua == "" {
 		ua = "Mozilla/5.0"
 	}
-
-	log.Printf("flaresolverr: solved %s cookies=%d ua=%s", domain, len(resp.Solution.Cookies), ua)
 
 	sess := &flareSession{
 		cookies:   cookieStr,
@@ -343,7 +417,16 @@ func (f *Fetcher) solveFlare(solveURL, domain string) (*flareSession, error) {
 	f.flareCache[domain] = sess
 	f.flareMu.Unlock()
 
-	return sess, nil
+	status := resp.Solution.Status
+	if status == 0 {
+		status = 200
+	}
+
+	return &flareSolveResult{
+		session: sess,
+		body:    []byte(resp.Solution.Response),
+		status:  status,
+	}, nil
 }
 
 func extractDomain(rawURL string) string {

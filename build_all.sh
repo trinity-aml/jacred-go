@@ -38,6 +38,8 @@ mkdir -p "${OUT}"
 OK=0
 FAIL=0
 
+go mod tidy
+
 for TARGET in "${TARGETS[@]}"; do
   GOOS="${TARGET%/*}"
   GOARCH="${TARGET#*/}"
