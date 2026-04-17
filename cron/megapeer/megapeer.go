@@ -89,7 +89,14 @@ func (p *Parser) Parse(ctx context.Context, maxpage int) (ParseResult, error) {
 		maxpage = 1
 	}
 	res := ParseResult{Status: "ok", PerCategory: map[string]int{}}
-	for _, cat := range categories {
+	for ci, cat := range categories {
+		if ci > 0 && p.Config.Megapeer.ParseDelay > 0 {
+			select {
+			case <-ctx.Done():
+				return res, ctx.Err()
+			case <-time.After(time.Duration(p.Config.Megapeer.ParseDelay) * time.Millisecond):
+			}
+		}
 		for page := 0; page < maxpage; page++ {
 			items, err := p.fetchPage(ctx, cat, page)
 			if err != nil {
