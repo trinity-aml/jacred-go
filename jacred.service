@@ -1,0 +1,13 @@
+[Unit]
+Description=jacred
+Wants=network.target
+After=network.target
+[Service]
+Environment="HOME=/opt/jacred"
+WorkingDirectory=/opt/jacred
+ExecStart=/opt/jacred/jacred-linux-amd64
+RestartSec=5
+LimitNOFILE=65535
+Restart=always
+[Install]
+WantedBy=multi-user.target

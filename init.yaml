@@ -1,147 +1,204 @@
+---
+# Minimal config (init.yaml). Same as init.conf in YAML.
+# If both init.yaml and init.conf exist, init.yaml is used.
+
 listenip: any
 listenport: 9117
-log: true
+apikey: ""
+mergeduplicates: true
+log: false
+logParsers: false
 openstats: true
 opensync: true
-web: true
-timeStatsUpdate: 90
 
-# Memory limits (0 = no limit)
-# memlimit: 1500    # Hard cap on Go heap in MB — recommended for VPS with 2GB RAM
-# gcpercent: 50     # GC aggressiveness: lower = more frequent GC, less peak memory (default 50)
+memlimit: 0
+gcpercent: 50
 
 evercache:
   enable: true
-  validHour: 1
-  maxOpenWriteTask: 500   # Max buckets held in memory (lower for VPS with limited RAM)
-  dropCacheTake: 100
+  maxopenwritetask: 500
 
 flaresolverr_go:
   headless: true
-  # browser_path: ""   # Custom Chromium path (empty = auto-detect)
+  browser_path: ""
 
 cfclient:
   profile: "chrome_146"
 
 Rutor:
-  host: "https://rutor.is"
-  parseDelay: 7000
+  host: https://rutor.is
+  alias: ""
+  useproxy: false
   reqMinute: 8
+  parseDelay: 7000
+  log: false
 
 Megapeer:
-  host: "https://megapeer.vip"
-  parseDelay: 3000
-  reqMinute: 10
+  host: https://megapeer.vip
   fetchmode: "flaresolverr"
+  alias: ""
+  useproxy: false
+  reqMinute: 8
+  parseDelay: 8000
+  log: false
 
 TorrentBy:
-  host: "https://torrent.by"
-  parseDelay: 5000
+  host: https://torrent.by
+  insecureSkipVerify: true
+  alias: ""
+  useproxy: false
   reqMinute: 8
-  fetchmode: "flaresolverr"
-
-Kinozal:
-  host: "https://kinozal.tv"
   parseDelay: 7000
-  reqMinute: 6
+  log: false
+  login:
+    u: ""
+    p: ""
+    
+Kinozal:
+  host: https://kinozal.tv
+  useproxy: false
+  reqMinute: 8
+  parseDelay: 7000
+  log: false
   login:
     u: ""
     p: ""
 
 NNMClub:
-  host: "https://nnmclub.to"
-  cookie: ""
-  parseDelay: 5000
-  reqMinute: 8
-
-Bitru:
-  host: "https://bitru.org"
-  parseDelay: 3000
-  reqMinute: 10
+  host: https://nnmclub.to
   fetchmode: "flaresolverr"
+  useproxy: false
+  reqMinute: 8
+  parseDelay: 7000
+  log: false
+  login:
+    u: ""
+    p: ""
 
-Bitruapi:
-  host: "https://bitru.org"
-  parseDelay: 0
-  reqMinute: 30
+    
+Bitru:
+  host: https://bitru.org
+  fetchmode: "flaresolverr"
+  useproxy: false
+  reqMinute: 8
+  parseDelay: 7000
+  log: false
 
 Toloka:
-  host: "https://toloka.to"
-  parseDelay: 5000
-  reqMinute: 6
+  host: https://toloka.to
+  useproxy: false
+  reqMinute: 8
+  parseDelay: 7000
+  log: false
   login:
     u: ""
     p: ""
 
 Mazepa:
-  host: "https://mazepa.to"
-  parseDelay: 10000
-  reqMinute: 6
+  host: https://mazepa.to
   fetchmode: "flaresolverr"
+  useproxy: false
+  reqMinute: 8
+  parseDelay: 7000
+  log: false
   login:
     u: ""
     p: ""
 
 Rutracker:
-  host: "https://rutracker.org"
-  parseDelay: 8000
-  reqMinute: 6
+  host: https://rutracker.org
+  alias: ""
+  useproxy: false
+  reqMinute: 8
+  parseDelay: 7000
+  log: false
   login:
     u: ""
     p: ""
 
 Selezen:
-  host: "https://use.selezen.club"
-  parseDelay: 3000
-  reqMinute: 10
-
-Lostfilm:
-  host: "https://www.lostfilm.tv"
+  host: https://selezen.top
   cookie: ""
-  parseDelay: 3000
-  reqMinute: 10
-
-Animelayer:
-  host: "https://animelayer.ru"
-  parseDelay: 3000
-  reqMinute: 10
-
-Anidub:
-  host: "https://tr.anidub.com"
-  parseDelay: 2000
-  reqMinute: 15
-
-Aniliberty:
-  host: "https://aniliberty.top"
-  parseDelay: 1000
-  reqMinute: 20
-
-Knaben:
-  host: "https://api.knaben.org"
-  parseDelay: 0
-  reqMinute: 30
-
-Anistar:
-  host: "https://anistar.org"
-  parseDelay: 3000
-  reqMinute: 10
-  fetchmode: "flaresolverr"
-
-Anifilm:
-  host: "https://anifilm.pro"
-  parseDelay: 3000
-  reqMinute: 10
-  fetchmode: "flaresolverr"
-
-Leproduction:
-  host: "https://www.le-production.tv"
-  parseDelay: 3000
-  reqMinute: 10
-
-Baibako:
-  host: "http://baibako.tv"
-  parseDelay: 5000
+  useproxy: false
   reqMinute: 8
+  parseDelay: 7000
+  log: false
   login:
     u: ""
     p: ""
+
+Anilibria:
+  host: https://aniliberty.top
+  alias: ""
+  useproxy: false
+  reqMinute: 8
+  parseDelay: 7000
+
+Anidub:
+  host: https://tr.anidub.com
+  alias: ""
+  useproxy: false
+  reqMinute: 8
+  parseDelay: 7000
+
+Anistar:
+  host: https://anistar.org
+  fetchmode: "flaresolverr"
+  alias: ""
+  useproxy: false
+  reqMinute: 8
+  parseDelay: 7000
+
+Animelayer:
+  host: https://animelayer.ru
+  useproxy: false
+  reqMinute: 8
+  parseDelay: 7000
+  login:
+    u: ""
+    p: ""
+
+Anifilm:
+  host: https://anifilm.pro
+  fetchmode: "flaresolverr"
+  cookie: ""
+  alias: ""
+  useproxy: false
+  reqMinute: 8
+  parseDelay: 7000
+  login:
+    u: ""
+    p: ""
+
+Leproduction:
+  host: https://www.le-production.tv
+  alias: ""
+  useproxy: false
+  reqMinute: 8
+  parseDelay: 7000
+
+Baibako:
+  host: http://baibako.tv
+  useproxy: false
+  reqMinute: 8
+  parseDelay: 7000
+  log: false
+  login:
+    u: ""
+    p: ""
+
+Lostfilm:
+  host: https://www.lostfilm.tv
+  cookie: "lostfilm cookie"
+  useproxy: false
+  reqMinute: 8
+  parseDelay: 7000
+
+globalproxy:
+  - pattern: "\\.onion"
+    useAuth: false
+    BypassOnLocal: false
+    username: ""
+    password: ""
+    list:
+      - socks5://127.0.0.1:9050﻿
