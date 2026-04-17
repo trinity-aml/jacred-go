@@ -8,6 +8,7 @@ Collects torrent metadata from 20 Russian/Ukrainian trackers into a unified flat
 
 - [Quick Start](#quick-start)
 - [Configuration](#configuration)
+- [Web UI](#web-ui)
 - [Parser Endpoints](#parser-endpoints)
 - [Search API](#search-api)
 - [Stats API](#stats-api)
@@ -94,7 +95,7 @@ mergenumduplicates: true     # Merge numeric ID variations
 openstats: true              # Enable /stats/* endpoints (no auth)
 opensync: true               # Enable /sync/fdb/torrents (V2 protocol, no auth)
 opensync_v1: false           # Enable /sync/torrents (V1 protocol, no auth)
-web: true                    # Serve web UI (index.html, stats.html)
+web: true                    # Serve web UI (index.html, stats.html, settings.html)
 timeStatsUpdate: 90          # Rebuild stats.json every N minutes
 memlimit: 0                  # Hard cap on Go heap in MB (0 = no limit)
 gcpercent: 50                # GC frequency: lower = more GC, less peak RAM (default 50)
@@ -1035,9 +1036,40 @@ curl "http://127.0.0.1:9117/dev/removeBucket?key=матрица:the+matrix&migra
 
 ---
 
+## Web UI
+
+When `web: true`, three pages are served from `wwwroot/`:
+
+| Path | Purpose |
+|------|---------|
+| `/` | `index.html` — torrent search (Kinopoisk / IMDB / title), filters, magnet links, TorrServer launcher |
+| `/stats` | `stats.html` — per-tracker statistics dashboard (new/updated/checked counts, last run time) |
+| `/settings` | `settings.html` — editor for the full `init.yaml` config (server, logging, sync, trackers, proxies) |
+
+The Settings page talks to `/admin/config` (GET to load, POST to save) and is local-only (`127.0.0.1` / RFC1918 / link-local / ULA). On save the server writes `init.yaml` atomically, re-parses it with the same loader used on startup, and calls `UpdateConfig` to apply new values to the running server, DB, and all 20 parsers — no restart needed.
+
+### `GET /admin/config`
+
+Returns the current in-memory config as JSON. **Local IPs only.**
+
+### `POST /admin/config`
+
+Accepts a full config JSON body, overlays it on top of the current config, writes `init.yaml` (atomic temp-file + rename), then reloads. **Local IPs only.**
+
+```bash
+# Example: dump current config
+curl -s "http://127.0.0.1:9117/admin/config" > current.json
+
+# Example: tweak and push back
+jq '.log = true' current.json | curl -X POST -H 'Content-Type: application/json' \
+  --data-binary @- "http://127.0.0.1:9117/admin/config"
+```
+
+Responses: `{"ok": true}` on success, `{"ok": false, "error": "..."}` on failure. The JSON writer normalizes to the structure `init.yaml` parser expects — existing comments in `init.yaml` are lost on save (the file is regenerated from the config struct).
+
 ## Config Hot-Reload
 
-The `init.yaml` file is checked for changes every 10 seconds. When the file modification time changes, the config is reloaded automatically — no restart needed.
+The `init.yaml` file is checked for changes every 10 seconds. When the file modification time changes, the config is reloaded automatically — no restart needed. Saves from the Settings page use the same reload path.
 
 Hot-reloadable settings include: API keys, logging flags, sync settings, stats update interval, tracker hosts/cookies/credentials, rate limits.
 
@@ -1146,4 +1178,5 @@ GET /version         → {"version": "...", "gitSha": "...", "gitBranch": "...",
 GET /lastupdatedb    → last database write timestamp
 GET /                → index.html (if web: true)
 GET /stats           → stats.html (if web: true)
+GET /settings        → settings.html (if web: true)
 ```
