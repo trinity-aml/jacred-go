@@ -21,6 +21,7 @@ import (
 
 	"regexp"
 
+	"jacred/app"
 	"jacred/core"
 	"jacred/cron/bitruapi"
 	"jacred/cron/knaben"
@@ -1598,6 +1599,81 @@ func (s *Server) handleDevFixSelezenUrls(w http.ResponseWriter, r *http.Request)
 	}
 	_ = s.DB.SaveChangesToFileNow()
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "urlsFixed": totalFixed, "duplicatesRemoved": totalRemoved})
+}
+
+// handleAdminConfigGet returns the full parsed config as JSON.
+func (s *Server) handleAdminConfigGet(w http.ResponseWriter, r *http.Request) {
+	if !isLocalRequest(r) {
+		writeJSON(w, http.StatusForbidden, map[string]any{"badip": true})
+		return
+	}
+	cfg := s.GetConfig()
+	b, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(b)
+}
+
+// handleAdminConfigSave accepts a full config JSON, writes init.yaml atomically,
+// then reloads it through the same parser used on startup so validation stays consistent.
+func (s *Server) handleAdminConfigSave(w http.ResponseWriter, r *http.Request) {
+	if !isLocalRequest(r) {
+		writeJSON(w, http.StatusForbidden, map[string]any{"badip": true})
+		return
+	}
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", "POST")
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"ok": false, "error": "POST only"})
+		return
+	}
+	defer r.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(r.Body, 2<<20))
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	// Start from current config and overlay incoming JSON so missing fields keep their values
+	cur := s.GetConfig()
+	if err := json.Unmarshal(body, &cur); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "invalid JSON: " + err.Error()})
+		return
+	}
+	yaml := app.MarshalYAML(cur)
+
+	tmp, err := os.CreateTemp(".", "init.yaml.tmp-*")
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	tmpPath := tmp.Name()
+	if _, err := tmp.WriteString(yaml); err != nil {
+		tmp.Close()
+		os.Remove(tmpPath)
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmpPath)
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	if err := os.Rename(tmpPath, "init.yaml"); err != nil {
+		os.Remove(tmpPath)
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+
+	reloaded, err := app.LoadConfig("init.yaml")
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"ok": false, "error": "saved but reload failed: " + err.Error()})
+		return
+	}
+	s.UpdateConfig(reloaded)
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
 var knabenSuffixRe = regexp.MustCompile(`\s+\|\s+[^|]+$`)

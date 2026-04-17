@@ -188,6 +188,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/dev/fixanimelayerduplicates", s.handleDevFixAnimelayerDuplicates)
 	mux.HandleFunc("/dev/fixkinozalurls", s.handleDevFixKinozalUrls)
 	mux.HandleFunc("/dev/fixselezenurls", s.handleDevFixSelezenUrls)
+	mux.HandleFunc("/admin/config", s.handleAdminConfig)
 	mux.HandleFunc("/cron/knaben/parse", s.handleCronKnabenParse)
 	mux.HandleFunc("/stats/refresh", s.handleStatsRefresh)
 	mux.HandleFunc("/cron/anidub/parse", s.handleCronAnidubParse)
@@ -264,6 +265,17 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.serveHTMLFile(w, r, "settings.html")
+}
+func (s *Server) handleAdminConfig(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		s.handleAdminConfigGet(w, r)
+	case http.MethodPost:
+		s.handleAdminConfigSave(w, r)
+	default:
+		w.Header().Set("Allow", "GET, POST")
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"ok": false, "error": "GET/POST only"})
+	}
 }
 func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	writeCanonicalJSON(w, http.StatusOK, map[string]string{"status": "OK"})
@@ -1183,7 +1195,7 @@ func setCommonCORSHeaders(w http.ResponseWriter, allowPrivate bool) {
 
 func isLocalOnlyPath(path string) bool {
 	lp := strings.ToLower(path)
-	return strings.HasPrefix(lp, "/cron/") || path == "/jsondb" || strings.HasPrefix(lp, "/jsondb/") || strings.HasPrefix(lp, "/dev/")
+	return strings.HasPrefix(lp, "/cron/") || path == "/jsondb" || strings.HasPrefix(lp, "/jsondb/") || strings.HasPrefix(lp, "/dev/") || strings.HasPrefix(lp, "/admin/")
 }
 func isPathWhitelisted(path string) bool {
 	switch path {

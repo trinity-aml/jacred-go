@@ -35,9 +35,7 @@
       darkMode: 'class',
       theme: {
         extend: {
-          fontFamily: {
-            sans: ['Inter', 'system-ui', '-apple-system', 'sans-serif']
-          },
+          fontFamily: { sans: ['Inter', 'system-ui', '-apple-system', 'sans-serif'] },
           animation: {
             'fade-in': 'fadeIn 0.3s ease-in-out',
             'slide-up': 'slideUp 0.4s ease-out',
@@ -79,11 +77,82 @@
       input, select, button, textarea { min-height: 44px; font-size: 16px; }
     }
     .tap-target { min-height: 44px; min-width: 44px; }
+
+    .field-label { display: block; font-size: 0.75rem; font-weight: 500; color: #6b7280; margin-bottom: 0.25rem; text-transform: uppercase; letter-spacing: 0.05em; }
+    .dark .field-label { color: #9ca3af; }
+
+    .field-input, .field-select, .field-textarea {
+      width: 100%;
+      padding: 0.5rem 0.75rem;
+      font-size: 0.875rem;
+      background: #ffffff;
+      border: 1px solid #e5e7eb;
+      border-radius: 0.5rem;
+      color: #111827;
+      transition: border-color 150ms, box-shadow 150ms;
+    }
+    .dark .field-input, .dark .field-select, .dark .field-textarea {
+      background: #111827;
+      border-color: #374151;
+      color: #f3f4f6;
+    }
+    .field-input:focus, .field-select:focus, .field-textarea:focus {
+      border-color: #3b82f6;
+      box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
+      outline: none;
+    }
+    .field-textarea { min-height: 5rem; font-family: ui-monospace, SFMono-Regular, monospace; font-size: 0.8125rem; resize: vertical; }
+
+    .checkbox-row { display: flex; align-items: center; gap: 0.625rem; padding: 0.5rem 0; }
+    .checkbox-row input[type="checkbox"] { width: 1.125rem; height: 1.125rem; accent-color: #3b82f6; }
+    .checkbox-row label { font-size: 0.875rem; color: #374151; cursor: pointer; }
+    .dark .checkbox-row label { color: #e5e7eb; }
+
+    details.section { background: #ffffff; border: 1px solid #e5e7eb; border-radius: 1rem; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04); transition: border-color 150ms; }
+    .dark details.section { background: #111827; border-color: #1f2937; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2); }
+    details.section summary { list-style: none; cursor: pointer; padding: 1rem 1.25rem; display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; font-weight: 600; color: #111827; user-select: none; }
+    .dark details.section summary { color: #f3f4f6; }
+    details.section summary::-webkit-details-marker { display: none; }
+    details.section summary .chevron { transition: transform 200ms; flex-shrink: 0; }
+    details.section[open] summary .chevron { transform: rotate(90deg); }
+    details.section .body { padding: 0 1.25rem 1.25rem; }
+
+    .tracker-card { border: 1px solid #e5e7eb; border-radius: 0.75rem; padding: 1rem; }
+    .dark .tracker-card { border-color: #1f2937; background: rgba(17, 24, 39, 0.5); }
+
+    .grid-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1rem; }
+
+    #saveBar {
+      position: sticky;
+      bottom: 0;
+      background: linear-gradient(to top, var(--bg) 80%, transparent);
+      padding: 1rem 0 0.5rem;
+      z-index: 20;
+    }
+
+    .toast {
+      position: fixed;
+      bottom: 1.25rem;
+      left: 50%;
+      transform: translateX(-50%);
+      padding: 0.625rem 1rem;
+      border-radius: 0.75rem;
+      font-size: 0.875rem;
+      font-weight: 500;
+      box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
+      z-index: 50;
+      opacity: 0;
+      transition: opacity 200ms, transform 200ms;
+      pointer-events: none;
+    }
+    .toast.show { opacity: 1; transform: translateX(-50%) translateY(-8px); }
+    .toast.success { background: #10b981; color: white; }
+    .toast.error { background: #ef4444; color: white; }
   </style>
 </head>
 
 <body class="min-h-screen text-gray-900 dark:text-gray-100 font-sans">
-  <div id="app" class="max-w-5xl mx-auto px-3 sm:px-4 md:px-6 py-4 sm:py-6">
+  <div id="app" class="max-w-6xl mx-auto px-3 sm:px-4 md:px-6 py-4 sm:py-6">
     <main>
       <header class="mb-4 sm:mb-6 animate-slide-up">
         <div class="flex items-center justify-between gap-3">
@@ -104,7 +173,7 @@
                 Настройки
               </h1>
               <p class="text-xs sm:text-sm text-gray-500 dark:text-gray-400 mt-0.5 hidden sm:block">
-                Параметры init.yaml и трекеров
+                Параметры <code class="font-mono">init.yaml</code> и трекеров
               </p>
             </div>
           </div>
@@ -137,48 +206,462 @@
         </div>
       </header>
 
-      <section
-        class="bg-white dark:bg-gray-900 rounded-2xl p-6 sm:p-8 border border-gray-200 dark:border-gray-800 shadow-sm toolbar-field animate-slide-up">
-        <div class="flex items-start gap-4">
-          <div
-            class="flex-shrink-0 w-12 h-12 rounded-xl bg-blue-50 dark:bg-blue-950/40 border border-blue-200/60 dark:border-blue-900/50 flex items-center justify-center">
-            <svg class="w-6 h-6 text-blue-600 dark:text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
+      <div id="loadingState" class="flex items-center justify-center py-16">
+        <div class="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full spinner"></div>
+      </div>
+
+      <form id="settingsForm" class="hidden space-y-4 animate-slide-up">
+        <!-- Server -->
+        <details class="section" open>
+          <summary>
+            <span>Сервер</span>
+            <svg class="chevron w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+          </summary>
+          <div class="body grid-fields">
+            <div><label class="field-label">listenip</label><input class="field-input" data-path="listenip"/></div>
+            <div><label class="field-label">listenport</label><input type="number" class="field-input" data-path="listenport"/></div>
+            <div><label class="field-label">apikey</label><input class="field-input" data-path="apikey"/></div>
+            <div><label class="field-label">devkey</label><input class="field-input" data-path="devkey"/></div>
           </div>
-          <div class="min-w-0">
-            <h2 class="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-1">Раздел в разработке</h2>
-            <p class="text-sm text-gray-600 dark:text-gray-400 leading-relaxed">
-              Редактирование настроек <code
-                class="px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-800 text-xs font-mono">init.yaml</code>
-              через веб-интерфейс будет добавлено в следующих обновлениях. Сейчас конфигурация правится вручную —
-              после сохранения файла сервер автоматически подхватит изменения (hot-reload).
-            </p>
+        </details>
+
+        <!-- Database / merge -->
+        <details class="section">
+          <summary>
+            <span>База данных и дедупликация</span>
+            <svg class="chevron w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+          </summary>
+          <div class="body grid-fields">
+            <div><label class="field-label">fdbPathLevels</label><input type="number" class="field-input" data-path="fdbPathLevels"/></div>
+            <div class="checkbox-row"><input type="checkbox" id="cb_mergeduplicates" data-path="mergeduplicates"/><label for="cb_mergeduplicates">mergeduplicates</label></div>
+            <div class="checkbox-row"><input type="checkbox" id="cb_mergenumduplicates" data-path="mergenumduplicates"/><label for="cb_mergenumduplicates">mergenumduplicates</label></div>
+            <div><label class="field-label">maxreadfile</label><input type="number" class="field-input" data-path="maxreadfile"/></div>
           </div>
+        </details>
+
+        <!-- Logging -->
+        <details class="section">
+          <summary>
+            <span>Логирование</span>
+            <svg class="chevron w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+          </summary>
+          <div class="body grid-fields">
+            <div class="checkbox-row"><input type="checkbox" id="cb_log" data-path="log"/><label for="cb_log">log</label></div>
+            <div class="checkbox-row"><input type="checkbox" id="cb_logparsers" data-path="logParsers"/><label for="cb_logparsers">logParsers</label></div>
+            <div class="checkbox-row"><input type="checkbox" id="cb_logfdb" data-path="logFdb"/><label for="cb_logfdb">logFdb</label></div>
+            <div><label class="field-label">logFdbRetentionDays</label><input type="number" class="field-input" data-path="logFdbRetentionDays"/></div>
+            <div><label class="field-label">logFdbMaxSizeMb</label><input type="number" class="field-input" data-path="logFdbMaxSizeMb"/></div>
+            <div><label class="field-label">logFdbMaxFiles</label><input type="number" class="field-input" data-path="logFdbMaxFiles"/></div>
+          </div>
+        </details>
+
+        <!-- Public API -->
+        <details class="section">
+          <summary>
+            <span>Публичные эндпоинты</span>
+            <svg class="chevron w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+          </summary>
+          <div class="body grid-fields">
+            <div class="checkbox-row"><input type="checkbox" id="cb_openstats" data-path="openstats"/><label for="cb_openstats">openstats</label></div>
+            <div class="checkbox-row"><input type="checkbox" id="cb_opensync" data-path="opensync"/><label for="cb_opensync">opensync</label></div>
+            <div class="checkbox-row"><input type="checkbox" id="cb_opensync_v1" data-path="opensync_v1"/><label for="cb_opensync_v1">opensync_v1</label></div>
+            <div class="checkbox-row"><input type="checkbox" id="cb_web" data-path="web"/><label for="cb_web">web</label></div>
+          </div>
+        </details>
+
+        <!-- Timing -->
+        <details class="section">
+          <summary>
+            <span>Интервалы (мин)</span>
+            <svg class="chevron w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+          </summary>
+          <div class="body grid-fields">
+            <div><label class="field-label">timeStatsUpdate</label><input type="number" class="field-input" data-path="timeStatsUpdate"/></div>
+            <div><label class="field-label">timeSync</label><input type="number" class="field-input" data-path="timeSync"/></div>
+            <div><label class="field-label">timeSyncSpidr</label><input type="number" class="field-input" data-path="timeSyncSpidr"/></div>
+          </div>
+        </details>
+
+        <!-- Sync -->
+        <details class="section">
+          <summary>
+            <span>Синхронизация</span>
+            <svg class="chevron w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+          </summary>
+          <div class="body space-y-4">
+            <div class="grid-fields">
+              <div><label class="field-label">syncapi</label><input class="field-input" data-path="syncapi"/></div>
+              <div class="checkbox-row"><input type="checkbox" id="cb_syncsport" data-path="syncsport"/><label for="cb_syncsport">syncsport</label></div>
+              <div class="checkbox-row"><input type="checkbox" id="cb_syncspidr" data-path="syncspidr"/><label for="cb_syncspidr">syncspidr</label></div>
+            </div>
+            <div>
+              <label class="field-label">synctrackers (по одному на строку)</label>
+              <textarea class="field-textarea" data-path="synctrackers" data-type="lines" rows="3"></textarea>
+            </div>
+            <div>
+              <label class="field-label">disable_trackers (по одному на строку)</label>
+              <textarea class="field-textarea" data-path="disable_trackers" data-type="lines" rows="3"></textarea>
+            </div>
+          </div>
+        </details>
+
+        <!-- Tracks -->
+        <details class="section">
+          <summary>
+            <span>Tracks (TorrServer)</span>
+            <svg class="chevron w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+          </summary>
+          <div class="body space-y-4">
+            <div class="grid-fields">
+              <div class="checkbox-row"><input type="checkbox" id="cb_tracks" data-path="tracks"/><label for="cb_tracks">tracks</label></div>
+              <div class="checkbox-row"><input type="checkbox" id="cb_trackslog" data-path="trackslog"/><label for="cb_trackslog">trackslog</label></div>
+              <div><label class="field-label">tracksmod</label><input type="number" class="field-input" data-path="tracksmod"/></div>
+              <div><label class="field-label">tracksdelay (мс)</label><input type="number" class="field-input" data-path="tracksdelay"/></div>
+              <div><label class="field-label">tracksatempt</label><input type="number" class="field-input" data-path="tracksatempt"/></div>
+              <div><label class="field-label">trackscategory</label><input class="field-input" data-path="trackscategory"/></div>
+              <div><label class="field-label">tracksinterval.task0</label><input type="number" class="field-input" data-path="tracksinterval.task0"/></div>
+              <div><label class="field-label">tracksinterval.task1</label><input type="number" class="field-input" data-path="tracksinterval.task1"/></div>
+            </div>
+            <div>
+              <label class="field-label">tsuri (TorrServer URLs)</label>
+              <textarea class="field-textarea" data-path="tsuri" data-type="lines" rows="2"></textarea>
+            </div>
+          </div>
+        </details>
+
+        <!-- Runtime -->
+        <details class="section">
+          <summary>
+            <span>Runtime (память, GC)</span>
+            <svg class="chevron w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+          </summary>
+          <div class="body grid-fields">
+            <div><label class="field-label">memlimit (МБ, 0 = без лимита)</label><input type="number" class="field-input" data-path="memlimit"/></div>
+            <div><label class="field-label">gcpercent</label><input type="number" class="field-input" data-path="gcpercent"/></div>
+          </div>
+        </details>
+
+        <!-- Evercache -->
+        <details class="section">
+          <summary>
+            <span>Evercache</span>
+            <svg class="chevron w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+          </summary>
+          <div class="body grid-fields">
+            <div class="checkbox-row"><input type="checkbox" id="cb_ec_enable" data-path="evercache.enable"/><label for="cb_ec_enable">enable</label></div>
+            <div><label class="field-label">validHour</label><input type="number" class="field-input" data-path="evercache.validHour"/></div>
+            <div><label class="field-label">maxOpenWriteTask</label><input type="number" class="field-input" data-path="evercache.maxOpenWriteTask"/></div>
+            <div><label class="field-label">dropCacheTake</label><input type="number" class="field-input" data-path="evercache.dropCacheTake"/></div>
+          </div>
+        </details>
+
+        <!-- FlareSolverr-go -->
+        <details class="section">
+          <summary>
+            <span>flaresolverr-go (встроенный)</span>
+            <svg class="chevron w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+          </summary>
+          <div class="body grid-fields">
+            <div class="checkbox-row"><input type="checkbox" id="cb_fs_headless" data-path="flaresolverr_go.headless"/><label for="cb_fs_headless">headless</label></div>
+            <div><label class="field-label">browser_path (пусто = авто)</label><input class="field-input" data-path="flaresolverr_go.browser_path"/></div>
+          </div>
+        </details>
+
+        <!-- CFClient -->
+        <details class="section">
+          <summary>
+            <span>cfclient (TLS fingerprint)</span>
+            <svg class="chevron w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+          </summary>
+          <div class="body space-y-4">
+            <div class="grid-fields">
+              <div><label class="field-label">profile</label><input class="field-input" data-path="cfclient.profile"/></div>
+            </div>
+            <div>
+              <label class="field-label">useragent</label>
+              <input class="field-input" data-path="cfclient.useragent"/>
+            </div>
+          </div>
+        </details>
+
+        <!-- Trackers -->
+        <details class="section">
+          <summary>
+            <span>Трекеры</span>
+            <svg class="chevron w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+          </summary>
+          <div id="trackerContainer" class="body space-y-3"></div>
+        </details>
+
+        <!-- Global Proxy -->
+        <details class="section">
+          <summary>
+            <span>Глобальные прокси</span>
+            <svg class="chevron w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+          </summary>
+          <div class="body space-y-3">
+            <div id="proxyContainer" class="space-y-3"></div>
+            <button type="button" id="addProxyBtn"
+              class="inline-flex items-center gap-1.5 px-3 h-9 rounded-lg bg-blue-50 dark:bg-blue-950/40 hover:bg-blue-100 dark:hover:bg-blue-900/50 text-blue-700 dark:text-blue-300 text-sm font-medium transition-colors">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+              Добавить прокси
+            </button>
+          </div>
+        </details>
+
+        <div id="saveBar" class="flex flex-wrap items-center gap-3 justify-end">
+          <span id="saveStatus" class="text-sm text-gray-500 dark:text-gray-400 flex-1 min-w-0"></span>
+          <button type="button" id="reloadBtn"
+            class="inline-flex items-center gap-1.5 px-4 h-10 rounded-lg bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 text-sm font-medium transition-colors">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+            Перечитать
+          </button>
+          <button type="submit" id="saveBtn"
+            class="inline-flex items-center gap-1.5 px-5 h-10 rounded-lg bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white text-sm font-semibold shadow shadow-blue-900/20 disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
+            <svg id="saveIcon" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V3"/></svg>
+            Сохранить
+          </button>
         </div>
-      </section>
+      </form>
     </main>
   </div>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
   <script>
     (function () {
       const root = document.documentElement;
-      const btn = document.getElementById('toggleTheme');
+      const tbtn = document.getElementById('toggleTheme');
       const iconMoon = document.getElementById('iconMoon');
       const iconSun = document.getElementById('iconSun');
-      function sync() {
+      function syncTheme() {
         const dark = root.classList.contains('dark');
         iconMoon.classList.toggle('hidden', !dark);
         iconSun.classList.toggle('hidden', dark);
       }
-      sync();
-      btn.addEventListener('click', function () {
+      syncTheme();
+      tbtn.addEventListener('click', function () {
         const dark = !root.classList.contains('dark');
         root.classList.toggle('dark', dark);
         try { localStorage.setItem('theme', dark ? 'dark' : 'light'); } catch (e) { }
-        sync();
+        syncTheme();
       });
+
+      const TRACKERS = [
+        'Rutor', 'Megapeer', 'TorrentBy', 'Kinozal', 'NNMClub', 'Bitru', 'Toloka',
+        'Mazepa', 'Rutracker', 'Selezen', 'Lostfilm', 'Animelayer', 'Anidub',
+        'Aniliberty', 'Knaben', 'Anistar', 'Anifilm', 'Leproduction', 'Baibako'
+      ];
+
+      const loadingEl = document.getElementById('loadingState');
+      const formEl = document.getElementById('settingsForm');
+      const trackerEl = document.getElementById('trackerContainer');
+      const proxyEl = document.getElementById('proxyContainer');
+      const saveBtn = document.getElementById('saveBtn');
+      const reloadBtn = document.getElementById('reloadBtn');
+      const saveStatus = document.getElementById('saveStatus');
+      const addProxyBtn = document.getElementById('addProxyBtn');
+      const toastEl = document.getElementById('toast');
+
+      function getByPath(obj, path) {
+        return path.split('.').reduce((a, k) => (a == null ? a : a[k]), obj);
+      }
+      function setByPath(obj, path, value) {
+        const parts = path.split('.');
+        let cur = obj;
+        for (let i = 0; i < parts.length - 1; i++) {
+          if (cur[parts[i]] == null || typeof cur[parts[i]] !== 'object') cur[parts[i]] = {};
+          cur = cur[parts[i]];
+        }
+        cur[parts[parts.length - 1]] = value;
+      }
+      function showToast(msg, kind) {
+        toastEl.textContent = msg;
+        toastEl.className = 'toast show ' + (kind || 'success');
+        setTimeout(() => { toastEl.className = 'toast'; }, 2500);
+      }
+      function escapeHtml(s) {
+        return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+      }
+
+      function trackerCard(name, t) {
+        t = t || {};
+        const login = t.login || {};
+        return `
+          <details class="tracker-card" ${t.log || t.useproxy ? 'open' : ''}>
+            <summary class="flex items-center justify-between gap-2 cursor-pointer list-none font-semibold text-gray-900 dark:text-gray-100 select-none">
+              <span class="flex items-center gap-2">
+                <svg class="chevron w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+                ${name}
+              </span>
+              <span class="text-xs font-normal text-gray-500 dark:text-gray-400 truncate max-w-[60%]">${escapeHtml(t.host || '')}</span>
+            </summary>
+            <div class="mt-3 grid-fields">
+              <div><label class="field-label">host</label><input class="field-input" data-tr="${name}" data-k="host" value="${escapeHtml(t.host || '')}"/></div>
+              <div><label class="field-label">alias</label><input class="field-input" data-tr="${name}" data-k="alias" value="${escapeHtml(t.alias || '')}"/></div>
+              <div><label class="field-label">fetchmode</label>
+                <select class="field-select" data-tr="${name}" data-k="fetchmode">
+                  <option value="" ${!t.fetchmode ? 'selected' : ''}>standard (по умолчанию)</option>
+                  <option value="flaresolverr" ${t.fetchmode === 'flaresolverr' ? 'selected' : ''}>flaresolverr</option>
+                </select>
+              </div>
+              <div><label class="field-label">reqMinute</label><input type="number" class="field-input" data-tr="${name}" data-k="reqMinute" value="${t.reqMinute ?? ''}"/></div>
+              <div><label class="field-label">parseDelay (мс)</label><input type="number" class="field-input" data-tr="${name}" data-k="parseDelay" value="${t.parseDelay ?? ''}"/></div>
+              <div class="checkbox-row"><input type="checkbox" id="cb_${name}_useproxy" data-tr="${name}" data-k="useproxy" ${t.useproxy ? 'checked' : ''}/><label for="cb_${name}_useproxy">useproxy</label></div>
+              <div class="checkbox-row"><input type="checkbox" id="cb_${name}_skip" data-tr="${name}" data-k="insecureSkipVerify" ${t.insecureSkipVerify ? 'checked' : ''}/><label for="cb_${name}_skip">insecureSkipVerify</label></div>
+              <div class="checkbox-row"><input type="checkbox" id="cb_${name}_log" data-tr="${name}" data-k="log" ${t.log ? 'checked' : ''}/><label for="cb_${name}_log">log</label></div>
+              <div><label class="field-label">login.u</label><input class="field-input" data-tr="${name}" data-k="login.u" value="${escapeHtml(login.u || '')}"/></div>
+              <div><label class="field-label">login.p</label><input type="password" class="field-input" data-tr="${name}" data-k="login.p" value="${escapeHtml(login.p || '')}"/></div>
+              <div class="col-span-full"><label class="field-label">cookie</label><input class="field-input" data-tr="${name}" data-k="cookie" value="${escapeHtml(t.cookie || '')}"/></div>
+            </div>
+          </details>`;
+      }
+
+      function proxyCard(i, p) {
+        p = p || {};
+        const listLines = Array.isArray(p.list) ? p.list.join('\n') : '';
+        return `
+          <div class="tracker-card" data-proxy-idx="${i}">
+            <div class="flex items-center justify-between mb-3">
+              <span class="font-semibold text-sm text-gray-900 dark:text-gray-100">Прокси #${i + 1}</span>
+              <button type="button" class="text-xs text-red-600 dark:text-red-400 hover:underline" data-remove-proxy="${i}">Удалить</button>
+            </div>
+            <div class="grid-fields">
+              <div><label class="field-label">pattern (regex)</label><input class="field-input" data-px="${i}" data-k="pattern" value="${escapeHtml(p.pattern || '')}"/></div>
+              <div class="checkbox-row"><input type="checkbox" id="cb_px${i}_auth" data-px="${i}" data-k="useAuth" ${p.useAuth ? 'checked' : ''}/><label for="cb_px${i}_auth">useAuth</label></div>
+              <div class="checkbox-row"><input type="checkbox" id="cb_px${i}_bypass" data-px="${i}" data-k="BypassOnLocal" ${p.BypassOnLocal ? 'checked' : ''}/><label for="cb_px${i}_bypass">BypassOnLocal</label></div>
+              <div><label class="field-label">username</label><input class="field-input" data-px="${i}" data-k="username" value="${escapeHtml(p.username || '')}"/></div>
+              <div><label class="field-label">password</label><input type="password" class="field-input" data-px="${i}" data-k="password" value="${escapeHtml(p.password || '')}"/></div>
+            </div>
+            <div class="mt-3">
+              <label class="field-label">list (по одной прокси на строку)</label>
+              <textarea class="field-textarea" data-px="${i}" data-k="list" rows="3">${escapeHtml(listLines)}</textarea>
+            </div>
+          </div>`;
+      }
+
+      let config = {};
+
+      function render(cfg) {
+        config = cfg || {};
+        // Populate top-level inputs
+        formEl.querySelectorAll('[data-path]').forEach(el => {
+          const path = el.dataset.path;
+          const val = getByPath(cfg, path);
+          if (el.type === 'checkbox') el.checked = !!val;
+          else if (el.dataset.type === 'lines') el.value = Array.isArray(val) ? val.join('\n') : '';
+          else el.value = val == null ? '' : String(val);
+        });
+        // Trackers
+        trackerEl.innerHTML = TRACKERS.map(n => trackerCard(n, cfg[n])).join('');
+        // Proxies
+        const proxies = Array.isArray(cfg.globalproxy) ? cfg.globalproxy : [];
+        proxyEl.innerHTML = proxies.map((p, i) => proxyCard(i, p)).join('');
+      }
+
+      function collect() {
+        const out = JSON.parse(JSON.stringify(config));
+        // Top-level inputs
+        formEl.querySelectorAll('[data-path]').forEach(el => {
+          const path = el.dataset.path;
+          let v;
+          if (el.type === 'checkbox') v = !!el.checked;
+          else if (el.type === 'number') v = el.value === '' ? 0 : Number(el.value);
+          else if (el.dataset.type === 'lines') v = el.value.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+          else v = el.value;
+          setByPath(out, path, v);
+        });
+        // Trackers
+        TRACKERS.forEach(name => {
+          const t = out[name] = out[name] || {};
+          t.login = t.login || { u: '', p: '' };
+          trackerEl.querySelectorAll(`[data-tr="${name}"]`).forEach(el => {
+            const k = el.dataset.k;
+            let v;
+            if (el.type === 'checkbox') v = !!el.checked;
+            else if (el.type === 'number') v = el.value === '' ? 0 : Number(el.value);
+            else v = el.value;
+            if (k === 'login.u') t.login.u = v;
+            else if (k === 'login.p') t.login.p = v;
+            else t[k] = v;
+          });
+        });
+        // Proxies
+        const px = [];
+        proxyEl.querySelectorAll('[data-proxy-idx]').forEach(card => {
+          const i = Number(card.dataset.proxyIdx);
+          const p = { pattern: '', useAuth: false, BypassOnLocal: false, username: '', password: '', list: [] };
+          card.querySelectorAll(`[data-px="${i}"]`).forEach(el => {
+            const k = el.dataset.k;
+            if (k === 'list') p.list = el.value.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+            else if (el.type === 'checkbox') p[k] = !!el.checked;
+            else p[k] = el.value;
+          });
+          px.push(p);
+        });
+        out.globalproxy = px;
+        return out;
+      }
+
+      async function load() {
+        loadingEl.classList.remove('hidden');
+        formEl.classList.add('hidden');
+        try {
+          const r = await fetch('/admin/config');
+          if (!r.ok) throw new Error('HTTP ' + r.status);
+          const cfg = await r.json();
+          render(cfg);
+          loadingEl.classList.add('hidden');
+          formEl.classList.remove('hidden');
+        } catch (e) {
+          loadingEl.innerHTML = '<div class="text-red-500">Не удалось загрузить конфиг: ' + escapeHtml(e.message) + '</div>';
+        }
+      }
+
+      async function save() {
+        saveBtn.disabled = true;
+        saveStatus.textContent = 'Сохранение…';
+        try {
+          const payload = collect();
+          const r = await fetch('/admin/config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+          });
+          const js = await r.json().catch(() => ({}));
+          if (!r.ok || !js.ok) {
+            throw new Error(js.error || ('HTTP ' + r.status));
+          }
+          saveStatus.textContent = 'Сохранено, конфиг перечитан';
+          showToast('Настройки сохранены', 'success');
+          await load();
+        } catch (e) {
+          saveStatus.textContent = '';
+          showToast('Ошибка: ' + e.message, 'error');
+        } finally {
+          saveBtn.disabled = false;
+        }
+      }
+
+      formEl.addEventListener('submit', e => { e.preventDefault(); save(); });
+      reloadBtn.addEventListener('click', load);
+      addProxyBtn.addEventListener('click', () => {
+        const px = Array.isArray(config.globalproxy) ? config.globalproxy.slice() : [];
+        px.push({ pattern: '', useAuth: false, BypassOnLocal: false, username: '', password: '', list: [] });
+        config.globalproxy = px;
+        proxyEl.innerHTML = px.map((p, i) => proxyCard(i, p)).join('');
+      });
+      proxyEl.addEventListener('click', e => {
+        const btn = e.target.closest('[data-remove-proxy]');
+        if (!btn) return;
+        const idx = Number(btn.dataset.removeProxy);
+        const cur = collect();
+        cur.globalproxy.splice(idx, 1);
+        config = cur;
+        proxyEl.innerHTML = cur.globalproxy.map((p, i) => proxyCard(i, p)).join('');
+      });
+
+      load();
     })();
   </script>
 </body>
