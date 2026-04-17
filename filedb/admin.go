@@ -2,9 +2,11 @@ package filedb
 
 import (
 	"compress/gzip"
+	"context"
 	"crypto/md5"
 	"encoding/json"
 	"fmt"
+	"log"
 	"math"
 	"os"
 	"path/filepath"
@@ -48,19 +50,37 @@ func SyncFileTime(ft int64) int64 {
 	return int64(math.Nextafter(float64(ft), math.MaxFloat64))
 }
 
+// OrderedMasterEntries returns a cached sorted snapshot of masterDb.
+// The cache is rebuilt every 10 minutes by RunBackgroundJobs.
+// Falls back to live sort if cache is empty (before first rebuild).
 func (db *DB) OrderedMasterEntries() []MasterEntry {
+	db.orderedMu.RLock()
+	cached := db.orderedCache
+	db.orderedMu.RUnlock()
+	if len(cached) > 0 {
+		return cached
+	}
+	// Fallback: build on demand (first call before background rebuild runs)
+	return db.rebuildOrderedCache()
+}
+
+// rebuildOrderedCache sorts masterDb and stores in orderedCache. Returns the new slice.
+func (db *DB) rebuildOrderedCache() []MasterEntry {
 	db.mu.RLock()
-	defer db.mu.RUnlock()
 	out := make([]MasterEntry, 0, len(db.masterDb))
 	for k, v := range db.masterDb {
 		out = append(out, MasterEntry{Key: k, Value: v})
 	}
+	db.mu.RUnlock()
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].Value.FileTime == out[j].Value.FileTime {
 			return out[i].Key < out[j].Key
 		}
 		return out[i].Value.FileTime < out[j].Value.FileTime
 	})
+	db.orderedMu.Lock()
+	db.orderedCache = out
+	db.orderedMu.Unlock()
 	return out
 }
 
@@ -142,6 +162,8 @@ func (db *DB) SaveChangesToFileNow() error {
 func (db *DB) doSave() error {
 	db.saveMu.Lock()
 	defer db.saveMu.Unlock()
+	// Flush dirty buckets to disk before saving masterDb
+	db.FlushDirtyBuckets()
 	db.mu.RLock()
 	master := make(map[string]TorrentInfo, len(db.masterDb))
 	for k, v := range db.masterDb {
@@ -229,6 +251,76 @@ func (db *DB) dailyBackup(masterPath string) {
 		}
 		if t.Before(cutoff) {
 			_ = os.Remove(filepath.Join(filepath.Dir(masterPath), name))
+		}
+	}
+}
+
+// FlushDirtyBuckets writes all dirty buckets to disk and clears the dirty cache.
+func (db *DB) FlushDirtyBuckets() int {
+	db.dirtyMu.Lock()
+	toFlush := db.dirtyBuckets
+	db.dirtyBuckets = make(map[string]*dirtyEntry, len(toFlush))
+	db.dirtyMu.Unlock()
+
+	if len(toFlush) == 0 {
+		return 0
+	}
+
+	flushed := 0
+	for key, de := range toFlush {
+		path := db.PathDb(key)
+		if err := writeBucket(path, de.bucket); err != nil {
+			log.Printf("filedb: flush error key=%s: %v", key, err)
+			// Put back on failure
+			db.dirtyMu.Lock()
+			if _, exists := db.dirtyBuckets[key]; !exists {
+				db.dirtyBuckets[key] = de
+			}
+			db.dirtyMu.Unlock()
+		} else {
+			flushed++
+		}
+	}
+	return flushed
+}
+
+// DirtyCount returns the number of buckets waiting to be flushed to disk.
+func (db *DB) DirtyCount() int {
+	db.dirtyMu.RLock()
+	n := len(db.dirtyBuckets)
+	db.dirtyMu.RUnlock()
+	return n
+}
+
+// RunBackgroundJobs starts periodic tasks:
+//   - Flush dirty buckets to disk every 30 seconds
+//   - Rebuild sorted masterDb cache every 10 minutes
+//
+// Call as: go db.RunBackgroundJobs(ctx)
+func (db *DB) RunBackgroundJobs(ctx context.Context) {
+	// Build initial ordered cache
+	db.rebuildOrderedCache()
+	log.Printf("filedb: ordered cache built (%d entries)", len(db.orderedCache))
+
+	flushTicker := time.NewTicker(30 * time.Second)
+	cacheTicker := time.NewTicker(10 * time.Minute)
+	defer flushTicker.Stop()
+	defer cacheTicker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			// Final flush on shutdown
+			if n := db.FlushDirtyBuckets(); n > 0 {
+				log.Printf("filedb: shutdown flush: %d buckets", n)
+			}
+			return
+		case <-flushTicker.C:
+			if n := db.FlushDirtyBuckets(); n > 0 {
+				log.Printf("filedb: flushed %d dirty buckets", n)
+			}
+		case <-cacheTicker.C:
+			db.rebuildOrderedCache()
 		}
 	}
 }

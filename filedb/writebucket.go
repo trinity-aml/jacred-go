@@ -69,11 +69,13 @@ func (db *DB) saveBucketInternal(key string, bucket map[string]TorrentDetails, u
 		db.fdbLog.LogBucketChanges(key, oldBucket, bucket)
 	}
 	path := db.PathDb(key)
-	if err := writeBucket(path, bucket); err != nil {
-		return err
-	}
 	if len(bucket) == 0 {
+		// Empty bucket — flush to disk immediately (deletes the file content)
+		_ = writeBucket(path, bucket)
 		ecDelete(path)
+		db.dirtyMu.Lock()
+		delete(db.dirtyBuckets, key)
+		db.dirtyMu.Unlock()
 		db.mu.Lock()
 		delete(db.masterDb, key)
 		for part, keys := range db.fastdb {
@@ -92,6 +94,13 @@ func (db *DB) saveBucketInternal(key string, bucket map[string]TorrentDetails, u
 		db.mu.Unlock()
 		return nil
 	}
+	// Store in dirty cache — disk write deferred to FlushDirtyBuckets
+	db.dirtyMu.Lock()
+	db.dirtyBuckets[key] = &dirtyEntry{
+		bucket:    deepCopyBucket(bucket),
+		updatedAt: updatedAt.UTC(),
+	}
+	db.dirtyMu.Unlock()
 	db.ecPut(path, bucket)
 	db.mu.Lock()
 	db.masterDb[key] = TorrentInfo{UpdateTime: updatedAt.UTC(), FileTime: ToFileTimeUTC(updatedAt.UTC())}

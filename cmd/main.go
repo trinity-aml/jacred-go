@@ -118,6 +118,7 @@ func main() {
 			go manager.RunLoop(ctx, i)
 		}
 	}
+	go db.RunBackgroundJobs(ctx)
 	go background.RunTrackersCron(ctx, db, "Data", "wwwroot", cfg.Evercache.Enable && cfg.Evercache.ValidHour <= 0)
 
 	srv := server.New(cfg, db, tracksDB, "wwwroot")
@@ -171,8 +172,11 @@ func main() {
 	// Shutdown flaresolverr-go (close Chrome)
 	core.CloseFlareService()
 
-	// Сохраняем masterDb перед выходом
+	// Flush dirty buckets and save masterDb
 	log.Println("saving database...")
+	if n := db.FlushDirtyBuckets(); n > 0 {
+		log.Printf("flushed %d dirty buckets", n)
+	}
 	if err := db.SaveChangesToFileNow(); err != nil {
 		log.Printf("error saving masterDb: %v", err)
 	} else {

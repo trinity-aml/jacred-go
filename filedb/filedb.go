@@ -41,10 +41,30 @@ type DB struct {
 	dirty    atomic.Bool  // true when masterDb has unsaved changes
 	lastSaved atomic.Int64 // unix nanoseconds of last successful save
 	fdbLog   *FdbLogger   // audit logger for bucket changes (nil if disabled)
+
+	// Dirty bucket cache: modified buckets held in memory, flushed to disk periodically.
+	dirtyMu      sync.RWMutex
+	dirtyBuckets map[string]*dirtyEntry
+
+	// Sorted masterDb cache: rebuilt every 10 minutes in background.
+	orderedMu    sync.RWMutex
+	orderedCache []MasterEntry
+}
+
+// dirtyEntry holds a bucket that has been modified but not yet flushed to disk.
+type dirtyEntry struct {
+	bucket    map[string]TorrentDetails
+	updatedAt time.Time
 }
 
 func New(cfg app.Config, dataDir string) *DB {
-	db := &DB{Config: cfg, DataDir: dataDir, masterDb: map[string]TorrentInfo{}, fastdb: map[string][]string{}}
+	db := &DB{
+		Config:       cfg,
+		DataDir:      dataDir,
+		masterDb:     map[string]TorrentInfo{},
+		fastdb:       map[string][]string{},
+		dirtyBuckets: map[string]*dirtyEntry{},
+	}
 	if cfg.LogFdb {
 		db.fdbLog = NewFdbLogger(
 			filepath.Join(dataDir, "log"),
@@ -93,6 +113,15 @@ func (db *DB) PathDb(key string) string {
 	return path
 }
 func (db *DB) OpenRead(key string) (map[string]TorrentDetails, error) {
+	// Check dirty cache first (latest in-memory version)
+	db.dirtyMu.RLock()
+	if de, ok := db.dirtyBuckets[key]; ok {
+		cp := deepCopyBucket(de.bucket)
+		db.dirtyMu.RUnlock()
+		return cp, nil
+	}
+	db.dirtyMu.RUnlock()
+
 	path := db.PathDb(key)
 	if cached := db.ecGet(path); cached != nil {
 		return cached, nil
@@ -106,7 +135,15 @@ func (db *DB) OpenRead(key string) (map[string]TorrentDetails, error) {
 
 // OpenReadNoCache reads a bucket directly from disk, bypassing the evercache.
 // Use for bulk scans (stats, admin) where caching every bucket wastes memory.
+// Still checks the dirty cache since it holds the latest version.
 func (db *DB) OpenReadNoCache(key string) (map[string]TorrentDetails, error) {
+	db.dirtyMu.RLock()
+	if de, ok := db.dirtyBuckets[key]; ok {
+		cp := deepCopyBucket(de.bucket)
+		db.dirtyMu.RUnlock()
+		return cp, nil
+	}
+	db.dirtyMu.RUnlock()
 	return db.openReadPath(db.PathDb(key))
 }
 func (db *DB) openReadPath(path string) (map[string]TorrentDetails, error) {
