@@ -1447,6 +1447,159 @@ func (s *Server) handleDevFixAnimelayerDuplicates(w http.ResponseWriter, r *http
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "urlsFixed": totalFixed, "duplicatesRemoved": totalRemoved})
 }
 
+var (
+	reKinozalID = regexp.MustCompile(`(?i)[?&]id=(\d+)`)
+	reSelezenID = regexp.MustCompile(`(?i)/relizy-ot-selezen/(\d+)-`)
+)
+
+func (s *Server) handleDevFixKinozalUrls(w http.ResponseWriter, r *http.Request) {
+	if !isLocalRequest(r) {
+		writeJSON(w, http.StatusForbidden, map[string]any{"badip": true})
+		return
+	}
+	totalFixed, totalRemoved := 0, 0
+	for _, item := range s.DB.UnorderedMasterEntries() {
+		bucket, err := s.DB.OpenReadOrEmpty(item.Key)
+		if err != nil {
+			continue
+		}
+		type kEntry struct {
+			url string
+			t   filedb.TorrentDetails
+		}
+		idMap := map[string][]kEntry{}
+		bucketChanged := false
+		for url, t := range bucket {
+			if t == nil || asString(t["trackerName"]) != "kinozal" {
+				continue
+			}
+			newURL := url
+			if strings.HasPrefix(url, "http://") {
+				newURL = "https://" + url[7:]
+			}
+			if newURL != url {
+				if _, clash := bucket[newURL]; !clash {
+					delete(bucket, url)
+					t["url"] = newURL
+					bucket[newURL] = t
+					totalFixed++
+					bucketChanged = true
+				} else {
+					// normalized form already present — drop the http copy
+					delete(bucket, url)
+					totalRemoved++
+					bucketChanged = true
+					continue
+				}
+			}
+			m := reKinozalID.FindStringSubmatch(newURL)
+			if len(m) < 2 {
+				continue
+			}
+			idMap[m[1]] = append(idMap[m[1]], kEntry{newURL, t})
+		}
+		for _, group := range idMap {
+			if len(group) <= 1 {
+				continue
+			}
+			sort.Slice(group, func(i, j int) bool {
+				ti := filedb.TorrentTime(group[i].t, "updateTime")
+				tj := filedb.TorrentTime(group[j].t, "updateTime")
+				return ti.After(tj)
+			})
+			for _, e := range group[1:] {
+				delete(bucket, e.url)
+				totalRemoved++
+				bucketChanged = true
+			}
+		}
+		if bucketChanged {
+			_ = s.DB.SaveBucket(item.Key, bucket, time.Now().UTC())
+		}
+	}
+	_ = s.DB.SaveChangesToFileNow()
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "urlsFixed": totalFixed, "duplicatesRemoved": totalRemoved})
+}
+
+func (s *Server) handleDevFixSelezenUrls(w http.ResponseWriter, r *http.Request) {
+	if !isLocalRequest(r) {
+		writeJSON(w, http.StatusForbidden, map[string]any{"badip": true})
+		return
+	}
+	targetHost := "selezen.top"
+	if host := s.GetConfig().Selezen.Host; host != "" {
+		if u, err := url.Parse(host); err == nil && u.Host != "" {
+			targetHost = u.Host
+		}
+	}
+	totalFixed, totalRemoved := 0, 0
+	for _, item := range s.DB.UnorderedMasterEntries() {
+		bucket, err := s.DB.OpenReadOrEmpty(item.Key)
+		if err != nil {
+			continue
+		}
+		type sEntry struct {
+			url string
+			t   filedb.TorrentDetails
+		}
+		idMap := map[string][]sEntry{}
+		bucketChanged := false
+		for u, t := range bucket {
+			if t == nil || asString(t["trackerName"]) != "selezen" {
+				continue
+			}
+			newURL := u
+			parsed, perr := url.Parse(u)
+			if perr == nil && parsed.Host != "" && parsed.Host != targetHost {
+				parsed.Scheme = "https"
+				parsed.Host = targetHost
+				newURL = parsed.String()
+			} else if strings.HasPrefix(u, "http://") {
+				newURL = "https://" + u[7:]
+			}
+			if newURL != u {
+				if _, clash := bucket[newURL]; !clash {
+					delete(bucket, u)
+					t["url"] = newURL
+					bucket[newURL] = t
+					totalFixed++
+					bucketChanged = true
+				} else {
+					delete(bucket, u)
+					totalRemoved++
+					bucketChanged = true
+					continue
+				}
+			}
+			m := reSelezenID.FindStringSubmatch(newURL)
+			if len(m) < 2 {
+				continue
+			}
+			idMap[m[1]] = append(idMap[m[1]], sEntry{newURL, t})
+		}
+		for _, group := range idMap {
+			if len(group) <= 1 {
+				continue
+			}
+			sort.Slice(group, func(i, j int) bool {
+				ti := filedb.TorrentTime(group[i].t, "updateTime")
+				tj := filedb.TorrentTime(group[j].t, "updateTime")
+				return ti.After(tj)
+			})
+			for _, e := range group[1:] {
+				delete(bucket, e.url)
+				totalRemoved++
+				bucketChanged = true
+			}
+		}
+		if bucketChanged {
+			_ = s.DB.SaveBucket(item.Key, bucket, time.Now().UTC())
+		}
+	}
+	_ = s.DB.SaveChangesToFileNow()
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "urlsFixed": totalFixed, "duplicatesRemoved": totalRemoved})
+}
+
 var knabenSuffixRe = regexp.MustCompile(`\s+\|\s+[^|]+$`)
 
 func (s *Server) handleSyncTracks(w http.ResponseWriter, r *http.Request) {

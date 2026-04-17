@@ -185,6 +185,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/dev/migrateanilibertyurls", s.handleDevMigrateAnilibertyUrls)
 	mux.HandleFunc("/dev/removeduplicateaniliberty", s.handleDevRemoveDuplicateAniliberty)
 	mux.HandleFunc("/dev/fixanimelayerduplicates", s.handleDevFixAnimelayerDuplicates)
+	mux.HandleFunc("/dev/fixkinozalurls", s.handleDevFixKinozalUrls)
+	mux.HandleFunc("/dev/fixselezenurls", s.handleDevFixSelezenUrls)
 	mux.HandleFunc("/cron/knaben/parse", s.handleCronKnabenParse)
 	mux.HandleFunc("/stats/refresh", s.handleStatsRefresh)
 	mux.HandleFunc("/cron/anidub/parse", s.handleCronAnidubParse)

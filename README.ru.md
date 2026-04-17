@@ -984,6 +984,22 @@ curl "http://127.0.0.1:9117/dev/removeDuplicateAniliberty"
 curl "http://127.0.0.1:9117/dev/fixAnimelayerDuplicates"
 ```
 
+#### `GET /dev/fixKinozalUrls`
+
+Нормализует http→https для Kinozal и удаляет дубликаты по `id=NNN`, сохраняя запись с самым свежим `updateTime`.
+
+```bash
+curl "http://127.0.0.1:9117/dev/fixKinozalUrls"
+```
+
+#### `GET /dev/fixSelezenUrls`
+
+Нормализует host Selezen (старые хосты типа `open.selezen.org` → текущий `Selezen.Host` из конфига) и удаляет дубликаты по числовому ID, сохраняя запись с самым свежим `updateTime`.
+
+```bash
+curl "http://127.0.0.1:9117/dev/fixSelezenUrls"
+```
+
 ### Управление bucket-ами
 
 #### `GET /dev/removeBucket`

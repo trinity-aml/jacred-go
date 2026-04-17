@@ -997,6 +997,22 @@ Normalizes http→https for Animelayer URLs and removes duplicates by hex ID.
 curl "http://127.0.0.1:9117/dev/fixAnimelayerDuplicates"
 ```
 
+#### `GET /dev/fixKinozalUrls`
+
+Normalizes http→https for Kinozal URLs and removes duplicates by `id=NNN`, keeping the most recent.
+
+```bash
+curl "http://127.0.0.1:9117/dev/fixKinozalUrls"
+```
+
+#### `GET /dev/fixSelezenUrls`
+
+Normalizes Selezen host (old hosts like `open.selezen.org` → configured `Selezen.Host`) and removes duplicates by numeric item ID, keeping the most recent.
+
+```bash
+curl "http://127.0.0.1:9117/dev/fixSelezenUrls"
+```
+
 ### Bucket Management
 
 #### `GET /dev/removeBucket`
