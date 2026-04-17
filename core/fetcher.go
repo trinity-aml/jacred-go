@@ -3,7 +3,6 @@ package core
 import (
 	"context"
 	"crypto/tls"
-	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -292,7 +291,6 @@ func (f *Fetcher) fetchViaFlare(rawURL, cookie string, transport *http.Transport
 		if err == nil && res.StatusCode != 403 {
 			return res, nil
 		}
-		log.Printf("flaresolverr: cached cookies expired for %s (got 403)", domain)
 		f.clearFlareSession(domain)
 	}
 
@@ -325,9 +323,6 @@ func (f *Fetcher) fetchWithCookies(rawURL, cookie string, sess *flareSession, tr
 		body, status, err := f.cfClient.Download(rawURL, merged, "")
 		if err == nil && status != 403 {
 			return &FetchResult{Body: body, StatusCode: status}, nil
-		}
-		if err != nil {
-			log.Printf("flaresolverr: cfclient failed for %s: %v", extractDomain(rawURL), err)
 		}
 	}
 
@@ -364,28 +359,12 @@ func (f *Fetcher) solveFlare(rawURL, domain string) (*flareSolveResult, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 
-	resp, httpStatus := svc.ControllerV1(ctx, &flaresolverr.V1Request{
+	resp, _ := svc.ControllerV1(ctx, &flaresolverr.V1Request{
 		Cmd:           "request.get",
 		URL:           rawURL,
 		MaxTimeout:    60000,
 		WaitInSeconds: 2,
 	})
-
-	log.Printf("flaresolverr: response status=%s httpStatus=%d message=%q", resp.Status, httpStatus, resp.Message)
-
-	// DEBUG: dump full response (Solution fields), truncating Response body for readability
-	if dump, derr := json.Marshal(resp); derr == nil {
-		s := string(dump)
-		if len(s) > 2000 {
-			s = s[:2000] + "...(truncated)"
-		}
-		log.Printf("flaresolverr: raw response JSON: %s", s)
-	}
-	if resp.Solution != nil {
-		log.Printf("flaresolverr: Solution struct: URL=%q Status=%d UserAgent=%q ResponseLen=%d CookiesLen=%d HeadersLen=%d",
-			resp.Solution.URL, resp.Solution.Status, resp.Solution.UserAgent,
-			len(resp.Solution.Response), len(resp.Solution.Cookies), len(resp.Solution.Headers))
-	}
 
 	if resp.Status != "ok" {
 		return nil, fmt.Errorf("flaresolverr status=%s message=%s", resp.Status, resp.Message)
@@ -398,11 +377,10 @@ func (f *Fetcher) solveFlare(rawURL, domain string) (*flareSolveResult, error) {
 	var cookieParts []string
 	for _, c := range resp.Solution.Cookies {
 		cookieParts = append(cookieParts, c.Name+"="+c.Value)
-		log.Printf("flaresolverr:   cookie: %s=%s (domain=%s)", c.Name, c.Value[:min(len(c.Value), 30)], c.Domain)
 	}
 	cookieStr := strings.Join(cookieParts, "; ")
 	ua := resp.Solution.UserAgent
-	log.Printf("flaresolverr: solved %s cookies=%d ua=%q bodyLen=%d solURL=%s", domain, len(resp.Solution.Cookies), ua, len(resp.Solution.Response), resp.Solution.URL)
+	log.Printf("flaresolverr: solved %s cookies=%d bodyLen=%d", domain, len(resp.Solution.Cookies), len(resp.Solution.Response))
 	if ua == "" {
 		ua = "Mozilla/5.0"
 	}
