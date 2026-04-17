@@ -806,8 +806,8 @@ func isLocalRequest(r *http.Request) bool {
 	if ip.IsLinkLocalUnicast() {
 		return true
 	}
-	// fc00::/7 unique local (ULA)
-	if len(ip) == net.IPv6len && ip[0]&0xfe == 0xfc {
+	// RFC1918 (10/8, 172.16/12, 192.168/16) + RFC4193 (fc00::/7)
+	if ip.IsPrivate() {
 		return true
 	}
 	return false
