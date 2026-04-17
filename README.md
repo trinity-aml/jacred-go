@@ -2,7 +2,7 @@
 
 Go-based multi-tracker torrent aggregator. Port of C# project jacred (mainly from https://github.com/jacred-fdb/jacred, web interface 100% from)
 
-Collects torrent metadata from 19 Russian/Ukrainian trackers into a unified flat-file database with search, sync, and stats APIs.
+Collects torrent metadata from 20 Russian/Ukrainian trackers into a unified flat-file database with search, sync, and stats APIs.
 
 ## Table of Contents
 
@@ -119,12 +119,24 @@ gcpercent: 50    # Go's GOGC knob: 50 = GC at +50% heap growth (default 50, Go d
 
 `memlimit: 0` disables the hard cap (Go default behaviour).
 
-### FlareSolverr (CloudFlare Bypass)
+### CloudFlare Bypass (flaresolverr-go + cfclient)
 
-For trackers protected by CloudFlare (megapeer, bitru, anistar, anifilm, torrentby, mazepa), you can use [FlareSolverr](https://github.com/FlareSolverr/FlareSolverr) to solve CF challenges. FlareSolverr is called once per domain, cookies are cached for 30 minutes, all subsequent requests use standard HTTP with cached cookies.
+For trackers protected by CloudFlare (megapeer, bitru, anistar, anifilm, torrentby, mazepa), the system uses two built-in components (no external Docker services required):
+
+1. **flaresolverr-go** — embedded Chromium-based CF challenge solver. Runs via Xvfb virtual display. Cookies are cached for 30 minutes per domain.
+2. **cfclient** — TLS fingerprint spoofing (tls-client with Chrome profile). Used for HTTP requests after cookies are obtained.
+
+The flow: flaresolverr-go solves the CF challenge and obtains cookies → cfclient uses those cookies with Chrome TLS fingerprint → falls back to standard HTTP if cfclient fails.
 
 ```yaml
-flaresolverr: "http://localhost:8191"   # FlareSolverr endpoint (empty = disabled)
+# Embedded flaresolverr-go settings (no external service needed)
+flaresolverr_go:
+  headless: true              # true = headless Chrome (default), false = visible (needs Xvfb)
+  browser_path: ""            # Custom Chromium path (empty = auto-detect)
+
+# TLS fingerprint for CF-protected requests
+cfclient:
+  profile: "chrome_146"       # TLS profile: chrome_133, chrome_144, chrome_146, firefox_117, etc.
 ```
 
 Enable per tracker via `fetchmode`:
@@ -135,7 +147,7 @@ Megapeer:
   host: "https://megapeer.vip"
 ```
 
-If the response is a CF challenge page (403 or missing content marker), the session is automatically invalidated and FlareSolverr re-solves the challenge.
+If the response is a CF challenge page (403 or missing content marker), the session is automatically invalidated and re-solved.
 
 ### Evercache (In-Memory Bucket Cache)
 

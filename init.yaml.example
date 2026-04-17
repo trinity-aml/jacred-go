@@ -79,12 +79,19 @@ evercache:
   maxOpenWriteTask: 500 # Max buckets held in memory (reduce to 200-300 on 1 GB VPS)
   dropCacheTake: 100    # How many buckets to evict when the cap is hit
 
-# ── FlareSolverr (CloudFlare bypass) ──────────────────────────────────────────
-# Solve CF challenges via FlareSolverr. Cookies cached 30 min per domain.
+# ── CloudFlare bypass (flaresolverr-go + cfclient) ───────────────────────────
+# Built-in CF challenge solver — no external Docker service needed.
+# flaresolverr-go: embedded Chromium solves CF challenges, cookies cached 30 min.
+# cfclient: Chrome TLS fingerprint for HTTP requests after cookies are obtained.
 # Used by trackers with fetchmode: "flaresolverr" (megapeer, bitru, anistar, etc.)
-# Install: https://github.com/FlareSolverr/FlareSolverr
+# Requires Xvfb on headless servers: apt install xvfb
 
-flaresolverr: ""   # e.g. "http://localhost:8191" (empty = disabled)
+flaresolverr_go:
+  headless: true          # true = headless Chrome (default), false = visible via Xvfb
+  browser_path: ""        # Custom Chromium path (empty = auto-detect)
+
+cfclient:
+  profile: "chrome_146"   # TLS profile: chrome_133, chrome_144, chrome_146, firefox_117, etc.
 
 # ── Multi-instance sync ───────────────────────────────────────────────────────
 # Pull torrent data from another jacred instance running elsewhere.
@@ -128,7 +135,7 @@ Rutor:
 
 Megapeer:
   host: "https://megapeer.vip"
-  fetchmode: "flaresolverr"   # CF-protected, needs FlareSolverr
+  fetchmode: "flaresolverr"   # CF-protected, uses flaresolverr-go + cfclient
   parseDelay: 3000
   reqMinute: 10
 
@@ -138,7 +145,7 @@ Megapeer:
 
 TorrentBy:
   host: "https://torrent.by"
-  fetchmode: "flaresolverr"   # CF-protected, needs FlareSolverr
+  fetchmode: "flaresolverr"   # CF-protected, uses flaresolverr-go + cfclient
   insecureSkipVerify: true    # torrent.by uses certificate from unknown CA
   parseDelay: 5000
   reqMinute: 8
@@ -174,7 +181,7 @@ NNMClub:
 
 Bitru:
   host: "https://bitru.org"
-  fetchmode: "flaresolverr"   # CF-protected, needs FlareSolverr
+  fetchmode: "flaresolverr"   # CF-protected, uses flaresolverr-go + cfclient
   parseDelay: 3000
   reqMinute: 10
 
@@ -205,7 +212,7 @@ Toloka:
 
 Mazepa:
   host: "https://mazepa.to"
-  fetchmode: "flaresolverr"   # CF-protected, needs FlareSolverr
+  fetchmode: "flaresolverr"   # CF-protected, uses flaresolverr-go + cfclient
   parseDelay: 10000   # many categories — be conservative
   reqMinute: 6
   login:
@@ -295,7 +302,7 @@ Knaben:
 
 Anistar:
   host: "https://anistar.org"
-  fetchmode: "flaresolverr"   # CF-protected, needs FlareSolverr
+  fetchmode: "flaresolverr"   # CF-protected, uses flaresolverr-go + cfclient
   parseDelay: 3000
   reqMinute: 10
 
@@ -305,7 +312,7 @@ Anistar:
 
 Anifilm:
   host: "https://anifilm.pro"
-  fetchmode: "flaresolverr"   # CF-protected, needs FlareSolverr
+  fetchmode: "flaresolverr"   # CF-protected, uses flaresolverr-go + cfclient
   parseDelay: 3000
   reqMinute: 10
 

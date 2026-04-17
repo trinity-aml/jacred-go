@@ -16,6 +16,10 @@ evercache:
   maxOpenWriteTask: 500   # Max buckets held in memory (lower for VPS with limited RAM)
   dropCacheTake: 100
 
+flaresolverr_go:
+  headless: true
+  # browser_path: ""   # Custom Chromium path (empty = auto-detect)
+
 cfclient:
   profile: "chrome_146"
 
