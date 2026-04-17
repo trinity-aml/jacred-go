@@ -2,7 +2,7 @@
 
 Мульти-трекерный торрент-агрегатор на Go. Порт C# проекта jacred (основа — https://github.com/jacred-fdb/jacred, веб-интерфейс полностью оттуда)
 
-Собирает метаданные торрентов с 19 русскоязычных/украинских трекеров в единую файловую базу данных с API для поиска, синхронизации и статистики.
+Собирает метаданные торрентов с 20 русскоязычных/украинских трекеров в единую файловую базу данных с API для поиска, синхронизации и статистики.
 
 ## Содержание
 
@@ -119,12 +119,24 @@ gcpercent: 50    # Go GOGC: 50 = GC при +50% роста кучи (по умо
 
 `memlimit: 0` отключает жёсткий лимит (поведение Go по умолчанию).
 
-### FlareSolverr (обход CloudFlare)
+### Обход CloudFlare (flaresolverr-go + cfclient)
 
-Для трекеров, защищённых CloudFlare (megapeer, bitru, anistar, anifilm, torrentby, mazepa), можно использовать [FlareSolverr](https://github.com/FlareSolverr/FlareSolverr) для решения CF-challenge. FlareSolverr вызывается один раз на домен, куки кешируются на 30 минут, все последующие запросы используют стандартный HTTP с кешированными куками.
+Для трекеров, защищённых CloudFlare (megapeer, bitru, anistar, anifilm, torrentby, mazepa), используются два встроенных компонента — внешний Docker-сервис не нужен:
+
+1. **flaresolverr-go** — встроенный решатель CF-challenge на базе Chromium. Работает через виртуальный дисплей Xvfb. Куки кешируются на 30 минут на домен.
+2. **cfclient** — подмена TLS-отпечатка (tls-client с профилем Chrome). Используется для HTTP-запросов после получения кук.
+
+Поток: flaresolverr-go решает CF-challenge и получает куки → cfclient использует их с Chrome TLS fingerprint → fallback на стандартный HTTP при сбое cfclient.
 
 ```yaml
-flaresolverr: "http://localhost:8191"   # Эндпоинт FlareSolverr (пусто = отключено)
+# Настройки встроенного flaresolverr-go (внешний сервис не требуется)
+flaresolverr_go:
+  headless: true              # true = headless Chrome (по умолчанию), false = видимый (нужен Xvfb)
+  browser_path: ""            # Путь к Chromium (пусто = автоопределение)
+
+# TLS fingerprint для CF-защищённых запросов
+cfclient:
+  profile: "chrome_146"       # TLS-профиль: chrome_133, chrome_144, chrome_146, firefox_117 и т.д.
 ```
 
 Включается для каждого трекера через `fetchmode`:
@@ -135,7 +147,7 @@ Megapeer:
   host: "https://megapeer.vip"
 ```
 
-Если ответ — CF challenge-страница (403 или отсутствие маркера контента), сессия автоматически сбрасывается и FlareSolverr повторно решает challenge.
+Если ответ — CF challenge-страница (403 или отсутствие маркера контента), сессия автоматически сбрасывается и challenge решается заново.
 
 ### Evercache (кэш bucket-ов в памяти)
 
