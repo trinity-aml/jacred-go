@@ -89,46 +89,66 @@ func (p *Parser) Parse(ctx context.Context, maxpage int) (ParseResult, error) {
 		maxpage = 1
 	}
 	res := ParseResult{Status: "ok", PerCategory: map[string]int{}}
+	delay := time.Duration(p.Config.Megapeer.ParseDelay) * time.Millisecond
 	for ci, cat := range categories {
-		if ci > 0 && p.Config.Megapeer.ParseDelay > 0 {
+		if ci > 0 && delay > 0 {
 			select {
 			case <-ctx.Done():
 				return res, ctx.Err()
-			case <-time.After(time.Duration(p.Config.Megapeer.ParseDelay) * time.Millisecond):
+			case <-time.After(delay):
 			}
 		}
-		for page := 0; page < maxpage; page++ {
-			items, err := p.fetchPage(ctx, cat, page)
-			if err != nil {
-				log.Printf("megapeer: cat=%s page=%d error: %v", cat, page+1, err)
-				break // skip to next category
+		catFetched := p.parseCategory(ctx, cat, maxpage, delay, &res)
+		if catFetched == 0 && delay > 0 {
+			// Cooldown and retry once
+			log.Printf("megapeer: cat=%s returned 0 items, cooldown %v and retry", cat, delay*2)
+			select {
+			case <-ctx.Done():
+				return res, ctx.Err()
+			case <-time.After(delay * 2):
 			}
-			res.Fetched += len(items)
-			res.PerCategory[cat] += len(items)
-			if len(items) == 0 {
-				break // no more pages in this category
-			}
-			added, updated, skipped, failed, err := p.saveTorrents(ctx, items)
-			if err != nil {
-				return res, err
-			}
-			res.Added += added
-			res.Updated += updated
-			res.Skipped += skipped
-			res.Failed += failed
-			log.Printf("megapeer: cat=%s page %d/%d fetched=%d added=%d skipped=%d failed=%d", cat, page+1, maxpage, len(items), added, skipped, failed)
-
-			if page < maxpage-1 && p.Config.Megapeer.ParseDelay > 0 {
-				select {
-				case <-ctx.Done():
-					return res, ctx.Err()
-				case <-time.After(time.Duration(p.Config.Megapeer.ParseDelay) * time.Millisecond):
-				}
-			}
+			p.Fetcher.InvalidateSession("https://" + strings.TrimRight(p.Config.Megapeer.Host, "/"))
+			p.parseCategory(ctx, cat, maxpage, delay, &res)
 		}
 	}
 	log.Printf("megapeer: done fetched=%d added=%d skipped=%d failed=%d", res.Fetched, res.Added, res.Skipped, res.Failed)
 	return res, nil
+}
+
+func (p *Parser) parseCategory(ctx context.Context, cat string, maxpage int, delay time.Duration, res *ParseResult) int {
+	catFetched := 0
+	for page := 0; page < maxpage; page++ {
+		items, err := p.fetchPage(ctx, cat, page)
+		if err != nil {
+			log.Printf("megapeer: cat=%s page=%d error: %v", cat, page+1, err)
+			break
+		}
+		res.Fetched += len(items)
+		res.PerCategory[cat] += len(items)
+		catFetched += len(items)
+		if len(items) == 0 {
+			break
+		}
+		added, updated, skipped, failed, err := p.saveTorrents(ctx, items)
+		if err != nil {
+			log.Printf("megapeer: cat=%s save error: %v", cat, err)
+			break
+		}
+		res.Added += added
+		res.Updated += updated
+		res.Skipped += skipped
+		res.Failed += failed
+		log.Printf("megapeer: cat=%s page %d/%d fetched=%d added=%d skipped=%d failed=%d", cat, page+1, maxpage, len(items), added, skipped, failed)
+
+		if page < maxpage-1 && delay > 0 {
+			select {
+			case <-ctx.Done():
+				return catFetched
+			case <-time.After(delay):
+			}
+		}
+	}
+	return catFetched
 }
 
 func (p *Parser) fetchPage(ctx context.Context, cat string, page int) ([]filedb.TorrentDetails, error) {
