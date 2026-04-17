@@ -152,6 +152,7 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", s.handleRoot)
 	mux.HandleFunc("/stats", s.handleStats)
+	mux.HandleFunc("/settings", s.handleSettings)
 	mux.HandleFunc("/health", s.handleHealth)
 	mux.HandleFunc("/version", s.handleVersion)
 	mux.HandleFunc("/lastupdatedb", s.handleLastUpdateDB)
@@ -256,6 +257,13 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.serveHTMLFile(w, r, "stats.html")
+}
+func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/settings" && r.URL.Path != "/settings/" {
+		s.serveMaybeStatic(w, r)
+		return
+	}
+	s.serveHTMLFile(w, r, "settings.html")
 }
 func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	writeCanonicalJSON(w, http.StatusOK, map[string]string{"status": "OK"})
@@ -1179,7 +1187,7 @@ func isLocalOnlyPath(path string) bool {
 }
 func isPathWhitelisted(path string) bool {
 	switch path {
-	case "/", "/stats", "/stats/", "/health", "/version", "/lastupdatedb", "/api/v1.0/conf":
+	case "/", "/stats", "/stats/", "/settings", "/settings/", "/health", "/version", "/lastupdatedb", "/api/v1.0/conf":
 		return true
 	}
 	return strings.HasPrefix(path, "/sync/")
