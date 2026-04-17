@@ -255,7 +255,7 @@ func (s *Server) handleSyncFdbTorrents(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 
-		bucket, err := s.DB.OpenRead(item.Key)
+		bucket, err := s.DB.OpenReadNoCache(item.Key)
 		if err != nil {
 			continue
 		}
@@ -329,7 +329,7 @@ func (s *Server) handleSyncTorrents(w http.ResponseWriter, r *http.Request) {
 		if item.Value.FileTime <= ft {
 			continue
 		}
-		bucket, err := s.DB.OpenRead(item.Key)
+		bucket, err := s.DB.OpenReadNoCache(item.Key)
 		if err != nil {
 			continue
 		}
