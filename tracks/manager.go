@@ -53,8 +53,10 @@ func NewManager(cfg app.Config, fdb *filedb.DB, tracksDB *DB, dataDir string) *M
 		FileDB:   fdb,
 		TracksDB: tracksDB,
 		DataDir:  dataDir,
-		Client:   &http.Client{Timeout: 30 * time.Second},
-		rnd:      rand.New(rand.NewSource(time.Now().UnixNano())),
+		// No client-level Timeout: per-call context timeouts control each request
+		// to match C# original (10s list, 30s add/cleanup, 2min analyze).
+		Client: &http.Client{},
+		rnd:    rand.New(rand.NewSource(time.Now().UnixNano())),
 	}
 }
 
@@ -163,6 +165,8 @@ func (m *Manager) doJSON(ctx context.Context, method, rawURL string, payload any
 }
 
 func (m *Manager) CheckTorrentExistsWithCategory(ctx context.Context, tsuri, infohash string) (bool, string, bool) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
 	resp, body, err := m.doJSON(ctx, http.MethodPost, baseURL(tsuri)+"/torrents", map[string]any{"action": "list"})
 	if err != nil {
 		return false, "", true
@@ -187,6 +191,8 @@ func (m *Manager) CheckTorrentExistsWithCategory(ctx context.Context, tsuri, inf
 }
 
 func (m *Manager) GetTorrentCountByCategory(ctx context.Context, tsuri, category string) (int, bool) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
 	resp, body, err := m.doJSON(ctx, http.MethodPost, baseURL(tsuri)+"/torrents", map[string]any{"action": "list"})
 	if err != nil {
 		return 0, false
@@ -251,7 +257,9 @@ func (m *Manager) AddTorrentToServer(ctx context.Context, tsuri, magnet, infohas
 		}
 		return false, false, false
 	}
-	resp, _, err := m.doJSON(ctx, http.MethodPost, baseURL(tsuri)+"/torrents", map[string]any{
+	addCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	resp, _, err := m.doJSON(addCtx, http.MethodPost, baseURL(tsuri)+"/torrents", map[string]any{
 		"action":     "add",
 		"link":       magnet,
 		"save_to_db": false,
@@ -269,6 +277,8 @@ func (m *Manager) AddTorrentToServer(ctx context.Context, tsuri, magnet, infohas
 }
 
 func (m *Manager) AnalyzeWithExternalAPI(ctx context.Context, tsuri, infohash string) (*FFProbeModel, int, error) {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL(tsuri)+"/ffp/"+strings.ToUpper(infohash)+"/1", nil)
 	if err != nil {
 		return nil, 0, err
@@ -298,13 +308,30 @@ func (m *Manager) AnalyzeWithExternalAPI(ctx context.Context, tsuri, infohash st
 
 func (m *Manager) CleanupTorrent(ctx context.Context, tsuri, infohash string, typetask int) {
 	exists, actualCategory, serverError := m.CheckTorrentExistsWithCategory(ctx, tsuri, infohash)
-	if serverError || !exists {
+	if serverError {
+		m.Log("Сервер вернул ошибку при запросе списка торрентов. Удаление отменено.", &typetask)
+		return
+	}
+	if !exists {
+		m.Log("Торрент "+infohash+" не найден на сервере. Удаление не требуется.", &typetask)
 		return
 	}
 	if !strings.EqualFold(strings.TrimSpace(actualCategory), strings.TrimSpace(m.Config.TracksCategory)) {
+		m.Log("Торрент "+infohash+" не в категории '"+m.Config.TracksCategory+"' (категория: '"+actualCategory+"'). Удаление отменено.", &typetask)
 		return
 	}
-	_, _, _ = m.doJSON(ctx, http.MethodPost, baseURL(tsuri)+"/torrents", map[string]any{"action": "rem", "hash": infohash})
+	remCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	resp, _, err := m.doJSON(remCtx, http.MethodPost, baseURL(tsuri)+"/torrents", map[string]any{"action": "rem", "hash": infohash})
+	if err != nil {
+		m.Log("Ошибка при очистке торрента "+infohash+" на сервере: "+err.Error(), &typetask)
+		return
+	}
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		m.Log("Торрент "+infohash+" успешно удален с сервера", &typetask)
+	} else {
+		m.Log(fmt.Sprintf("Ошибка при удалении торрента (%d)", resp.StatusCode), &typetask)
+	}
 }
 
 func (m *Manager) SaveTrackResults(result *FFProbeModel, infohash string, typetask int) error {
@@ -356,7 +383,13 @@ func (m *Manager) Add(ctx context.Context, magnet string, currentAttempt int, ty
 	tsuri := m.SelectBestServer(selectCtx)
 	cancelSelect()
 	if tsuri == "" {
-		m.Log("Все серверы недоступны. Выход.", &typetask)
+		m.Log("Все серверы недоступны. Пауза 1 минута...", &typetask)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(time.Minute):
+		}
+		m.Log("Пауза завершена. Выход.", &typetask)
 		return nil
 	}
 
@@ -364,13 +397,28 @@ func (m *Manager) Add(ctx context.Context, magnet string, currentAttempt int, ty
 	defer cancelAnalyze()
 	added, existsInCorrectCategory, serverError := m.AddTorrentToServer(analyzeCtx, tsuri, magnet, infohash, typetask)
 	if serverError {
-		m.Log("Сервер вернул ошибку при получении списка торрентов. Выход.", &typetask)
+		m.Log("Сервер вернул ошибку при получении списка торрентов. Пауза 1 минута...", &typetask)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(time.Minute):
+		}
+		m.Log("Пауза завершена. Выход.", &typetask)
 		return nil
 	}
 	shouldAnalyze := added || existsInCorrectCategory
 	if !shouldAnalyze {
-		m.Log("Не удалось добавить торрент на сервер и он не существует в правильной категории. Завершение.", &typetask)
+		m.Log(fmt.Sprintf("Торрент не в категории '%s'. Анализ отменен.", m.Config.TracksCategory), &typetask)
 		return nil
+	}
+	// From here on, torrent either was added by us or already exists in our category.
+	// Guarantee cleanup via defer so we don't leave orphans on ctx cancellation.
+	defer m.CleanupTorrent(context.Background(), tsuri, infohash, typetask)
+
+	if existsInCorrectCategory {
+		m.Log(fmt.Sprintf("Торрент %s уже существует на сервере в категории '%s'. Начинаем анализ...", infohash, m.Config.TracksCategory), &typetask)
+	} else if added {
+		m.Log(fmt.Sprintf("Торрент %s успешно добавлен в категорию '%s'. Начинаем анализ...", infohash, m.Config.TracksCategory), &typetask)
 	}
 	if added {
 		select {
@@ -380,7 +428,6 @@ func (m *Manager) Add(ctx context.Context, magnet string, currentAttempt int, ty
 		}
 	}
 	res, apiStatusCode, err := m.AnalyzeWithExternalAPI(analyzeCtx, tsuri, infohash)
-	m.CleanupTorrent(context.Background(), tsuri, infohash, typetask)
 	if err != nil {
 		m.Log("Критическая ошибка при анализе треков: "+err.Error(), &typetask)
 	}
@@ -394,16 +441,17 @@ func (m *Manager) Add(ctx context.Context, magnet string, currentAttempt int, ty
 		m.Log("Анализ треков для "+infohash+" успешно завершен!", &typetask)
 		return nil
 	}
-	if typetask != 1 && torrentKey != "" {
-		newAttempt := currentAttempt + 1
+	newAttempt := currentAttempt
+	if typetask != 1 {
+		newAttempt = currentAttempt + 1
 		if apiStatusCode == 400 {
 			newAttempt = m.Config.TracksAttempt
 		}
-		if newAttempt != currentAttempt {
+		if torrentKey != "" && newAttempt != currentAttempt {
 			_ = m.FileDB.UpdateTorrentFfprobeInfo(torrentKey, magnet, newAttempt, nil, nil)
 		}
-		m.Log(fmt.Sprintf("Анализ треков для %s без результата. Код ответа API: %d. Осталось %d попыток.", infohash, apiStatusCode, m.Config.TracksAttempt-newAttempt), &typetask)
 	}
+	m.Log(fmt.Sprintf("Анализ треков для %s без результата. Код ответа API: %d. Осталось %d попыток.", infohash, apiStatusCode, m.Config.TracksAttempt-newAttempt), &typetask)
 	return nil
 }
 
@@ -476,12 +524,19 @@ func includeByTask(t filedb.TorrentDetails, typetask int, now time.Time) bool {
 func (m *Manager) ProcessOnce(ctx context.Context, typetask int, now time.Time) (int, error) {
 	task := typetask
 	m.Log(fmt.Sprintf("start typetask=%d", typetask), &task)
+	startTime := time.Now()
 	candidates := m.CollectCandidates(typetask, now)
 	m.Log(fmt.Sprintf("typetask=%d collected %d torrents to process", typetask, len(candidates)), &task)
 	processed := 0
 	for _, c := range candidates {
 		if !m.Config.Tracks {
 			m.Log(fmt.Sprintf("end typetask=%d Tracks off in settings", typetask), &task)
+			break
+		}
+		if typetask == 2 && time.Since(startTime) > 10*24*time.Hour {
+			break
+		}
+		if (typetask == 3 || typetask == 4 || typetask == 5) && time.Since(startTime) > 30*24*time.Hour {
 			break
 		}
 		magnet := toString(c.Torrent["magnet"])
@@ -497,7 +552,7 @@ func (m *Manager) ProcessOnce(ctx context.Context, typetask int, now time.Time) 
 			processed++
 		}
 	}
-	m.Log(fmt.Sprintf("end typetask=%d", typetask), &task)
+	m.Log(fmt.Sprintf("end typetask=%d (elapsed %.1fm)", typetask, time.Since(startTime).Minutes()), &task)
 	return processed, nil
 }
 

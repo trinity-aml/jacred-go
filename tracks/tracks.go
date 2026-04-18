@@ -118,7 +118,7 @@ func (db *DB) GetByInfoHash(infohash string) ([]FFStream, bool) {
 }
 
 func (db *DB) GetByMagnet(magnet string, types []string, onlyDB bool) ([]FFStream, bool) {
-	if TheBad(types) {
+	if types != nil && TheBad(types) {
 		return nil, false
 	}
 	infohash, err := InfoHashFromMagnet(magnet)
