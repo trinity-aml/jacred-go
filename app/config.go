@@ -79,7 +79,7 @@ func parseYAMLIntoConfig(text string, cfg *Config) {
 				continue
 			}
 			if currentProxy != nil && indent >= 6 && strings.HasPrefix(trimmed, "- ") && currentListTarget == "proxy.list" {
-				currentProxy.List = append(currentProxy.List, strings.TrimSpace(strings.TrimPrefix(trimmed, "- ")))
+				currentProxy.List = append(currentProxy.List, unquote(strings.TrimPrefix(trimmed, "- ")))
 				continue
 			}
 		}
@@ -184,7 +184,7 @@ func parseYAMLIntoConfig(text string, cfg *Config) {
 		}
 
 		if indent == 2 && strings.HasPrefix(trimmed, "- ") {
-			val := strings.TrimSpace(strings.TrimPrefix(trimmed, "- "))
+			val := unquote(strings.TrimPrefix(trimmed, "- "))
 			switch currentListTarget {
 			case "synctrackers":
 				cfg.SyncTrackers = append(cfg.SyncTrackers, val)

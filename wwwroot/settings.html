@@ -646,9 +646,11 @@
       formEl.addEventListener('submit', e => { e.preventDefault(); save(); });
       reloadBtn.addEventListener('click', load);
       addProxyBtn.addEventListener('click', () => {
-        const px = Array.isArray(config.globalproxy) ? config.globalproxy.slice() : [];
+        const cur = collect();
+        const px = Array.isArray(cur.globalproxy) ? cur.globalproxy : [];
         px.push({ pattern: '', useAuth: false, BypassOnLocal: false, username: '', password: '', list: [] });
-        config.globalproxy = px;
+        cur.globalproxy = px;
+        config = cur;
         proxyEl.innerHTML = px.map((p, i) => proxyCard(i, p)).join('');
       });
       proxyEl.addEventListener('click', e => {
