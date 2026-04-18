@@ -276,11 +276,10 @@ func (m *Manager) AddTorrentToServer(ctx context.Context, tsuri, magnet, infohas
 	return true, false, false
 }
 
-func (m *Manager) AnalyzeWithExternalAPI(ctx context.Context, tsuri, infohash string, typetask int) (*FFProbeModel, int, error) {
+func (m *Manager) AnalyzeWithExternalAPI(ctx context.Context, tsuri, infohash string) (*FFProbeModel, int, error) {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
-	apiURL := baseURL(tsuri) + "/ffp/" + strings.ToUpper(infohash) + "/1"
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL(tsuri)+"/ffp/"+strings.ToUpper(infohash)+"/1", nil)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -295,13 +294,6 @@ func (m *Manager) AnalyzeWithExternalAPI(ctx context.Context, tsuri, infohash st
 		return nil, resp.StatusCode, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		bodyText := strings.TrimSpace(string(body))
-		if len(bodyText) > 300 {
-			bodyText = bodyText[:300] + "..."
-		}
-		if bodyText != "" {
-			m.Log(fmt.Sprintf("ffp API ответ %d для %s: %s", resp.StatusCode, infohash, bodyText), &typetask)
-		}
 		return nil, resp.StatusCode, nil
 	}
 	var res FFProbeModel
@@ -435,7 +427,7 @@ func (m *Manager) Add(ctx context.Context, magnet string, currentAttempt int, ty
 		case <-time.After(3 * time.Second):
 		}
 	}
-	res, apiStatusCode, err := m.AnalyzeWithExternalAPI(analyzeCtx, tsuri, infohash, typetask)
+	res, apiStatusCode, err := m.AnalyzeWithExternalAPI(analyzeCtx, tsuri, infohash)
 	if err != nil {
 		m.Log("Критическая ошибка при анализе треков: "+err.Error(), &typetask)
 	}
