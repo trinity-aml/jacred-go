@@ -26,7 +26,6 @@ import (
 	"jacred/cron/bitruapi"
 	"jacred/cron/knaben"
 	"jacred/filedb"
-	"jacred/tracks"
 )
 
 var jsonDBSaveWork atomic.Bool
@@ -284,7 +283,7 @@ func (s *Server) handleSyncFdbTorrents(w http.ResponseWriter, r *http.Request) {
 					"url": t["url"],
 				}
 			} else {
-				torrent[k] = normalizeSyncTorrent(s.enrichTorrentWithTracks(cloneMap(t)))
+				torrent[k] = normalizeSyncTorrent(cloneMap(t))
 			}
 
 			countread++
@@ -347,7 +346,7 @@ func (s *Server) handleSyncTorrents(w http.ResponseWriter, r *http.Request) {
 			if trackerName != "" && !strings.EqualFold(asString(t["trackerName"]), trackerName) {
 				continue
 			}
-			cp := normalizeSyncTorrent(s.enrichTorrentWithTracks(cloneMap(t)))
+			cp := normalizeSyncTorrent(cloneMap(t))
 			cp["updateTime"] = item.Value.UpdateTime
 			torrents = append(torrents, map[string]any{"key": k, "value": cp})
 			if len(torrents) >= take {
@@ -445,9 +444,6 @@ func normalizeSyncTorrent(t filedb.TorrentDetails) filedb.TorrentDetails {
 	}
 	if v, ok := t["languages"]; ok {
 		t["languages"] = sortedStrings(toStringSliceAny(v))
-	}
-	if _, ok := t["ffprobe"]; !ok {
-		t["ffprobe"] = []any{}
 	}
 	if v, ok := t["size"]; ok {
 		switch n := v.(type) {
@@ -731,30 +727,6 @@ func filedbKeyPath(key string) string {
 	return filepath.ToSlash(filepath.Join(md5key[:2], md5key[2:]))
 }
 
-
-func (s *Server) enrichTorrentWithTracks(t filedb.TorrentDetails) filedb.TorrentDetails {
-	if t == nil {
-		return t
-	}
-	if t["ffprobe"] != nil && t["languages"] != nil {
-		return t
-	}
-	magnet := strings.TrimSpace(asString(t["magnet"]))
-	if magnet == "" || s.TracksDB == nil {
-		return t
-	}
-	streams, ok := s.TracksDB.GetByMagnet(magnet, toStringSliceAny(t["types"]), true)
-	if !ok || len(streams) == 0 {
-		return t
-	}
-	if t["ffprobe"] == nil {
-		t["ffprobe"] = streams
-	}
-	if t["languages"] == nil {
-		t["languages"] = tracks.Languages(toStringSliceAny(t["languages"]), streams)
-	}
-	return t
-}
 
 func toStringSliceAny(v any) []string {
 	switch x := v.(type) {
@@ -1678,14 +1650,6 @@ func (s *Server) handleAdminConfigSave(w http.ResponseWriter, r *http.Request) {
 
 var knabenSuffixRe = regexp.MustCompile(`\s+\|\s+[^|]+$`)
 
-func (s *Server) handleSyncTracks(w http.ResponseWriter, r *http.Request) {
-	writeBareNotFound(w)
-}
-
-func (s *Server) handleSyncTracksCheck(w http.ResponseWriter, r *http.Request) {
-	writeBareNotFound(w)
-}
-
 func (s *Server) handleStatsRefresh(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		w.WriteHeader(http.StatusMethodNotAllowed)
@@ -1733,9 +1697,6 @@ func (s *Server) generateStatsFile() {
 		Update      int
 		Check       int
 		AllTorrents int
-		TrkConfirm  int
-		TrkWait     int
-		TrkError    int
 	}
 
 	trackers := map[string]*trackerStat{}
@@ -1772,33 +1733,17 @@ func (s *Server) generateStatsFile() {
 			if !ut.Before(today) {
 				st.Update++
 			}
-
-			// Tracks stats
-			magnet := strings.TrimSpace(asString(t["magnet"]))
-			if magnet != "" {
-				if t["ffprobe"] != nil {
-					st.TrkConfirm++
-				} else {
-					st.TrkWait++
-				}
-			}
 		}
 	}
 
 	// Build output array sorted by alltorrents desc
-	type tracksInfo struct {
-		Wait    int `json:"wait"`
-		Confirm int `json:"confirm"`
-		Skip    int `json:"skip"`
-	}
 	type statsEntry struct {
-		TrackerName string     `json:"trackerName"`
-		LastNewTor  string     `json:"lastnewtor"`
-		NewTor      int        `json:"newtor"`
-		Update      int        `json:"update"`
-		Check       int        `json:"check"`
-		AllTorrents int        `json:"alltorrents"`
-		Tracks      tracksInfo `json:"tracks"`
+		TrackerName string `json:"trackerName"`
+		LastNewTor  string `json:"lastnewtor"`
+		NewTor      int    `json:"newtor"`
+		Update      int    `json:"update"`
+		Check       int    `json:"check"`
+		AllTorrents int    `json:"alltorrents"`
 	}
 
 	entries := make([]statsEntry, 0, len(trackers))
@@ -1814,11 +1759,6 @@ func (s *Server) generateStatsFile() {
 			Update:      st.Update,
 			Check:       st.Check,
 			AllTorrents: st.AllTorrents,
-			Tracks: tracksInfo{
-				Wait:    st.TrkWait,
-				Confirm: st.TrkConfirm,
-				Skip:    st.TrkError,
-			},
 		})
 	}
 

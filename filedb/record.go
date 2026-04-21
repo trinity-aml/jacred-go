@@ -25,7 +25,6 @@ type TorrentRecord struct {
 	Voices       string   `json:"voices,omitempty"`
 	Seasons      string   `json:"seasons,omitempty"`
 	Languages    string   `json:"languages,omitempty"`
-	FFProbe      any      `json:"ffprobe,omitempty"`
 	DownloadURI  string   `json:"_downloadURI,omitempty"`
 	TID          string   `json:"_tid,omitempty"`
 }
@@ -99,9 +98,6 @@ func (r TorrentRecord) ToMap() TorrentDetails {
 	if r.Languages != "" {
 		m["languages"] = r.Languages
 	}
-	if r.FFProbe != nil {
-		m["ffprobe"] = r.FFProbe
-	}
 	if r.DownloadURI != "" {
 		m["_downloadURI"] = r.DownloadURI
 	}
@@ -136,7 +132,6 @@ func RecordFromMap(m TorrentDetails) TorrentRecord {
 		Voices:       asString(m["voices"]),
 		Seasons:      asString(m["seasons"]),
 		Languages:    asString(m["languages"]),
-		FFProbe:      m["ffprobe"],
 		DownloadURI:  asString(m["_downloadURI"]),
 		TID:          asString(m["_tid"]),
 	}

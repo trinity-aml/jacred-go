@@ -54,19 +54,6 @@ func MarshalYAML(cfg Config) string {
 	writeList(&b, "disable_trackers", cfg.DisableTrackers)
 	b.WriteString("\n")
 
-	// Tracks
-	writeScalar(&b, "tracks", cfg.Tracks)
-	writeScalar(&b, "tracksmod", cfg.TracksMod)
-	writeScalar(&b, "tracksdelay", cfg.TracksDelay)
-	writeScalar(&b, "trackslog", cfg.TracksLog)
-	writeScalar(&b, "tracksatempt", cfg.TracksAttempt)
-	writeScalar(&b, "trackscategory", cfg.TracksCategory)
-	b.WriteString("tracksinterval:\n")
-	writeIndented(&b, 2, "task0", cfg.TracksInterval.Task0)
-	writeIndented(&b, 2, "task1", cfg.TracksInterval.Task1)
-	writeList(&b, "tsuri", cfg.TSURI)
-	b.WriteString("\n")
-
 	// Runtime
 	writeScalar(&b, "maxreadfile", cfg.MaxReadFile)
 	writeScalar(&b, "memlimit", cfg.MemLimitMB)

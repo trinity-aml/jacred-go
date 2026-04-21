@@ -10,8 +10,10 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"jacred/app"
@@ -25,11 +27,29 @@ var (
 	flareSvc     *flaresolverr.Service
 	flareSvcCfg  app.FlareSolverrGoConfig
 	xvfbCmd      *exec.Cmd
+
+	// Concurrency coordination for Chrome solves (flaresolverr-go spawns an
+	// ephemeral Chrome per ControllerV1 call without Session).
+	// flareSolveSem caps total concurrent Chrome instances across all domains.
+	flareSolveSem = make(chan struct{}, 2)
+
+	// flareDomainLocks serializes solves per domain: concurrent callers for the
+	// same domain wait for the first solve and then reuse the cached cookies
+	// instead of each spawning Chrome.
+	flareDomainMu    sync.Mutex
+	flareDomainLocks = make(map[string]*sync.Mutex)
+
+	// flareSolveWG tracks in-flight solves so CloseFlareService can wait for them.
+	flareSolveWG  sync.WaitGroup
+	flareInflight atomic.Int32
+	flareShutdown atomic.Bool
 )
 
 // InitFlareService initializes the shared Xvfb display and flaresolverr-go config. Call once at startup.
 func InitFlareService(cfg app.FlareSolverrGoConfig) {
 	flareSvcCfg = cfg
+	// Sweep leftover browser profiles from prior crashes (SIGKILL, panic).
+	cleanupStaleProfiles()
 	// Start persistent Xvfb if no DISPLAY and not on a desktop
 	if os.Getenv("DISPLAY") == "" {
 		startXvfb()
@@ -38,10 +58,57 @@ func InitFlareService(cfg app.FlareSolverrGoConfig) {
 
 // CloseFlareService shuts down the shared flaresolverr-go service and Xvfb. Call on shutdown.
 func CloseFlareService() {
+	flareShutdown.Store(true)
+
+	// Wait for in-flight solves to finish their defer client.Close() so Chrome
+	// processes are terminated before we proceed with service shutdown.
+	done := make(chan struct{})
+	go func() {
+		flareSolveWG.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		log.Printf("flaresolverr: shutdown timeout, %d solves still in flight", flareInflight.Load())
+	}
+
 	if flareSvc != nil {
 		flareSvc.Close()
 	}
 	stopXvfb()
+	cleanupStaleProfiles()
+}
+
+// getDomainLock returns the mutex that serializes solves for a given domain.
+func getDomainLock(domain string) *sync.Mutex {
+	flareDomainMu.Lock()
+	defer flareDomainMu.Unlock()
+	m, ok := flareDomainLocks[domain]
+	if !ok {
+		m = &sync.Mutex{}
+		flareDomainLocks[domain] = m
+	}
+	return m
+}
+
+// cleanupStaleProfiles removes /tmp/flaresolverr-go-profile-* directories left
+// behind by crashed Chrome processes. Safe to call at startup and shutdown.
+func cleanupStaleProfiles() {
+	pattern := filepath.Join(os.TempDir(), "flaresolverr-go-profile-*")
+	matches, err := filepath.Glob(pattern)
+	if err != nil || len(matches) == 0 {
+		return
+	}
+	removed := 0
+	for _, p := range matches {
+		if err := os.RemoveAll(p); err == nil {
+			removed++
+		}
+	}
+	if removed > 0 {
+		log.Printf("flaresolverr: removed %d stale profile dirs", removed)
+	}
 }
 
 // startXvfb starts a persistent Xvfb on the first free display :99-:119.
@@ -348,11 +415,47 @@ func (f *Fetcher) clearFlareSession(domain string) {
 
 // solveFlare calls the shared flaresolverr-go service to solve CF challenge.
 // Returns cookies (cached for future requests) + the page body from the browser.
+//
+// Coordination:
+//   - Rejects new solves once CloseFlareService has begun.
+//   - Serializes per domain: concurrent callers for the same domain wait for
+//     the first solve, then reuse its cached cookies (see the second cache
+//     check below). Prevents N parallel Chrome instances for one CF site.
+//   - Caps global concurrency via flareSolveSem to prevent a Chrome swarm
+//     when many parsers run simultaneously.
 func (f *Fetcher) solveFlare(rawURL, domain string) (*flareSolveResult, error) {
+	if flareShutdown.Load() {
+		return nil, fmt.Errorf("flaresolverr: service is shutting down")
+	}
+
 	svc := getFlareService()
 	if svc == nil {
 		return nil, fmt.Errorf("flaresolverr service not initialized")
 	}
+
+	dm := getDomainLock(domain)
+	dm.Lock()
+	defer dm.Unlock()
+
+	// Re-check cache after acquiring domain lock: a prior concurrent caller
+	// may have already solved this domain. Body is empty — caller falls through
+	// to fetchWithCookies which uses the cached cookies via CFClient.
+	if sess := f.getFlareSession(domain); sess != nil {
+		return &flareSolveResult{session: sess, status: 200}, nil
+	}
+
+	// Re-check shutdown: flag may have been raised while we waited for the lock.
+	if flareShutdown.Load() {
+		return nil, fmt.Errorf("flaresolverr: service is shutting down")
+	}
+
+	flareSolveSem <- struct{}{}
+	defer func() { <-flareSolveSem }()
+
+	flareSolveWG.Add(1)
+	flareInflight.Add(1)
+	defer flareSolveWG.Done()
+	defer flareInflight.Add(-1)
 
 	log.Printf("flaresolverr: solving challenge for %s", domain)
 

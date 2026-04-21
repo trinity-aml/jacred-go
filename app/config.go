@@ -23,7 +23,6 @@ func parseYAMLIntoConfig(text string, cfg *Config) {
 	var currentProxy *ProxySettings
 	section := ""
 	inTrackerLogin := false
-	inTracksInterval := false
 	inEvercache := false
 	inCFClient := false
 	inFlareSolverrGo := false
@@ -42,7 +41,6 @@ func parseYAMLIntoConfig(text string, cfg *Config) {
 			currentTracker = trackerByName(cfg, section)
 			currentProxy = nil
 			inTrackerLogin = false
-			inTracksInterval = false
 			inEvercache = false
 			inCFClient = false
 			inFlareSolverrGo = false
@@ -107,17 +105,6 @@ func parseYAMLIntoConfig(text string, cfg *Config) {
 			}
 		}
 
-		if section == "tracksinterval" && indent == 2 && strings.Contains(trimmed, ":") {
-			inTracksInterval = true
-			k, v := splitKV(trimmed)
-			switch k {
-			case "task0":
-				cfg.TracksInterval.Task0 = parseInt(v)
-			case "task1":
-				cfg.TracksInterval.Task1 = parseInt(v)
-			}
-			continue
-		}
 		if section == "evercache" && indent == 2 && strings.Contains(trimmed, ":") {
 			inEvercache = true
 			k, v := splitKV(trimmed)
@@ -165,10 +152,6 @@ func parseYAMLIntoConfig(text string, cfg *Config) {
 			} else if v != "" {
 				currentListTarget = ""
 			}
-			if k == "tracksinterval" {
-				inTracksInterval = true
-				continue
-			}
 			if k == "evercache" {
 				inEvercache = true
 				continue
@@ -190,11 +173,8 @@ func parseYAMLIntoConfig(text string, cfg *Config) {
 				cfg.SyncTrackers = append(cfg.SyncTrackers, val)
 			case "disable_trackers":
 				cfg.DisableTrackers = append(cfg.DisableTrackers, val)
-			case "tsuri":
-				cfg.TSURI = append(cfg.TSURI, val)
 			}
 		}
-		_ = inTracksInterval
 		_ = inEvercache
 		_ = inCFClient
 		_ = inFlareSolverrGo
@@ -203,7 +183,7 @@ func parseYAMLIntoConfig(text string, cfg *Config) {
 
 func isListKey(k string) bool {
 	switch k {
-	case "synctrackers", "disable_trackers", "tsuri":
+	case "synctrackers", "disable_trackers":
 		return true
 	default:
 		return false
@@ -351,18 +331,6 @@ func setConfigKV(cfg *Config, k, v string) {
 		cfg.OpenSyncV1 = parseBool(v)
 	case "web":
 		cfg.Web = parseBool(v)
-	case "tracks":
-		cfg.Tracks = parseBool(v)
-	case "tracksmod":
-		cfg.TracksMod = parseInt(v)
-	case "tracksdelay":
-		cfg.TracksDelay = parseInt(v)
-	case "trackslog":
-		cfg.TracksLog = parseBool(v)
-	case "tracksatempt":
-		cfg.TracksAttempt = parseInt(v)
-	case "trackscategory":
-		cfg.TracksCategory = unquote(v)
 	case "syncapi":
 		cfg.SyncAPI = unquote(v)
 	case "syncsport":
@@ -387,8 +355,6 @@ func setConfigKV(cfg *Config, k, v string) {
 		cfg.SyncTrackers = []string{}
 	case "disable_trackers":
 		cfg.DisableTrackers = []string{}
-	case "tsuri":
-		cfg.TSURI = []string{}
 	}
 }
 

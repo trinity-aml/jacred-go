@@ -21,11 +21,6 @@ type Evercache struct {
 	DropCacheTake    int  `json:"dropCacheTake"`
 }
 
-type TracksIntervalConfig struct {
-	Task0 int `json:"task0"`
-	Task1 int `json:"task1"`
-}
-
 type TrackerSettings struct {
 	Host               string        `json:"host"`
 	Alias              string        `json:"alias,omitempty"`
@@ -67,14 +62,6 @@ type Config struct {
 	OpenSync           bool                 `json:"opensync"`
 	OpenSyncV1         bool                 `json:"opensync_v1"`
 	Web                bool                 `json:"web"`
-	Tracks             bool                 `json:"tracks"`
-	TracksMod          int                  `json:"tracksmod"`
-	TracksDelay        int                  `json:"tracksdelay"`
-	TracksLog          bool                 `json:"trackslog"`
-	TracksAttempt      int                  `json:"tracksatempt"`
-	TracksCategory     string               `json:"trackscategory"`
-	TracksInterval     TracksIntervalConfig `json:"tracksinterval"`
-	TSURI              []string             `json:"tsuri"`
 	SyncAPI            string               `json:"syncapi,omitempty"`
 	SyncTrackers       []string             `json:"synctrackers,omitempty"`
 	DisableTrackers    []string             `json:"disable_trackers,omitempty"`
@@ -123,12 +110,6 @@ func DefaultConfig() Config {
 		OpenSync:           true,
 		OpenSyncV1:         false,
 		Web:                true,
-		Tracks:             false,
-		TracksDelay:        20000,
-		TracksAttempt:      20,
-		TracksCategory:     "jacred",
-		TracksInterval:     TracksIntervalConfig{Task0: 180, Task1: 60},
-		TSURI:              []string{"http://127.0.0.1:8090"},
 		DisableTrackers:    []string{},
 		SyncSport:          true,
 		SyncSpidr:          true,

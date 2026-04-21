@@ -604,7 +604,7 @@ func (p *Parser) saveTorrents(ctx context.Context, items []parseItem) (int, int,
 		if exists {
 			ex = existing
 		}
-		result := filedb.MergeTorrent(ex, incoming, p.Config.TracksAttempt)
+		result := filedb.MergeTorrent(ex, incoming)
 		if !result.Changed {
 			skipped++
 			continue

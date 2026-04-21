@@ -23,11 +23,11 @@ type MergeResult struct {
 // "Quiet" updates (sid, pir, createTime) do NOT touch updateTime — they won't
 // propagate via sync until the next significant change. This avoids flooding
 // sync clients with seeder-count noise.
-func MergeTorrent(existing, incoming TorrentDetails, tracksAttempt int) MergeResult {
+func MergeTorrent(existing, incoming TorrentDetails) MergeResult {
 	if existing == nil {
 		return mergeNew(incoming)
 	}
-	return mergeExisting(existing, incoming, tracksAttempt)
+	return mergeExisting(existing, incoming)
 }
 
 func mergeNew(incoming TorrentDetails) MergeResult {
@@ -75,7 +75,7 @@ func mergeNew(incoming TorrentDetails) MergeResult {
 	}
 }
 
-func mergeExisting(t, incoming TorrentDetails, tracksAttempt int) MergeResult {
+func mergeExisting(t, incoming TorrentDetails) MergeResult {
 	changed := false
 	updateFull := false
 	timeUpdated := false
@@ -84,7 +84,6 @@ func mergeExisting(t, incoming TorrentDetails, tracksAttempt int) MergeResult {
 		changed = true
 		if updatetime {
 			t["updateTime"] = time.Now().UTC().Format(time.RFC3339Nano)
-			t["ffprobe_tryingdata"] = 0
 			timeUpdated = true
 		}
 		if uptfull {
@@ -131,17 +130,12 @@ func mergeExisting(t, incoming TorrentDetails, tracksAttempt int) MergeResult {
 
 	// magnet
 	if v := strings.TrimSpace(asString(incoming["magnet"])); v != "" && v != asString(t["magnet"]) {
-		t["ffprobe_tryingdata"] = 0
 		t["magnet"] = v
 		upt(false, true)
 	}
 
 	// sid (quiet — no updateTime)
 	if inSid := asInt(incoming["sid"]); inSid != asInt(t["sid"]) {
-		exSid := asInt(t["sid"])
-		if exSid == 0 && inSid >= 2 && asInt(t["ffprobe_tryingdata"]) >= tracksAttempt && tracksAttempt > 0 {
-			t["ffprobe_tryingdata"] = 0
-		}
 		t["sid"] = inSid
 		upt(false, false)
 	}

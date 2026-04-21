@@ -675,9 +675,6 @@ func mergeDuplicateMagnets(items []TorrentDetails) []TorrentDetails {
 		if torrentTime(torrent, "createTime").After(torrentTime(entry.torrent, "createTime")) {
 			entry.torrent["createTime"] = torrent["createTime"]
 		}
-		if entry.torrent["ffprobe"] == nil && torrent["ffprobe"] != nil {
-			entry.torrent["ffprobe"] = torrent["ffprobe"]
-		}
 		updateMergedTitle(entry.torrent, entry.title)
 		temp[hex] = entry
 	}
