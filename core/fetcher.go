@@ -173,6 +173,11 @@ func getFlareService() *flaresolverr.Service {
 	flareSvcOnce.Do(func() {
 		flareCfg := flaresolverr.Config{
 			Headless: true,
+			// Let the library fetch a matching chromedriver on first use and
+			// cache it. Without this the library's withDefaults() leaves it
+			// false and logs `chromedriver not found; falling back to chromedp`
+			// on every solve.
+			DriverAutoDownload: true,
 		}
 		if flareSvcCfg.BrowserPath != "" {
 			flareCfg.BrowserPath = flareSvcCfg.BrowserPath
