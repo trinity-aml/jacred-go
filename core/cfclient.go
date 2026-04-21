@@ -127,12 +127,20 @@ func (c *CFClient) Get(rawURL, cookie, referer string) (string, int, error) {
 
 // Download performs an HTTP GET and returns raw bytes, following redirects.
 func (c *CFClient) Download(rawURL, cookie, referer string) ([]byte, int, error) {
+	return c.DownloadWithUA(rawURL, cookie, referer, "")
+}
+
+// DownloadWithUA performs an HTTP GET with an optional User-Agent override.
+// When ua is non-empty, it replaces the client's default UA for this request —
+// used to match UA of a cf_clearance cookie that was issued by a different
+// Chrome version than the one tls-client emulates.
+func (c *CFClient) DownloadWithUA(rawURL, cookie, referer, ua string) ([]byte, int, error) {
 	req, err := http.NewRequest(http.MethodGet, rawURL, nil)
 	if err != nil {
 		return nil, 0, err
 	}
-	c.setBrowserHeaders(req, cookie, referer)
-	resp, err := c.doWithRedirects(req, cookie)
+	c.setBrowserHeadersWithUA(req, cookie, referer, ua)
+	resp, err := c.doWithRedirectsUA(req, cookie, ua)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -144,8 +152,43 @@ func (c *CFClient) Download(rawURL, cookie, referer string) ([]byte, int, error)
 	return b, resp.StatusCode, nil
 }
 
+func (c *CFClient) doWithRedirectsUA(req *http.Request, cookie, ua string) (*http.Response, error) {
+	for i := 0; i < maxRedirects; i++ {
+		resp, err := c.client.Do(req)
+		if err != nil {
+			return nil, err
+		}
+		if resp.StatusCode < 300 || resp.StatusCode >= 400 {
+			return resp, nil
+		}
+		loc := resp.Header.Get("Location")
+		resp.Body.Close()
+		if loc == "" {
+			return resp, nil
+		}
+		if strings.HasPrefix(loc, "/") {
+			u := req.URL
+			loc = u.Scheme + "://" + u.Host + loc
+		}
+		req, err = http.NewRequest(http.MethodGet, loc, nil)
+		if err != nil {
+			return nil, err
+		}
+		c.setBrowserHeadersWithUA(req, cookie, "", ua)
+	}
+	return nil, fmt.Errorf("too many redirects")
+}
+
 func (c *CFClient) setBrowserHeaders(req *http.Request, cookie, referer string) {
-	isChrome := strings.Contains(c.userAgent, "Chrome")
+	c.setBrowserHeadersWithUA(req, cookie, referer, "")
+}
+
+func (c *CFClient) setBrowserHeadersWithUA(req *http.Request, cookie, referer, uaOverride string) {
+	userAgent := c.userAgent
+	if strings.TrimSpace(uaOverride) != "" {
+		userAgent = uaOverride
+	}
+	isChrome := strings.Contains(userAgent, "Chrome")
 	// Determine Sec-Fetch-Site from referer
 	fetchSite := "none"
 	if strings.TrimSpace(referer) != "" {
@@ -161,7 +204,7 @@ func (c *CFClient) setBrowserHeaders(req *http.Request, cookie, referer string) 
 	}
 
 	req.Header = http.Header{
-		"User-Agent":                {c.userAgent},
+		"User-Agent":                {userAgent},
 		"Accept":                    {"text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8"},
 		"Accept-Language":           {"ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7"},
 		"Accept-Encoding":           {"gzip, deflate, br"},
@@ -177,8 +220,8 @@ func (c *CFClient) setBrowserHeaders(req *http.Request, cookie, referer string) 
 	if isChrome {
 		// Extract Chrome version for Sec-Ch-Ua
 		chromeVer := "146"
-		if idx := strings.Index(c.userAgent, "Chrome/"); idx >= 0 {
-			rest := c.userAgent[idx+7:]
+		if idx := strings.Index(userAgent, "Chrome/"); idx >= 0 {
+			rest := userAgent[idx+7:]
 			if dot := strings.Index(rest, "."); dot > 0 {
 				chromeVer = rest[:dot]
 			}

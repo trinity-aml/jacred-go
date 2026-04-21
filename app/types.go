@@ -40,8 +40,9 @@ type CFClientConfig struct {
 }
 
 type FlareSolverrGoConfig struct {
-	BrowserPath string `json:"browser_path,omitempty"` // path to Chrome/Chromium binary
-	Headless    *bool  `json:"headless,omitempty"`     // nil = default (true)
+	BrowserPath   string `json:"browser_path,omitempty"`   // path to Chrome/Chromium binary
+	Headless      *bool  `json:"headless,omitempty"`       // nil = default (true)
+	ChromeVersion string `json:"chrome_version,omitempty"` // pin Chrome for Testing to this version (e.g. "146")
 }
 
 type Config struct {

@@ -140,6 +140,8 @@ func parseYAMLIntoConfig(text string, cfg *Config) {
 			case "headless":
 				val := parseBool(v)
 				cfg.FlareSolverrGo.Headless = &val
+			case "chrome_version":
+				cfg.FlareSolverrGo.ChromeVersion = unquote(v)
 			}
 			continue
 		}

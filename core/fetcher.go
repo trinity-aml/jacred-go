@@ -28,6 +28,11 @@ var (
 	flareSvcCfg  app.FlareSolverrGoConfig
 	xvfbCmd      *exec.Cmd
 
+	// Pinned Chrome for Testing paths, populated by InitFlareService when
+	// cfg.ChromeVersion is set. Empty means "use whatever the library finds".
+	pinnedBrowserPath string
+	pinnedDriverPath  string
+
 	// Concurrency coordination for Chrome solves (flaresolverr-go spawns an
 	// ephemeral Chrome per ControllerV1 call without Session).
 	// flareSolveSem caps total concurrent Chrome instances across all domains.
@@ -43,13 +48,35 @@ var (
 	flareSolveWG  sync.WaitGroup
 	flareInflight atomic.Int32
 	flareShutdown atomic.Bool
+
+	// Circuit breaker: timestamps of last failed solve per domain. Callers that
+	// retry immediately after a 90s timeout get a fast 503 instead of spawning
+	// another Chrome that almost certainly times out again.
+	flareFailMu   sync.RWMutex
+	flareLastFail = make(map[string]time.Time)
 )
+
+const flareFailCooldown = 3 * time.Minute
 
 // InitFlareService initializes the shared Xvfb display and flaresolverr-go config. Call once at startup.
 func InitFlareService(cfg app.FlareSolverrGoConfig) {
 	flareSvcCfg = cfg
 	// Sweep leftover browser profiles from prior crashes (SIGKILL, panic).
 	cleanupStaleProfiles()
+	// Pin Chrome for Testing to a specific version if requested. Keeps the
+	// browser's TLS fingerprint aligned with tls-client's max profile (146)
+	// and avoids driver/browser major-version mismatches.
+	if v := strings.TrimSpace(cfg.ChromeVersion); v != "" {
+		log.Printf("chrome-pin: ensuring Chrome for Testing %s", v)
+		bp, dp, err := EnsureChromeVersion(v)
+		if err != nil {
+			log.Printf("chrome-pin: %v (falling back to system Chrome)", err)
+		} else {
+			pinnedBrowserPath = bp
+			pinnedDriverPath = dp
+			log.Printf("chrome-pin: chrome=%s driver=%s", bp, dp)
+		}
+	}
 	// Start persistent Xvfb if no DISPLAY and not on a desktop
 	if os.Getenv("DISPLAY") == "" {
 		startXvfb()
@@ -90,6 +117,34 @@ func getDomainLock(domain string) *sync.Mutex {
 		flareDomainLocks[domain] = m
 	}
 	return m
+}
+
+// flareCooldownRemaining reports whether a recent solve for this domain failed
+// and how much cooldown time is left.
+func flareCooldownRemaining(domain string) (time.Duration, bool) {
+	flareFailMu.RLock()
+	last, ok := flareLastFail[domain]
+	flareFailMu.RUnlock()
+	if !ok {
+		return 0, false
+	}
+	elapsed := time.Since(last)
+	if elapsed >= flareFailCooldown {
+		return 0, false
+	}
+	return flareFailCooldown - elapsed, true
+}
+
+func markFlareFailure(domain string) {
+	flareFailMu.Lock()
+	flareLastFail[domain] = time.Now()
+	flareFailMu.Unlock()
+}
+
+func clearFlareFailure(domain string) {
+	flareFailMu.Lock()
+	delete(flareLastFail, domain)
+	flareFailMu.Unlock()
 }
 
 // cleanupStaleProfiles removes /tmp/flaresolverr-go-profile-* directories left
@@ -179,7 +234,14 @@ func getFlareService() *flaresolverr.Service {
 			// on every solve.
 			DriverAutoDownload: true,
 		}
-		if flareSvcCfg.BrowserPath != "" {
+		// Pinned Chrome for Testing wins over config BrowserPath.
+		if pinnedBrowserPath != "" {
+			flareCfg.BrowserPath = pinnedBrowserPath
+			flareCfg.DriverPath = pinnedDriverPath
+			// With a pinned driver we don't want the library to auto-download
+			// a mismatched one.
+			flareCfg.DriverAutoDownload = false
+		} else if flareSvcCfg.BrowserPath != "" {
 			flareCfg.BrowserPath = flareSvcCfg.BrowserPath
 		}
 		if flareSvcCfg.Headless != nil {
@@ -393,9 +455,12 @@ func (f *Fetcher) fetchWithCookies(rawURL, cookie string, sess *flareSession, tr
 		ua = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36"
 	}
 
-	// Try cfclient (tls-client with Chrome TLS fingerprint)
+	// Try cfclient (tls-client with Chrome TLS fingerprint).
+	// Pass the UA that was used by the browser during solve so CF sees a
+	// consistent (cookie, UA) pair. Mismatch invalidates cf_clearance and
+	// triggers a re-challenge.
 	if f.cfClient != nil {
-		body, status, err := f.cfClient.Download(rawURL, merged, "")
+		body, status, err := f.cfClient.DownloadWithUA(rawURL, merged, "", ua)
 		if err == nil && status != 403 {
 			return &FetchResult{Body: body, StatusCode: status}, nil
 		}
@@ -441,6 +506,13 @@ func (f *Fetcher) solveFlare(rawURL, domain string) (*flareSolveResult, error) {
 		return nil, fmt.Errorf("flaresolverr service not initialized")
 	}
 
+	// Circuit breaker: skip if a recent solve for this domain failed. Retries
+	// from parsers within the cooldown window get a fast error instead of
+	// spawning Chrome that will almost certainly time out again.
+	if remaining, blocked := flareCooldownRemaining(domain); blocked {
+		return nil, fmt.Errorf("flaresolverr: %s in cooldown for %s after recent failure", domain, remaining.Round(time.Second))
+	}
+
 	dm := getDomainLock(domain)
 	dm.Lock()
 	defer dm.Unlock()
@@ -450,6 +522,12 @@ func (f *Fetcher) solveFlare(rawURL, domain string) (*flareSolveResult, error) {
 	// to fetchWithCookies which uses the cached cookies via CFClient.
 	if sess := f.getFlareSession(domain); sess != nil {
 		return &flareSolveResult{session: sess, status: 200}, nil
+	}
+
+	// Re-check cooldown under the lock: waiters behind us may have seen the
+	// first solver fail, and we'd immediately spawn another Chrome otherwise.
+	if remaining, blocked := flareCooldownRemaining(domain); blocked {
+		return nil, fmt.Errorf("flaresolverr: %s in cooldown for %s after recent failure", domain, remaining.Round(time.Second))
 	}
 
 	// Re-check shutdown: flag may have been raised while we waited for the lock.
@@ -481,11 +559,14 @@ func (f *Fetcher) solveFlare(rawURL, domain string) (*flareSolveResult, error) {
 	})
 
 	if resp.Status != "ok" {
+		markFlareFailure(domain)
 		return nil, fmt.Errorf("flaresolverr status=%s message=%s", resp.Status, resp.Message)
 	}
 	if resp.Solution == nil {
+		markFlareFailure(domain)
 		return nil, fmt.Errorf("flaresolverr: no solution returned")
 	}
+	clearFlareFailure(domain)
 
 	// Build cookie string from solution cookies
 	var cookieParts []string

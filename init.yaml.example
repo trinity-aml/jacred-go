@@ -89,6 +89,7 @@ evercache:
 flaresolverr_go:
   headless: true          # true = headless Chrome (default), false = visible via Xvfb
   browser_path: ""        # Custom Chromium path (empty = auto-detect)
+  chrome_version: ""      # Pin Chrome for Testing to this major (e.g. "146") — downloads matching chrome + chromedriver on first use. Empty = use system Chrome.
 
 cfclient:
   profile: "chrome_146"   # TLS profile: chrome_133, chrome_144, chrome_146, firefox_117, etc.
