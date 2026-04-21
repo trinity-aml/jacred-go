@@ -189,10 +189,12 @@ func (c *CFClient) setBrowserHeadersWithUA(req *http.Request, cookie, referer, u
 		userAgent = uaOverride
 	}
 	isChrome := strings.Contains(userAgent, "Chrome")
-	// Determine Sec-Fetch-Site from referer
+	isFirefox := strings.Contains(userAgent, "Firefox")
+
+	// Sec-Fetch-Site from referer: none (direct nav, no referer),
+	// same-origin (referer host == req host), cross-site (otherwise).
 	fetchSite := "none"
 	if strings.TrimSpace(referer) != "" {
-		// same-origin if referer host matches request host
 		if reqHost := req.URL.Host; reqHost != "" {
 			refLower := strings.ToLower(referer)
 			if strings.Contains(refLower, "://"+strings.ToLower(reqHost)) {
@@ -203,22 +205,7 @@ func (c *CFClient) setBrowserHeadersWithUA(req *http.Request, cookie, referer, u
 		}
 	}
 
-	req.Header = http.Header{
-		"User-Agent":                {userAgent},
-		"Accept":                    {"text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8"},
-		"Accept-Language":           {"ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7"},
-		"Accept-Encoding":           {"gzip, deflate, br"},
-		"Sec-Fetch-Dest":            {"document"},
-		"Sec-Fetch-Mode":            {"navigate"},
-		"Sec-Fetch-Site":            {fetchSite},
-		"DNT":                       {"1"},
-		"Pragma":                    {"no-cache"},
-		"Cache-Control":             {"no-cache"},
-		"Upgrade-Insecure-Requests": {"1"},
-		"Connection":                {"keep-alive"},
-	}
 	if isChrome {
-		// Extract Chrome version for Sec-Ch-Ua
 		chromeVer := "146"
 		if idx := strings.Index(userAgent, "Chrome/"); idx >= 0 {
 			rest := userAgent[idx+7:]
@@ -226,27 +213,66 @@ func (c *CFClient) setBrowserHeadersWithUA(req *http.Request, cookie, referer, u
 				chromeVer = rest[:dot]
 			}
 		}
-		req.Header.Set("Sec-Ch-Ua", fmt.Sprintf(`"Chromium";v="%s", "Google Chrome";v="%s", "Not?A_Brand";v="99"`, chromeVer, chromeVer))
-		req.Header.Set("Sec-Ch-Ua-Mobile", "?0")
-		req.Header.Set("Sec-Ch-Ua-Platform", `"Linux"`)
-		req.Header.Set("Sec-Fetch-User", "?1")
+		req.Header = http.Header{
+			"Sec-Ch-Ua":                 {fmt.Sprintf(`"Chromium";v="%s", "Google Chrome";v="%s", "Not?A_Brand";v="99"`, chromeVer, chromeVer)},
+			"Sec-Ch-Ua-Mobile":          {"?0"},
+			"Sec-Ch-Ua-Platform":        {`"Linux"`},
+			"Upgrade-Insecure-Requests": {"1"},
+			"User-Agent":                {userAgent},
+			"Accept":                    {"text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7"},
+			"Sec-Fetch-Site":            {fetchSite},
+			"Sec-Fetch-Mode":            {"navigate"},
+			"Sec-Fetch-Dest":            {"document"},
+			"Accept-Encoding":           {"gzip, deflate, br, zstd"},
+			"Accept-Language":           {"ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7"},
+			"Priority":                  {"u=0, i"},
+		}
+		// Chrome only sends Sec-Fetch-User on user-activated navigations.
+		// Same-origin/cross-site nav (from referer) counts; direct URL entry
+		// (fetchSite=none) does not.
+		if fetchSite != "none" {
+			req.Header.Set("Sec-Fetch-User", "?1")
+		}
+		req.Header[http.HeaderOrderKey] = []string{
+			"sec-ch-ua", "sec-ch-ua-mobile", "sec-ch-ua-platform",
+			"upgrade-insecure-requests", "user-agent", "accept",
+			"sec-fetch-site", "sec-fetch-mode", "sec-fetch-user", "sec-fetch-dest",
+			"referer", "accept-encoding", "accept-language", "priority",
+			"cookie", "content-type",
+		}
+	} else if isFirefox {
+		req.Header = http.Header{
+			"User-Agent":                {userAgent},
+			"Accept":                    {"text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"},
+			"Accept-Language":           {"ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7"},
+			"Accept-Encoding":           {"gzip, deflate, br, zstd"},
+			"Upgrade-Insecure-Requests": {"1"},
+			"Sec-Fetch-Dest":            {"document"},
+			"Sec-Fetch-Mode":            {"navigate"},
+			"Sec-Fetch-Site":            {fetchSite},
+			"Priority":                  {"u=0, i"},
+			"TE":                        {"trailers"},
+		}
 		req.Header[http.HeaderOrderKey] = []string{
 			"user-agent", "accept", "accept-language", "accept-encoding",
-			"sec-ch-ua", "sec-ch-ua-mobile", "sec-ch-ua-platform",
-			"dnt", "pragma", "cache-control",
-			"cookie", "referer", "content-type",
-			"sec-fetch-dest", "sec-fetch-mode", "sec-fetch-site", "sec-fetch-user",
-			"upgrade-insecure-requests", "connection",
+			"referer", "cookie", "upgrade-insecure-requests",
+			"sec-fetch-dest", "sec-fetch-mode", "sec-fetch-site",
+			"priority", "te", "content-type",
 		}
 	} else {
+		req.Header = http.Header{
+			"User-Agent":      {userAgent},
+			"Accept":          {"text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"},
+			"Accept-Language": {"ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7"},
+			"Accept-Encoding": {"gzip, deflate, br"},
+			"Connection":      {"keep-alive"},
+		}
 		req.Header[http.HeaderOrderKey] = []string{
 			"user-agent", "accept", "accept-language", "accept-encoding",
-			"dnt", "pragma", "cache-control",
-			"cookie", "referer", "content-type",
-			"sec-fetch-dest", "sec-fetch-mode", "sec-fetch-site",
-			"upgrade-insecure-requests", "connection",
+			"cookie", "referer", "content-type", "connection",
 		}
 	}
+
 	if strings.TrimSpace(cookie) != "" {
 		req.Header.Set("Cookie", cookie)
 	}

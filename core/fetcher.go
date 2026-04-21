@@ -486,11 +486,6 @@ func (f *Fetcher) clearFlareSession(domain string) {
 //     check below). Prevents N parallel Chrome instances for one CF site.
 //   - Caps global concurrency via flareSolveSem to prevent a Chrome swarm
 //     when many parsers run simultaneously.
-//
-// Solve target is the origin (scheme://host/), not the caller's deep URL.
-// Some sites (bitru.org) serve a managed challenge on deep URLs that
-// automation can't pass, while the origin serves a basic JS challenge that
-// goes through. cf_clearance is domain-scoped so it works for any path.
 func (f *Fetcher) solveFlare(rawURL, domain string) (*flareSession, error) {
 	if flareShutdown.Load() {
 		return nil, fmt.Errorf("flaresolverr: service is shutting down")
@@ -537,8 +532,7 @@ func (f *Fetcher) solveFlare(rawURL, domain string) (*flareSession, error) {
 	defer flareSolveWG.Done()
 	defer flareInflight.Add(-1)
 
-	targetURL := originURL(rawURL)
-	log.Printf("flaresolverr: solving challenge for %s (via %s)", domain, targetURL)
+	log.Printf("flaresolverr: solving challenge for %s", domain)
 
 	// MaxTimeout caps Chrome's solve time inside the library.
 	// Bitru + Turnstile sometimes takes >60s on cold webdriver start; 90s is a
@@ -548,7 +542,7 @@ func (f *Fetcher) solveFlare(rawURL, domain string) (*flareSession, error) {
 
 	resp, _ := svc.ControllerV1(ctx, &flaresolverr.V1Request{
 		Cmd:           "request.get",
-		URL:           targetURL,
+		URL:           rawURL,
 		MaxTimeout:    90000,
 		WaitInSeconds: 2,
 	})
@@ -586,16 +580,6 @@ func (f *Fetcher) solveFlare(rawURL, domain string) (*flareSession, error) {
 	f.flareMu.Unlock()
 
 	return sess, nil
-}
-
-// originURL returns scheme://host/ for the given URL. Falls back to the
-// original URL on parse failure.
-func originURL(rawURL string) string {
-	u, err := url.Parse(rawURL)
-	if err != nil || u.Scheme == "" || u.Host == "" {
-		return rawURL
-	}
-	return u.Scheme + "://" + u.Host + "/"
 }
 
 func extractDomain(rawURL string) string {
