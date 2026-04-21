@@ -271,13 +271,6 @@ type flareSession struct {
 	obtained  time.Time
 }
 
-// flareSolveResult holds the full result from a solve: cookies + page body.
-type flareSolveResult struct {
-	session *flareSession
-	body    []byte // page HTML returned by the browser
-	status  int
-}
-
 const flareSessionTTL = 30 * time.Minute
 
 // NewFetcher creates a Fetcher with standard HTTP and tls-client backends.
@@ -310,11 +303,11 @@ func (f *Fetcher) GetFlareCookies(rawURL string) (cookie, userAgent string) {
 	if sess := f.getFlareSession(domain); sess != nil {
 		return sess.cookies, sess.userAgent
 	}
-	result, err := f.solveFlare(rawURL, domain)
+	sess, err := f.solveFlare(rawURL, domain)
 	if err != nil {
 		return "", ""
 	}
-	return result.session.cookies, result.session.userAgent
+	return sess.cookies, sess.userAgent
 }
 
 // InvalidateSession clears cached flaresolverr cookies for a URL's domain.
@@ -412,10 +405,11 @@ func (f *Fetcher) doHTTP(rawURL, cookie, userAgent string, transport *http.Trans
 // fetchViaFlare uses embedded flaresolverr-go to solve CF and fetch pages.
 // Strategy:
 //   1. Try cached cookies via cfclient (fast path, Chrome TLS fingerprint)
-//   2. If no cache or 403: solve via flaresolverr-go browser
-//   3. Use browser's response body if available
-//   4. Otherwise use cookies via cfclient (Chrome TLS fingerprint)
-//   5. Cache cookies for subsequent requests
+//   2. If no cache or 403: solve CF challenge on the site's origin via
+//      flaresolverr-go browser (not the deep URL — some sites serve a
+//      managed challenge on deep URLs that automation can't pass)
+//   3. Use the resulting cookies via cfclient to fetch the actual deep URL
+//   4. Cache cookies for subsequent requests
 func (f *Fetcher) fetchViaFlare(rawURL, cookie string, transport *http.Transport) (*FetchResult, error) {
 	domain := extractDomain(rawURL)
 
@@ -428,8 +422,9 @@ func (f *Fetcher) fetchViaFlare(rawURL, cookie string, transport *http.Transport
 		f.clearFlareSession(domain)
 	}
 
-	// Solve via flaresolverr-go browser — returns cookies + page body
-	result, err := f.solveFlare(rawURL, domain)
+	// Solve via flaresolverr-go browser on the origin. cf_clearance is
+	// scoped to the domain and carries over to any path.
+	sess, err := f.solveFlare(rawURL, domain)
 	if err != nil {
 		log.Printf("flaresolverr: solve failed for %s: %v", domain, err)
 		// No doHTTP fallback: fetchmode=flaresolverr means the site is CF-gated,
@@ -438,13 +433,8 @@ func (f *Fetcher) fetchViaFlare(rawURL, cookie string, transport *http.Transport
 		return &FetchResult{Body: nil, StatusCode: 503}, nil
 	}
 
-	// Use browser's response body directly if available
-	if len(result.body) > 0 {
-		return &FetchResult{Body: result.body, StatusCode: result.status}, nil
-	}
-
-	// Browser body empty — fetch via cfclient with solved cookies (Chrome TLS fingerprint)
-	return f.fetchWithCookies(rawURL, cookie, result.session, transport)
+	// Fetch the actual deep URL via cfclient with solved cookies.
+	return f.fetchWithCookies(rawURL, cookie, sess, transport)
 }
 
 // fetchWithCookies tries cfclient first (Chrome TLS fingerprint), falls back to standard HTTP.
@@ -487,7 +477,7 @@ func (f *Fetcher) clearFlareSession(domain string) {
 }
 
 // solveFlare calls the shared flaresolverr-go service to solve CF challenge.
-// Returns cookies (cached for future requests) + the page body from the browser.
+// Returns cookies cached for future requests on this domain.
 //
 // Coordination:
 //   - Rejects new solves once CloseFlareService has begun.
@@ -496,7 +486,12 @@ func (f *Fetcher) clearFlareSession(domain string) {
 //     check below). Prevents N parallel Chrome instances for one CF site.
 //   - Caps global concurrency via flareSolveSem to prevent a Chrome swarm
 //     when many parsers run simultaneously.
-func (f *Fetcher) solveFlare(rawURL, domain string) (*flareSolveResult, error) {
+//
+// Solve target is the origin (scheme://host/), not the caller's deep URL.
+// Some sites (bitru.org) serve a managed challenge on deep URLs that
+// automation can't pass, while the origin serves a basic JS challenge that
+// goes through. cf_clearance is domain-scoped so it works for any path.
+func (f *Fetcher) solveFlare(rawURL, domain string) (*flareSession, error) {
 	if flareShutdown.Load() {
 		return nil, fmt.Errorf("flaresolverr: service is shutting down")
 	}
@@ -518,10 +513,9 @@ func (f *Fetcher) solveFlare(rawURL, domain string) (*flareSolveResult, error) {
 	defer dm.Unlock()
 
 	// Re-check cache after acquiring domain lock: a prior concurrent caller
-	// may have already solved this domain. Body is empty — caller falls through
-	// to fetchWithCookies which uses the cached cookies via CFClient.
+	// may have already solved this domain.
 	if sess := f.getFlareSession(domain); sess != nil {
-		return &flareSolveResult{session: sess, status: 200}, nil
+		return sess, nil
 	}
 
 	// Re-check cooldown under the lock: waiters behind us may have seen the
@@ -543,7 +537,8 @@ func (f *Fetcher) solveFlare(rawURL, domain string) (*flareSolveResult, error) {
 	defer flareSolveWG.Done()
 	defer flareInflight.Add(-1)
 
-	log.Printf("flaresolverr: solving challenge for %s", domain)
+	targetURL := originURL(rawURL)
+	log.Printf("flaresolverr: solving challenge for %s (via %s)", domain, targetURL)
 
 	// MaxTimeout caps Chrome's solve time inside the library.
 	// Bitru + Turnstile sometimes takes >60s on cold webdriver start; 90s is a
@@ -553,7 +548,7 @@ func (f *Fetcher) solveFlare(rawURL, domain string) (*flareSolveResult, error) {
 
 	resp, _ := svc.ControllerV1(ctx, &flaresolverr.V1Request{
 		Cmd:           "request.get",
-		URL:           rawURL,
+		URL:           targetURL,
 		MaxTimeout:    90000,
 		WaitInSeconds: 2,
 	})
@@ -575,7 +570,7 @@ func (f *Fetcher) solveFlare(rawURL, domain string) (*flareSolveResult, error) {
 	}
 	cookieStr := strings.Join(cookieParts, "; ")
 	ua := resp.Solution.UserAgent
-	log.Printf("flaresolverr: solved %s cookies=%d bodyLen=%d", domain, len(resp.Solution.Cookies), len(resp.Solution.Response))
+	log.Printf("flaresolverr: solved %s cookies=%d", domain, len(resp.Solution.Cookies))
 	if ua == "" {
 		ua = "Mozilla/5.0"
 	}
@@ -590,16 +585,17 @@ func (f *Fetcher) solveFlare(rawURL, domain string) (*flareSolveResult, error) {
 	f.flareCache[domain] = sess
 	f.flareMu.Unlock()
 
-	status := resp.Solution.Status
-	if status == 0 {
-		status = 200
-	}
+	return sess, nil
+}
 
-	return &flareSolveResult{
-		session: sess,
-		body:    []byte(resp.Solution.Response),
-		status:  status,
-	}, nil
+// originURL returns scheme://host/ for the given URL. Falls back to the
+// original URL on parse failure.
+func originURL(rawURL string) string {
+	u, err := url.Parse(rawURL)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return rawURL
+	}
+	return u.Scheme + "://" + u.Host + "/"
 }
 
 func extractDomain(rawURL string) string {
