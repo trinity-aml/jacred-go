@@ -370,7 +370,10 @@ func (f *Fetcher) fetchViaFlare(rawURL, cookie string, transport *http.Transport
 	result, err := f.solveFlare(rawURL, domain)
 	if err != nil {
 		log.Printf("flaresolverr: solve failed for %s: %v", domain, err)
-		return f.doHTTP(rawURL, cookie, "Mozilla/5.0", transport)
+		// No doHTTP fallback: fetchmode=flaresolverr means the site is CF-gated,
+		// a plain HTTP request is guaranteed to return 403 + challenge page and
+		// just wastes a request. Return 503 so parsers' retry logic can kick in.
+		return &FetchResult{Body: nil, StatusCode: 503}, nil
 	}
 
 	// Use browser's response body directly if available
@@ -464,13 +467,16 @@ func (f *Fetcher) solveFlare(rawURL, domain string) (*flareSolveResult, error) {
 
 	log.Printf("flaresolverr: solving challenge for %s", domain)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	// MaxTimeout caps Chrome's solve time inside the library.
+	// Bitru + Turnstile sometimes takes >60s on cold webdriver start; 90s is a
+	// safer margin. Outer ctx must exceed it.
+	ctx, cancel := context.WithTimeout(context.Background(), 110*time.Second)
 	defer cancel()
 
 	resp, _ := svc.ControllerV1(ctx, &flaresolverr.V1Request{
 		Cmd:           "request.get",
 		URL:           rawURL,
-		MaxTimeout:    60000,
+		MaxTimeout:    90000,
 		WaitInSeconds: 2,
 	})
 
