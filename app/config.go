@@ -135,8 +135,12 @@ func parseYAMLIntoConfig(text string, cfg *Config) {
 			inFlareSolverrGo = true
 			k, v := splitKV(trimmed)
 			switch k {
+			case "browser_backend":
+				cfg.FlareSolverrGo.BrowserBackend = unquote(v)
 			case "browser_path":
 				cfg.FlareSolverrGo.BrowserPath = unquote(v)
+			case "driver_path":
+				cfg.FlareSolverrGo.DriverPath = unquote(v)
 			case "headless":
 				val := parseBool(v)
 				cfg.FlareSolverrGo.Headless = &val

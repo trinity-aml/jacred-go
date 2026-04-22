@@ -39,3 +39,7 @@ require (
 	google.golang.org/protobuf v1.31.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
+
+// Local development: use working copy of flaresolverr-go.
+// TODO: remove before release once upstream is tagged.
+replace github.com/trinity-aml/flaresolverr-go => /home/trinity1980/flaresolverr-go

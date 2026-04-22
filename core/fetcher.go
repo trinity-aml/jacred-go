@@ -244,6 +244,13 @@ func getFlareService() *flaresolverr.Service {
 		} else if flareSvcCfg.BrowserPath != "" {
 			flareCfg.BrowserPath = flareSvcCfg.BrowserPath
 		}
+		if flareSvcCfg.DriverPath != "" {
+			flareCfg.DriverPath = flareSvcCfg.DriverPath
+			flareCfg.DriverAutoDownload = false
+		}
+		if flareSvcCfg.BrowserBackend != "" {
+			flareCfg.BrowserBackend = flareSvcCfg.BrowserBackend
+		}
 		if flareSvcCfg.Headless != nil {
 			flareCfg.Headless = *flareSvcCfg.Headless
 		}
@@ -540,9 +547,18 @@ func (f *Fetcher) solveFlare(rawURL, domain string) (*flareSession, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 110*time.Second)
 	defer cancel()
 
+	// If the URL that triggered us is a binary attachment (.torrent, /download.php
+	// etc.), point the browser at the site origin instead. cf_clearance is
+	// domain-scoped so it still covers the deep URL, and we avoid Firefox
+	// stalling on a save-file flow that never fires a load event.
+	solveURL := rawURL
+	if looksLikeBinaryDownload(rawURL) {
+		solveURL = originURL(rawURL)
+	}
+
 	resp, _ := svc.ControllerV1(ctx, &flaresolverr.V1Request{
 		Cmd:           "request.get",
-		URL:           rawURL,
+		URL:           solveURL,
 		MaxTimeout:    90000,
 		WaitInSeconds: 2,
 	})
@@ -588,6 +604,41 @@ func extractDomain(rawURL string) string {
 		return rawURL
 	}
 	return u.Hostname()
+}
+
+// originURL returns scheme://host (no path/query). Falls back to rawURL if
+// parsing fails or the input has no scheme/host.
+func originURL(rawURL string) string {
+	u, err := url.Parse(rawURL)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return rawURL
+	}
+	return u.Scheme + "://" + u.Host + "/"
+}
+
+// looksLikeBinaryDownload returns true for URLs that typically serve a
+// Content-Disposition: attachment response — i.e. the browser would try to
+// save a file instead of rendering a page. Used to redirect CF-solving away
+// from these URLs so Firefox doesn't stall on a save-file flow.
+func looksLikeBinaryDownload(rawURL string) bool {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return false
+	}
+	path := strings.ToLower(u.Path)
+	switch {
+	case strings.HasSuffix(path, ".torrent"),
+		strings.HasSuffix(path, ".zip"),
+		strings.HasSuffix(path, ".rar"),
+		strings.HasSuffix(path, ".7z"),
+		strings.Contains(path, "/download.php"),
+		strings.Contains(path, "/dl.php"),
+		strings.Contains(path, "/gettorrent"),
+		strings.Contains(path, "/get_torrent"),
+		strings.Contains(path, "/torrent/download"):
+		return true
+	}
+	return false
 }
 
 // MergeCookieStrings combines two cookie strings, second takes precedence for duplicate names.

@@ -75,7 +75,9 @@ func MarshalYAML(cfg Config) string {
 	} else {
 		writeIndented(&b, 2, "headless", true)
 	}
+	writeIndented(&b, 2, "browser_backend", cfg.FlareSolverrGo.BrowserBackend)
 	writeIndented(&b, 2, "browser_path", cfg.FlareSolverrGo.BrowserPath)
+	writeIndented(&b, 2, "driver_path", cfg.FlareSolverrGo.DriverPath)
 	writeIndented(&b, 2, "chrome_version", cfg.FlareSolverrGo.ChromeVersion)
 	b.WriteString("\n")
 

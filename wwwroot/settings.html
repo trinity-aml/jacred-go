@@ -339,8 +339,17 @@
           </summary>
           <div class="body grid-fields">
             <div class="checkbox-row"><input type="checkbox" id="cb_fs_headless" data-path="flaresolverr_go.headless"/><label for="cb_fs_headless">headless</label></div>
-            <div><label class="field-label">browser_path (пусто = авто)</label><input class="field-input" data-path="flaresolverr_go.browser_path"/></div>
-            <div><label class="field-label">chrome_version (напр. 146, пусто = system Chrome)</label><input class="field-input" data-path="flaresolverr_go.chrome_version"/></div>
+            <div>
+              <label class="field-label">browser_backend</label>
+              <select class="field-select" data-path="flaresolverr_go.browser_backend">
+                <option value="">auto (по browser_path)</option>
+                <option value="geckodriver">geckodriver + Firefox/Camoufox</option>
+                <option value="chromedriver">chromedriver + Chrome/Chromium</option>
+              </select>
+            </div>
+            <div><label class="field-label">browser_path (Chrome/Chromium или Firefox/Camoufox; пусто = авто)</label><input class="field-input" data-path="flaresolverr_go.browser_path"/></div>
+            <div><label class="field-label">driver_path (chromedriver или geckodriver; пусто = авто-скачивание)</label><input class="field-input" data-path="flaresolverr_go.driver_path"/></div>
+            <div><label class="field-label">chrome_version (напр. 146; используется только с chromedriver backend)</label><input class="field-input" data-path="flaresolverr_go.chrome_version"/></div>
           </div>
         </details>
 
