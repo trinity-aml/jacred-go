@@ -5,7 +5,7 @@ go 1.26
 require (
 	github.com/bogdanfinn/fhttp v0.6.8
 	github.com/bogdanfinn/tls-client v1.14.0
-	github.com/trinity-aml/flaresolverr-go v0.0.0-20260417111218-ba931da6793c
+	github.com/trinity-aml/flaresolverr-go v0.0.0-20260422152048-db4b9c71c458
 )
 
 require (
