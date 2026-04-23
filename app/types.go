@@ -34,11 +34,6 @@ type TrackerSettings struct {
 	Login              LoginSettings `json:"login"`
 }
 
-type CFClientConfig struct {
-	Profile   string `json:"profile"`   // TLS profile: chrome_144, firefox_117, chrome_133, etc.
-	UserAgent string `json:"useragent"` // Custom User-Agent string
-}
-
 type FlareSolverrGoConfig struct {
 	BrowserBackend string `json:"browser_backend,omitempty"` // "auto" (default) | "chromedriver" | "geckodriver"
 	BrowserPath    string `json:"browser_path,omitempty"`    // path to Chrome/Chromium or Firefox/Camoufox binary
@@ -79,7 +74,6 @@ type Config struct {
 	TimeSyncSpidr      int                  `json:"timeSyncSpidr"`
 	FlareSolverr       string               `json:"flaresolverr,omitempty"`   // Legacy: FlareSolverr URL (ignored, kept for config compat)
 	FlareSolverrGo     FlareSolverrGoConfig `json:"flaresolverr_go"`          // Embedded flaresolverr-go settings
-	CFClient           CFClientConfig       `json:"cfclient"`
 	Rutor              TrackerSettings      `json:"Rutor"`
 	Megapeer           TrackerSettings      `json:"Megapeer"`
 	TorrentBy          TrackerSettings      `json:"TorrentBy"`
@@ -122,7 +116,6 @@ func DefaultConfig() Config {
 		TimeStatsUpdate:    90,
 		TimeSync:           60,
 		TimeSyncSpidr:      60,
-		CFClient:           CFClientConfig{Profile: "chrome_146", UserAgent: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36"},
 		LogFdbRetentionDays: 7,
 		Rutor:              TrackerSettings{Host: "https://rutor.is", ReqMinute: 8, ParseDelay: 7000},
 		Megapeer:           TrackerSettings{Host: "https://megapeer.vip", ReqMinute: 8, ParseDelay: 7000},

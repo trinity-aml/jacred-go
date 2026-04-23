@@ -81,12 +81,6 @@ func MarshalYAML(cfg Config) string {
 	writeIndented(&b, 2, "chrome_version", cfg.FlareSolverrGo.ChromeVersion)
 	b.WriteString("\n")
 
-	// CFClient
-	b.WriteString("cfclient:\n")
-	writeIndented(&b, 2, "profile", cfg.CFClient.Profile)
-	writeIndented(&b, 2, "useragent", cfg.CFClient.UserAgent)
-	b.WriteString("\n")
-
 	// Trackers (same order as types.go)
 	writeTracker(&b, "Rutor", cfg.Rutor)
 	writeTracker(&b, "Megapeer", cfg.Megapeer)

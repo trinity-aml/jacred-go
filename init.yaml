@@ -1,11 +1,255 @@
-host: 0.0.0.0
-port: 8194
-browser_backend: geckodriver
-browser_path: /home/trinity1980/.cache/camoufox/camoufox
-driver_auto_download: true
-headless: true
-log_level: info
-log_html: false
-disable_media: false
-prometheus_enabled: false
-prometheus_port: 9093
+---
+listenip: any
+listenport: 9117
+apikey: ""
+devkey: ""
+
+fdbPathLevels: 2
+mergeduplicates: true
+mergenumduplicates: true
+
+log: false
+logParsers: false
+logFdb: false
+logFdbRetentionDays: 7
+logFdbMaxSizeMb: 0
+logFdbMaxFiles: 0
+
+openstats: true
+opensync: true
+opensync_v1: false
+web: true
+
+timeStatsUpdate: 90
+timeSync: 60
+timeSyncSpidr: 60
+
+syncapi: ""
+syncsport: true
+syncspidr: true
+synctrackers: []
+disable_trackers: []
+
+maxreadfile: 200
+memlimit: 0
+gcpercent: 50
+
+evercache:
+  enable: true
+  validHour: 1
+  maxOpenWriteTask: 500
+  dropCacheTake: 100
+
+flaresolverr_go:
+  headless: true
+  browser_backend: geckodriver
+  browser_path: /home/trinity1980/.cache/camoufox/camoufox
+  driver_path: ""
+  chrome_version: ""
+
+Rutor:
+  host: "https://rutor.is"
+  useproxy: false
+  reqMinute: 8
+  parseDelay: 7000
+  log: false
+  login:
+    u: ""
+    p: ""
+
+Megapeer:
+  host: "https://megapeer.vip"
+  fetchmode: flaresolverr
+  useproxy: false
+  reqMinute: 8
+  parseDelay: 8000
+  log: false
+  login:
+    u: ""
+    p: ""
+
+TorrentBy:
+  host: "https://torrent.by"
+  insecureSkipVerify: true
+  useproxy: false
+  reqMinute: 8
+  parseDelay: 7000
+  log: false
+  login:
+    u: ""
+    p: ""
+
+Kinozal:
+  host: "https://kinozal.tv"
+  useproxy: false
+  reqMinute: 8
+  parseDelay: 7000
+  log: false
+  login:
+    u: ""
+    p: ""
+
+NNMClub:
+  host: "https://nnmclub.to"
+  fetchmode: flaresolverr
+  useproxy: false
+  reqMinute: 8
+  parseDelay: 7000
+  log: false
+  login:
+    u: ""
+    p: ""
+
+Bitru:
+  host: "https://bitru.org"
+  fetchmode: flaresolverr
+  useproxy: false
+  reqMinute: 8
+  parseDelay: 7000
+  log: false
+  login:
+    u: ""
+    p: ""
+
+Toloka:
+  host: "https://toloka.to"
+  useproxy: false
+  reqMinute: 8
+  parseDelay: 7000
+  log: false
+  login:
+    u: ""
+    p: ""
+
+Mazepa:
+  host: "https://mazepa.to"
+  fetchmode: flaresolverr
+  useproxy: false
+  reqMinute: 8
+  parseDelay: 7000
+  log: false
+  login:
+    u: ""
+    p: ""
+
+Rutracker:
+  host: "https://rutracker.org"
+  useproxy: false
+  reqMinute: 8
+  parseDelay: 7000
+  log: false
+  login:
+    u: ""
+    p: ""
+
+Selezen:
+  host: "https://selezen.top"
+  useproxy: false
+  reqMinute: 8
+  parseDelay: 7000
+  log: false
+  login:
+    u: ""
+    p: ""
+
+Lostfilm:
+  host: "https://www.lostfilm.tv"
+  cookie: lostfilm cookie
+  useproxy: false
+  reqMinute: 8
+  parseDelay: 7000
+  log: false
+  login:
+    u: ""
+    p: ""
+
+Animelayer:
+  host: "https://animelayer.ru"
+  useproxy: false
+  reqMinute: 8
+  parseDelay: 7000
+  log: false
+  login:
+    u: ""
+    p: ""
+
+Anidub:
+  host: "https://tr.anidub.com"
+  useproxy: false
+  reqMinute: 8
+  parseDelay: 7000
+  log: false
+  login:
+    u: ""
+    p: ""
+
+Aniliberty:
+  host: "https://aniliberty.top"
+  useproxy: false
+  reqMinute: 8
+  parseDelay: 7000
+  log: false
+  login:
+    u: ""
+    p: ""
+
+Knaben:
+  host: "https://api.knaben.org"
+  useproxy: false
+  reqMinute: 8
+  parseDelay: 7000
+  log: false
+  login:
+    u: ""
+    p: ""
+
+Anistar:
+  host: "https://anistar.org"
+  fetchmode: flaresolverr
+  useproxy: false
+  reqMinute: 8
+  parseDelay: 7000
+  log: false
+  login:
+    u: ""
+    p: ""
+
+Anifilm:
+  host: "https://anifilm.pro"
+  fetchmode: flaresolverr
+  useproxy: false
+  reqMinute: 8
+  parseDelay: 7000
+  log: false
+  login:
+    u: ""
+    p: ""
+
+Leproduction:
+  host: "https://www.le-production.tv"
+  useproxy: false
+  reqMinute: 8
+  parseDelay: 7000
+  log: false
+  login:
+    u: ""
+    p: ""
+
+Baibako:
+  host: "http://baibako.tv"
+  useproxy: false
+  reqMinute: 8
+  parseDelay: 7000
+  log: false
+  login:
+    u: ""
+    p: ""
+
+globalproxy:
+  - pattern: \\.onion
+    useAuth: false
+    BypassOnLocal: false
+    username: ""
+    password: ""
+    list:
+      - "socks5://127.0.0.1:9050"

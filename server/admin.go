@@ -1827,12 +1827,9 @@ func (s *Server) handleDevTestFetch(w http.ResponseWriter, r *http.Request) {
 		cookiePreview = cookie
 	}
 
-	cfUA := cfg.CFClient.UserAgent
-	if cfUA == "" {
-		cfUA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36"
-	}
+	ua := "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36"
 	if qUA := r.URL.Query().Get("ua"); qUA != "" {
-		cfUA = qUA
+		ua = qUA
 	}
 
 	// nocookie=true → test without cookie to check if CF blocks the IP itself
@@ -1841,7 +1838,6 @@ func (s *Server) handleDevTestFetch(w http.ResponseWriter, r *http.Request) {
 		hasCookie = false
 	}
 
-	cf, _ := core.NewCFClientWithConfig(cfg.CFClient.Profile, cfUA)
 	result := map[string]any{
 		"tracker":       tracker,
 		"host":          host,
@@ -1849,35 +1845,14 @@ func (s *Server) handleDevTestFetch(w http.ResponseWriter, r *http.Request) {
 		"testURL":       testURL,
 		"hasCookie":     hasCookie,
 		"cookiePreview": cookiePreview,
-		"cfProfile":     cfg.CFClient.Profile,
-		"userAgent":     cfUA,
+		"userAgent":     ua,
 	}
 
-	if cf != nil {
-		body, status, err := cf.Get(testURL, cookie, testURL)
-		errStr := ""
-		if err != nil {
-			errStr = err.Error()
-		}
-		snippet := ""
-		if len(body) > 300 {
-			snippet = body[:300]
-		} else {
-			snippet = body
-		}
-		result["cfClient"] = map[string]any{
-			"status":  status,
-			"bodyLen": len(body),
-			"error":   errStr,
-			"snippet": snippet,
-		}
-	}
-
-	// Also test with standard http.Client + cookie
+	// Test with standard http.Client + cookie
 	if hasCookie {
 		client := &http.Client{Timeout: 15 * time.Second}
 		req, _ := http.NewRequestWithContext(r.Context(), http.MethodGet, testURL, nil)
-		req.Header.Set("User-Agent", cfUA)
+		req.Header.Set("User-Agent", ua)
 		req.Header.Set("Cookie", cookie)
 		resp, err := client.Do(req)
 		errStr := ""

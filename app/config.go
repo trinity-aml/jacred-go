@@ -24,7 +24,6 @@ func parseYAMLIntoConfig(text string, cfg *Config) {
 	section := ""
 	inTrackerLogin := false
 	inEvercache := false
-	inCFClient := false
 	inFlareSolverrGo := false
 	currentListTarget := ""
 
@@ -42,7 +41,6 @@ func parseYAMLIntoConfig(text string, cfg *Config) {
 			currentProxy = nil
 			inTrackerLogin = false
 			inEvercache = false
-			inCFClient = false
 			inFlareSolverrGo = false
 			currentListTarget = ""
 			if section == "globalproxy" {
@@ -120,17 +118,6 @@ func parseYAMLIntoConfig(text string, cfg *Config) {
 			}
 			continue
 		}
-		if section == "cfclient" && indent == 2 && strings.Contains(trimmed, ":") {
-			inCFClient = true
-			k, v := splitKV(trimmed)
-			switch k {
-			case "profile":
-				cfg.CFClient.Profile = unquote(v)
-			case "useragent":
-				cfg.CFClient.UserAgent = unquote(v)
-			}
-			continue
-		}
 		if section == "flaresolverr_go" && indent == 2 && strings.Contains(trimmed, ":") {
 			inFlareSolverrGo = true
 			k, v := splitKV(trimmed)
@@ -162,10 +149,6 @@ func parseYAMLIntoConfig(text string, cfg *Config) {
 				inEvercache = true
 				continue
 			}
-			if k == "cfclient" {
-				inCFClient = true
-				continue
-			}
 			if k == "flaresolverr_go" {
 				inFlareSolverrGo = true
 				continue
@@ -182,7 +165,6 @@ func parseYAMLIntoConfig(text string, cfg *Config) {
 			}
 		}
 		_ = inEvercache
-		_ = inCFClient
 		_ = inFlareSolverrGo
 	}
 }
