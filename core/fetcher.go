@@ -276,14 +276,18 @@ type flareSession struct {
 	obtained  time.Time
 }
 
-const flareSessionTTL = 30 * time.Minute
+// cf_clearance cookies from managed challenges typically live 30–120 minutes.
+// We conservatively reuse them for up to an hour before forcing a re-solve.
+const flareSessionTTL = 60 * time.Minute
 
 // NewFetcher creates a Fetcher with standard HTTP and embedded flaresolverr-go backends.
+// Previously-solved sessions written to SetFlarePersistDir are rehydrated so
+// quick restarts don't trigger a fresh Chrome solve for every tracker.
 func NewFetcher(cfg app.Config) *Fetcher {
 	return &Fetcher{
 		cfg:        cfg,
 		stdClient:  &http.Client{Timeout: 30 * time.Second},
-		flareCache: make(map[string]*flareSession),
+		flareCache: loadFlareSessions(flareSessionTTL),
 	}
 }
 
@@ -497,6 +501,7 @@ func (f *Fetcher) clearFlareSession(domain string) {
 	f.flareMu.Lock()
 	delete(f.flareCache, domain)
 	f.flareMu.Unlock()
+	deleteFlareSession(domain)
 }
 
 // solveFlare calls the shared flaresolverr-go service to solve CF challenge.
@@ -616,6 +621,7 @@ func (f *Fetcher) solveFlare(rawURL, domain string) (*flareSession, *FetchResult
 	f.flareMu.Lock()
 	f.flareCache[domain] = sess
 	f.flareMu.Unlock()
+	saveFlareSession(domain, sess)
 
 	// When the browser actually navigated to rawURL, hand the rendered body
 	// back so the caller can skip an HTTP roundtrip that would likely hit a

@@ -91,6 +91,11 @@ func main() {
 	// Initialize shared flaresolverr-go service (one Chrome for all parsers)
 	core.InitFlareService(cfg.FlareSolverrGo)
 
+	// Rehydrate solved CF sessions from disk so parsers started immediately
+	// after this can reuse a still-valid cf_clearance instead of triggering
+	// a fresh Chrome solve. Directory is created if missing.
+	core.SetFlarePersistDir(filepath.Join("Data", "temp", "flare"))
+
 	db := filedb.New(cfg, "Data")
 	if err := db.RebuildIndexes(); err != nil {
 		log.Fatal(err)
