@@ -107,7 +107,7 @@ func (p *Parser) Parse(ctx context.Context, maxpage int) (ParseResult, error) {
 				return res, ctx.Err()
 			case <-time.After(delay * 2):
 			}
-			p.Fetcher.InvalidateSession("https://" + strings.TrimRight(p.Config.Megapeer.Host, "/"))
+			p.Fetcher.InvalidateSession(strings.TrimRight(p.Config.Megapeer.Host, "/"))
 			p.parseCategory(ctx, cat, maxpage, delay, &res)
 		}
 	}

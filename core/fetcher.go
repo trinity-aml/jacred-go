@@ -270,9 +270,14 @@ type Fetcher struct {
 }
 
 // flareSession holds cookies obtained from flaresolverr for a domain.
+// browserID is the flaresolverr-go session ID that keeps a Chrome instance
+// alive between solves for this domain — reusing it avoids the ~10s Chrome
+// startup on every URL. Not persisted to disk: session IDs belong to running
+// Chrome processes and don't survive a restart.
 type flareSession struct {
 	cookies   string
 	userAgent string
+	browserID string
 	obtained  time.Time
 }
 
@@ -302,7 +307,7 @@ func (f *Fetcher) GetFlareCookies(rawURL string) (cookie, userAgent string) {
 	if sess := f.getFlareSession(domain); sess != nil {
 		return sess.cookies, sess.userAgent
 	}
-	sess, _, err := f.solveFlare(rawURL, domain)
+	sess, _, err := f.solveFlare(rawURL, domain, false)
 	if err != nil {
 		return "", ""
 	}
@@ -411,22 +416,31 @@ func (f *Fetcher) doHTTP(rawURL, cookie, userAgent string, transport *http.Trans
 //   4. Cache cookies for subsequent requests
 func (f *Fetcher) fetchViaFlare(rawURL, cookie string, transport *http.Transport) (*FetchResult, error) {
 	domain := extractDomain(rawURL)
+	httpCookiesFailed := false
 
 	if sess := f.getFlareSession(domain); sess != nil {
 		res, err := f.fetchWithCookies(rawURL, cookie, sess, transport)
 		// CF re-challenge returns 200 with challenge HTML — status-only check is
-		// not enough, inspect the body too. If it's a challenge, drop the cached
-		// session and re-solve.
+		// not enough, inspect the body too.
 		if err == nil && res.StatusCode != 403 && !isCloudflareChallenge(res.Body) {
 			return res, nil
 		}
-		f.clearFlareSession(domain)
+		// Only drop the cached session when cookies are actually stale
+		// (challenge markers in body). A plain 403 typically means CF WAF is
+		// blocking our raw HTTP client's IP/fingerprint — cookies are still
+		// valid, we just can't use them without the browser.
+		if err == nil && isCloudflareChallenge(res.Body) {
+			f.clearFlareSession(domain)
+		}
+		// Force the browser to actually navigate this URL; reusing the cached
+		// session we just tried would send us straight back here.
+		httpCookiesFailed = true
 	}
 
 	// Solve via flaresolverr-go browser. For non-binary URLs the browser
 	// navigates to rawURL itself, so its rendered Response is the page we
 	// actually want — use it directly when available.
-	sess, direct, err := f.solveFlare(rawURL, domain)
+	sess, direct, err := f.solveFlare(rawURL, domain, httpCookiesFailed)
 	if err != nil {
 		log.Printf("flaresolverr: solve failed for %s: %v", domain, err)
 		// No doHTTP fallback: fetchmode=flaresolverr means the site is CF-gated,
@@ -518,7 +532,13 @@ func (f *Fetcher) clearFlareSession(domain string) {
 //     check below). Prevents N parallel Chrome instances for one CF site.
 //   - Caps global concurrency via flareSolveSem to prevent a Chrome swarm
 //     when many parsers run simultaneously.
-func (f *Fetcher) solveFlare(rawURL, domain string) (*flareSession, *FetchResult, error) {
+//
+// forceRender=true skips the "cached session" short-circuit after acquiring
+// the domain lock and always navigates the browser. Callers that have already
+// determined cached cookies don't work for this URL (e.g. HTTP+cookies just
+// returned a WAF 403) pass true to avoid looping back through the same stale
+// fast path.
+func (f *Fetcher) solveFlare(rawURL, domain string, forceRender bool) (*flareSession, *FetchResult, error) {
 	if flareShutdown.Load() {
 		return nil, nil, fmt.Errorf("flaresolverr: service is shutting down")
 	}
@@ -540,9 +560,12 @@ func (f *Fetcher) solveFlare(rawURL, domain string) (*flareSession, *FetchResult
 	defer dm.Unlock()
 
 	// Re-check cache after acquiring domain lock: a prior concurrent caller
-	// may have already solved this domain.
-	if sess := f.getFlareSession(domain); sess != nil {
-		return sess, nil, nil
+	// may have already solved this domain. Skip when forceRender because the
+	// caller wants this specific URL rendered by the browser, not just cookies.
+	if !forceRender {
+		if sess := f.getFlareSession(domain); sess != nil {
+			return sess, nil, nil
+		}
 	}
 
 	// Re-check cooldown under the lock: waiters behind us may have seen the
@@ -564,6 +587,15 @@ func (f *Fetcher) solveFlare(rawURL, domain string) (*flareSession, *FetchResult
 	defer flareSolveWG.Done()
 	defer flareInflight.Add(-1)
 
+	// Stable session ID per domain — flaresolverr-go keeps the Chrome instance
+	// alive across calls with the same ID. First call creates it (cold start
+	// ~10s), subsequent calls navigate in the same browser (~1-2s). Especially
+	// important for WAF-blocked sites (e.g. anistar) where plain HTTP never
+	// works and every URL must go through the browser.
+	// Passing SessionTTLMinutes causes the library to recreate the browser if
+	// its lifetime exceeds this; matches our in-memory cache TTL.
+	browserID := "jacred-" + domain
+
 	log.Printf("flaresolverr: solving challenge for %s", domain)
 
 	// MaxTimeout caps Chrome's solve time inside the library.
@@ -584,10 +616,12 @@ func (f *Fetcher) solveFlare(rawURL, domain string) (*flareSession, *FetchResult
 	}
 
 	resp, _ := svc.ControllerV1(ctx, &flaresolverr.V1Request{
-		Cmd:           "request.get",
-		URL:           solveURL,
-		MaxTimeout:    90000,
-		WaitInSeconds: 2,
+		Cmd:               "request.get",
+		URL:               solveURL,
+		MaxTimeout:        90000,
+		WaitInSeconds:     2,
+		Session:           browserID,
+		SessionTTLMinutes: int(flareSessionTTL / time.Minute),
 	})
 
 	if resp.Status != "ok" {
@@ -615,6 +649,7 @@ func (f *Fetcher) solveFlare(rawURL, domain string) (*flareSession, *FetchResult
 	sess := &flareSession{
 		cookies:   cookieStr,
 		userAgent: ua,
+		browserID: browserID,
 		obtained:  time.Now(),
 	}
 
