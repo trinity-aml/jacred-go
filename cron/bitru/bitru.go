@@ -535,7 +535,15 @@ func (p *Parser) fetchBrowse(ctx context.Context, cat string, page int) (string,
 		if status >= 200 && status < 300 && strings.Contains(body, `id="logo"`) {
 			return body, nil
 		}
-		// CF block (403 or challenge page) — invalidate and retry once
+		// 503 from Fetcher means flaresolverr couldn't give us anything
+		// (circuit breaker / service shutdown). Cookies aren't the problem —
+		// invalidating them and retrying would hit the same cooldown.
+		if status == 503 {
+			log.Printf("bitru: flaresolverr unavailable status=503 url=%s", urlv)
+			return "", fmt.Errorf("bitru flaresolverr unavailable")
+		}
+		// CF block (403 or challenge-body 200) or unknown — cookies likely
+		// stale; invalidate and retry once.
 		if attempt == 0 {
 			log.Printf("bitru: invalid response status=%d hasMarker=%v bodyLen=%d url=%s — invalidating session, retry", status, strings.Contains(body, `id="logo"`), len(body), urlv)
 			p.Fetcher.InvalidateSession(urlv)

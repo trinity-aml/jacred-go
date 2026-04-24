@@ -177,6 +177,12 @@ func (p *Parser) getBrowsePage(ctx context.Context, rawURL, cat string) (string,
 		if status >= 200 && status < 300 && strings.Contains(body, browsePageValidMarker) {
 			return body, nil
 		}
+		// flaresolverr unavailable (cooldown/shutdown) — cookies aren't the
+		// problem, retrying would hit the same 503. Fail fast instead.
+		if status == 503 {
+			log.Printf("megapeer: flaresolverr unavailable status=503 url=%s", rawURL)
+			return "", nil
+		}
 		// CF block (403 or challenge page without marker) — invalidate and retry once
 		if attempt == 0 {
 			log.Printf("megapeer: invalid response status=%d hasMarker=%v bodyLen=%d url=%s — invalidating session, retry", status, strings.Contains(body, browsePageValidMarker), len(body), rawURL)

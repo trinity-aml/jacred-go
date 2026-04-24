@@ -67,9 +67,18 @@ var (
 )
 
 const (
-	flareFailCooldown     = 3 * time.Minute
-	flareSessionIdleTTL   = 5 * time.Minute
-	flareReaperInterval   = 1 * time.Minute
+	flareFailCooldown   = 3 * time.Minute
+	flareSessionIdleTTL = 5 * time.Minute
+	flareReaperInterval = 1 * time.Minute
+
+	// Single flaresolverr-go session shared by all CF-gated parsers. One
+	// Camoufox process hosts navigations for every domain (Firefox isolates
+	// cookies per origin in the shared jar, so no cross-contamination).
+	// Trades parallelism — parsers serialize through the session's mutex —
+	// for ~80% less RAM during parsing peaks. The cookie-cache fast path in
+	// fetchViaFlare keeps the session out of the critical path for
+	// HTTP-friendly sites (1 solve per domain, then plain HTTP in parallel).
+	flareSharedSessionID = "jacred-shared"
 )
 
 // InitFlareService initializes the shared Xvfb display and flaresolverr-go config. Call once at startup.
@@ -102,9 +111,11 @@ func InitFlareService(cfg app.FlareSolverrGoConfig) {
 }
 
 // markSessionUsed records when a session was last accessed for the idle reaper.
-func markSessionUsed(domain string) {
+// Keyed by flaresolverr-go session ID (not by domain) because multiple domains
+// may share one browser session under flareSharedSessionID.
+func markSessionUsed(sessionID string) {
 	flareLastUsedMu.Lock()
-	flareLastUsed[domain] = time.Now()
+	flareLastUsed[sessionID] = time.Now()
 	flareLastUsedMu.Unlock()
 }
 
@@ -131,22 +142,22 @@ func reapIdleSessions() {
 			cutoff := time.Now().Add(-flareSessionIdleTTL)
 			var idle []string
 			flareLastUsedMu.Lock()
-			for domain, last := range flareLastUsed {
+			for sessionID, last := range flareLastUsed {
 				if last.Before(cutoff) {
-					idle = append(idle, domain)
-					delete(flareLastUsed, domain)
+					idle = append(idle, sessionID)
+					delete(flareLastUsed, sessionID)
 				}
 			}
 			flareLastUsedMu.Unlock()
-			for _, domain := range idle {
+			for _, sessionID := range idle {
 				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 				resp, _ := svc.ControllerV1(ctx, &flaresolverr.V1Request{
 					Cmd:     "sessions.destroy",
-					Session: "jacred-" + domain,
+					Session: sessionID,
 				})
 				cancel()
 				if resp.Status == "ok" {
-					log.Printf("flaresolverr: reaped idle session for %s", domain)
+					log.Printf("flaresolverr: reaped idle session %s", sessionID)
 				}
 			}
 		}
@@ -681,14 +692,12 @@ func (f *Fetcher) solveFlare(rawURL, domain string, forceRender bool) (*flareSes
 	defer flareSolveWG.Done()
 	defer flareInflight.Add(-1)
 
-	// Stable session ID per domain — flaresolverr-go keeps the Chrome instance
-	// alive across calls with the same ID. First call creates it (cold start
-	// ~10s), subsequent calls navigate in the same browser (~1-2s). Especially
-	// important for WAF-blocked sites (e.g. anistar) where plain HTTP never
-	// works and every URL must go through the browser.
-	// Passing SessionTTLMinutes causes the library to recreate the browser if
-	// its lifetime exceeds this; matches our in-memory cache TTL.
-	browserID := "jacred-" + domain
+	// All domains share one persistent browser session; see flareSharedSessionID.
+	// Firefox isolates cookies per origin inside the session's jar, so domains
+	// don't cross-pollinate. Downside: navigations serialize at the library's
+	// per-session mutex. Mitigation: the HTTP+cookies fast path in
+	// fetchViaFlare skips the session for sites where cookies alone work.
+	browserID := flareSharedSessionID
 
 	log.Printf("flaresolverr: solving challenge for %s", domain)
 
@@ -717,7 +726,7 @@ func (f *Fetcher) solveFlare(rawURL, domain string, forceRender bool) (*flareSes
 		Session:           browserID,
 		SessionTTLMinutes: int(flareSessionTTL / time.Minute),
 	})
-	markSessionUsed(domain)
+	markSessionUsed(browserID)
 
 	if resp.Status != "ok" {
 		markFlareFailure(domain)
