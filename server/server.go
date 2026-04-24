@@ -39,6 +39,7 @@ import (
 	"sync"
 
 	"jacred/filedb"
+	"jacred/tracks"
 )
 
 type VersionInfo struct {
@@ -74,11 +75,16 @@ type Server struct {
 	SelezenParser      *selezen.Parser
 	LeproductionParser *leproduction.Parser
 	MazepaParser       *mazepa.Parser
+	TracksDB           *tracks.DB
 	cache              *searchCache // search result cache (5 min TTL)
 }
 
-func New(cfg app.Config, db *filedb.DB, wwwroot string) *Server {
-	return &Server{Config: cfg, DB: db, WWWRoot: wwwroot, Version: VersionInfo{Version: "dev", GitSha: "unknown", GitBranch: "unknown", BuildDate: time.Now().UTC().Format("2006-01-02 15:04:05 UTC")}, KnabenParser: knaben.New(cfg, db), AnidubParser: anidub.New(cfg, db), AnilibertyParser: aniliberty.New(cfg, db), AnimelayerParser: animelayer.New(cfg, db), AnistarParser: anistar.New(cfg, db, "Data"), AnifilmParser: anifilm.New(cfg, db, "Data"), BaibakoParser: baibako.New(cfg, db, "Data"), BitruParser: bitru.New(cfg, db, "Data"), BitruAPIParser: bitruapi.New(cfg, db, "Data"), RutorParser: rutor.New(cfg, db, "Data"), MegapeerParser: megapeer.New(cfg, db), TorrentByParser: torrentby.New(cfg, db, "Data"), NNMClubParser: nnmclub.New(cfg, db, "Data"), LostfilmParser: lostfilm.New(cfg, db), RutrackerParser: rutracker.New(cfg, db, "Data"), KinozalParser: kinozal.New(cfg, db, "Data"), TolokaParser: toloka.New(cfg, db, "Data"), SelezenParser: selezen.New(cfg, db, "Data"), LeproductionParser: leproduction.New(cfg, db, "Data"), MazepaParser: mazepa.New(cfg, db, "Data"), cache: newSearchCache(5*time.Minute, 10000)}
+func New(cfg app.Config, db *filedb.DB, tracksDB *tracks.DB, wwwroot string) *Server {
+	if tracksDB == nil {
+		tracksDB = tracks.New("Data")
+		_ = tracksDB.Load()
+	}
+	return &Server{Config: cfg, DB: db, WWWRoot: wwwroot, Version: VersionInfo{Version: "dev", GitSha: "unknown", GitBranch: "unknown", BuildDate: time.Now().UTC().Format("2006-01-02 15:04:05 UTC")}, KnabenParser: knaben.New(cfg, db), AnidubParser: anidub.New(cfg, db), AnilibertyParser: aniliberty.New(cfg, db), AnimelayerParser: animelayer.New(cfg, db), AnistarParser: anistar.New(cfg, db, "Data"), AnifilmParser: anifilm.New(cfg, db, "Data"), BaibakoParser: baibako.New(cfg, db, "Data"), BitruParser: bitru.New(cfg, db, "Data"), BitruAPIParser: bitruapi.New(cfg, db, "Data"), RutorParser: rutor.New(cfg, db, "Data"), MegapeerParser: megapeer.New(cfg, db), TorrentByParser: torrentby.New(cfg, db, "Data"), NNMClubParser: nnmclub.New(cfg, db, "Data"), LostfilmParser: lostfilm.New(cfg, db), RutrackerParser: rutracker.New(cfg, db, "Data"), KinozalParser: kinozal.New(cfg, db, "Data"), TolokaParser: toloka.New(cfg, db, "Data"), SelezenParser: selezen.New(cfg, db, "Data"), LeproductionParser: leproduction.New(cfg, db, "Data"), MazepaParser: mazepa.New(cfg, db, "Data"), TracksDB: tracksDB, cache: newSearchCache(5*time.Minute, 10000)}
 }
 
 // GetConfig returns a thread-safe copy of the current config.
@@ -161,6 +167,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/sync/fdb", s.handleSyncFdb)
 	mux.HandleFunc("/sync/fdb/torrents", s.handleSyncFdbTorrents)
 	mux.HandleFunc("/sync/torrents", s.handleSyncTorrents)
+	mux.HandleFunc("/sync/tracks", s.handleSyncTracks)
+	mux.HandleFunc("/sync/tracks/check", s.handleSyncTracksCheck)
 	mux.HandleFunc("/jsondb/save", s.handleJSONDBSave)
 	mux.HandleFunc("/dev/findcorrupt", s.handleDevFindCorrupt)
 	mux.HandleFunc("/dev/updatesize", s.handleDevUpdateSize)
@@ -1030,6 +1038,7 @@ func buildResults(items []filedb.TorrentDetails, rqnum bool) []map[string]any {
 			"Peers":        asInt(t["pir"]),
 			"MagnetUri":    t["magnet"],
 			"languages":    nullableField(rqnum, t["languages"]),
+			"ffprobe":      nullableField(rqnum, t["ffprobe"]),
 			"info":         nil,
 		}
 		if !rqnum {

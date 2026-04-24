@@ -391,7 +391,7 @@ func (p *Parser) saveTorrentsAndMagnets(ctx context.Context, torrents []filedb.T
 		if exists {
 			ex = existing
 		}
-		result := filedb.MergeTorrent(ex, incoming)
+		result := filedb.MergeTorrent(ex, incoming, p.Config.TracksAttempt)
 		if !result.Changed {
 			skipped++
 			continue

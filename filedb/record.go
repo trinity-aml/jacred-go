@@ -27,6 +27,7 @@ type TorrentRecord struct {
 	Languages    string   `json:"languages,omitempty"`
 	DownloadURI  string   `json:"_downloadURI,omitempty"`
 	TID          string   `json:"_tid,omitempty"`
+	FFProbe      any      `json:"ffprobe,omitempty"`
 }
 
 // ToMap converts TorrentRecord to legacy TorrentDetails map.
@@ -104,6 +105,9 @@ func (r TorrentRecord) ToMap() TorrentDetails {
 	if r.TID != "" {
 		m["_tid"] = r.TID
 	}
+	if r.FFProbe != nil {
+		m["ffprobe"] = r.FFProbe
+	}
 	return m
 }
 
@@ -134,6 +138,7 @@ func RecordFromMap(m TorrentDetails) TorrentRecord {
 		Languages:    asString(m["languages"]),
 		DownloadURI:  asString(m["_downloadURI"]),
 		TID:          asString(m["_tid"]),
+		FFProbe:      m["ffprobe"],
 	}
 }
 

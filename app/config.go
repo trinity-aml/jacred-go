@@ -25,6 +25,7 @@ func parseYAMLIntoConfig(text string, cfg *Config) {
 	inTrackerLogin := false
 	inEvercache := false
 	inFlareSolverrGo := false
+	inTracksInterval := false
 	currentListTarget := ""
 
 	for _, rawLine := range lines {
@@ -42,6 +43,7 @@ func parseYAMLIntoConfig(text string, cfg *Config) {
 			inTrackerLogin = false
 			inEvercache = false
 			inFlareSolverrGo = false
+			inTracksInterval = false
 			currentListTarget = ""
 			if section == "globalproxy" {
 				cfg.GlobalProxy = nil
@@ -118,6 +120,17 @@ func parseYAMLIntoConfig(text string, cfg *Config) {
 			}
 			continue
 		}
+		if section == "tracksinterval" && indent == 2 && strings.Contains(trimmed, ":") {
+			inTracksInterval = true
+			k, v := splitKV(trimmed)
+			switch k {
+			case "task0":
+				cfg.TracksInterval.Task0 = parseInt(v)
+			case "task1":
+				cfg.TracksInterval.Task1 = parseInt(v)
+			}
+			continue
+		}
 		if section == "flaresolverr_go" && indent == 2 && strings.Contains(trimmed, ":") {
 			inFlareSolverrGo = true
 			k, v := splitKV(trimmed)
@@ -153,6 +166,10 @@ func parseYAMLIntoConfig(text string, cfg *Config) {
 				inFlareSolverrGo = true
 				continue
 			}
+			if k == "tracksinterval" {
+				inTracksInterval = true
+				continue
+			}
 		}
 
 		if indent == 2 && strings.HasPrefix(trimmed, "- ") {
@@ -162,16 +179,19 @@ func parseYAMLIntoConfig(text string, cfg *Config) {
 				cfg.SyncTrackers = append(cfg.SyncTrackers, val)
 			case "disable_trackers":
 				cfg.DisableTrackers = append(cfg.DisableTrackers, val)
+			case "tsuri":
+				cfg.TSURI = append(cfg.TSURI, val)
 			}
 		}
 		_ = inEvercache
 		_ = inFlareSolverrGo
+		_ = inTracksInterval
 	}
 }
 
 func isListKey(k string) bool {
 	switch k {
-	case "synctrackers", "disable_trackers":
+	case "synctrackers", "disable_trackers", "tsuri":
 		return true
 	default:
 		return false
@@ -343,6 +363,20 @@ func setConfigKV(cfg *Config, k, v string) {
 		cfg.SyncTrackers = []string{}
 	case "disable_trackers":
 		cfg.DisableTrackers = []string{}
+	case "tracks":
+		cfg.Tracks = parseBool(v)
+	case "tracksmod":
+		cfg.TracksMod = parseInt(v)
+	case "tracksdelay":
+		cfg.TracksDelay = parseInt(v)
+	case "trackslog":
+		cfg.TracksLog = parseBool(v)
+	case "tracksatempt":
+		cfg.TracksAttempt = parseInt(v)
+	case "trackscategory":
+		cfg.TracksCategory = unquote(v)
+	case "tsuri":
+		cfg.TSURI = []string{}
 	}
 }
 

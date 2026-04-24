@@ -60,6 +60,19 @@ func MarshalYAML(cfg Config) string {
 	writeScalar(&b, "gcpercent", cfg.GCPercent)
 	b.WriteString("\n")
 
+	// Tracks
+	writeScalar(&b, "tracks", cfg.Tracks)
+	writeScalar(&b, "tracksmod", cfg.TracksMod)
+	writeScalar(&b, "tracksdelay", cfg.TracksDelay)
+	writeScalar(&b, "trackslog", cfg.TracksLog)
+	writeScalar(&b, "tracksatempt", cfg.TracksAttempt)
+	writeScalar(&b, "trackscategory", cfg.TracksCategory)
+	b.WriteString("tracksinterval:\n")
+	writeIndented(&b, 2, "task0", cfg.TracksInterval.Task0)
+	writeIndented(&b, 2, "task1", cfg.TracksInterval.Task1)
+	writeList(&b, "tsuri", cfg.TSURI)
+	b.WriteString("\n")
+
 	// Evercache
 	b.WriteString("evercache:\n")
 	writeIndented(&b, 2, "enable", cfg.Evercache.Enable)

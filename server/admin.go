@@ -26,6 +26,7 @@ import (
 	"jacred/cron/bitruapi"
 	"jacred/cron/knaben"
 	"jacred/filedb"
+	"jacred/tracks"
 )
 
 var jsonDBSaveWork atomic.Bool
@@ -283,7 +284,7 @@ func (s *Server) handleSyncFdbTorrents(w http.ResponseWriter, r *http.Request) {
 					"url": t["url"],
 				}
 			} else {
-				torrent[k] = normalizeSyncTorrent(cloneMap(t))
+				torrent[k] = normalizeSyncTorrent(s.enrichTorrentWithTracks(cloneMap(t)))
 			}
 
 			countread++
@@ -346,7 +347,7 @@ func (s *Server) handleSyncTorrents(w http.ResponseWriter, r *http.Request) {
 			if trackerName != "" && !strings.EqualFold(asString(t["trackerName"]), trackerName) {
 				continue
 			}
-			cp := normalizeSyncTorrent(cloneMap(t))
+			cp := normalizeSyncTorrent(s.enrichTorrentWithTracks(cloneMap(t)))
 			cp["updateTime"] = item.Value.UpdateTime
 			torrents = append(torrents, map[string]any{"key": k, "value": cp})
 			if len(torrents) >= take {
@@ -1881,4 +1882,45 @@ func (s *Server) handleDevTestFetch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, result)
+}
+
+// enrichTorrentWithTracks augments a torrent map with ffprobe streams and
+// derived languages looked up by magnet. Port of C# SyncController enrichment
+// (SyncController.cs:93, 160). Only populates fields that are missing — never
+// overwrites existing ffprobe/languages values.
+func (s *Server) enrichTorrentWithTracks(t filedb.TorrentDetails) filedb.TorrentDetails {
+	if t == nil {
+		return t
+	}
+	if t["ffprobe"] != nil && t["languages"] != nil {
+		return t
+	}
+	magnet := strings.TrimSpace(asString(t["magnet"]))
+	if magnet == "" || s.TracksDB == nil {
+		return t
+	}
+	streams, ok := s.TracksDB.GetByMagnet(magnet, toStringSliceAny(t["types"]), true)
+	if !ok || len(streams) == 0 {
+		return t
+	}
+	if t["ffprobe"] == nil {
+		t["ffprobe"] = streams
+	}
+	if t["languages"] == nil {
+		t["languages"] = tracks.Languages(toStringSliceAny(t["languages"]), streams)
+	}
+	return t
+}
+
+// handleSyncTracks serves the /sync/tracks endpoint for remote jacred instances
+// to pull ffprobe data. Currently returns 404 — downstream consumers fall back
+// to enrichment via the /sync/fdb/torrents payload which already includes
+// ffprobe via enrichTorrentWithTracks.
+func (s *Server) handleSyncTracks(w http.ResponseWriter, r *http.Request) {
+	writeBareNotFound(w)
+}
+
+// handleSyncTracksCheck serves /sync/tracks/check. See handleSyncTracks.
+func (s *Server) handleSyncTracksCheck(w http.ResponseWriter, r *http.Request) {
+	writeBareNotFound(w)
 }

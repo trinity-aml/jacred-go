@@ -360,6 +360,9 @@
                 <option value="newtor">Новые торренты ↓</option>
                 <option value="update">Изменения ↓</option>
                 <option value="alltorrents">Всего торрентов ↓</option>
+                <option value="confirm">Подтверждено ↓</option>
+                <option value="wait">Ожидает ↓</option>
+                <option value="skip">Пропущено ↓</option>
               </select>
               <svg
                 class="absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400 dark:text-gray-500 pointer-events-none"
@@ -485,6 +488,10 @@
               <th scope="col" class="px-4 py-3 text-right font-semibold text-gray-700 dark:text-gray-300">Новые</th>
               <th scope="col" class="px-4 py-3 text-right font-semibold text-gray-700 dark:text-gray-300">Обновлено</th>
               <th scope="col" class="px-4 py-3 text-right font-semibold text-gray-700 dark:text-gray-300">Всего</th>
+              <th scope="col" class="px-4 py-3 text-right font-semibold text-gray-700 dark:text-gray-300">Подтверждено
+              </th>
+              <th scope="col" class="px-4 py-3 text-right font-semibold text-gray-700 dark:text-gray-300">Ожидает</th>
+              <th scope="col" class="px-4 py-3 text-right font-semibold text-gray-700 dark:text-gray-300">Пропущено</th>
             </tr>
           </thead>
           <tbody id="statsTableBody" class="bg-white/50 dark:bg-gray-900/50"></tbody>
@@ -717,6 +724,12 @@
 
       const elements = {};
 
+      const getTracksData = (item) => ({
+        wait: Number(item.tracks?.wait) || 0,
+        confirm: Number(item.tracks?.confirm) || 0,
+        skip: Number(item.tracks?.skip) || 0
+      });
+
       const toSafeIconName = (name) => {
         const base = (name || '').toString().toLowerCase();
         const safe = base.replace(/[^a-z0-9_-]/g, '-');
@@ -731,6 +744,7 @@
       };
 
       const renderCard = (item) => {
+        const tracks = getTracksData(item);
         const name = item.trackerName || '—';
         const nameSafe = escapeHtml(name);
         const icoName = toSafeIconName(item.trackerName);
@@ -769,11 +783,27 @@
                 <dd class="stat-number text-gray-700 dark:text-gray-200 font-semibold"
                     aria-label="${formatNumberFull(item.alltorrents)}">${formatNumber(item.alltorrents)}</dd>
               </div>
+              <div class="flex justify-between items-center text-sm pt-2 border-t border-gray-200/50 dark:border-gray-800/50">
+                <dt class="text-gray-500 dark:text-gray-400">Подтверждено</dt>
+                <dd class="stat-number text-green-600 dark:text-green-400 font-medium"
+                    aria-label="${formatNumberFull(tracks.confirm)}">${formatNumber(tracks.confirm)}</dd>
+              </div>
+              <div class="flex justify-between items-center text-sm">
+                <dt class="text-gray-500 dark:text-gray-400">Ожидает</dt>
+                <dd class="stat-number text-yellow-600 dark:text-yellow-400 font-medium"
+                    aria-label="${formatNumberFull(tracks.wait)}">${formatNumber(tracks.wait)}</dd>
+              </div>
+              <div class="flex justify-between items-center text-sm">
+                <dt class="text-gray-500 dark:text-gray-400">Пропущено</dt>
+                <dd class="stat-number text-red-600 dark:text-red-400 font-medium"
+                    aria-label="${formatNumberFull(tracks.skip)}">${formatNumber(tracks.skip)}</dd>
+              </div>
             </dl>
           </div>`;
       };
 
       const renderTableRow = (item) => {
+        const tracks = getTracksData(item);
         const name = item.trackerName || '—';
         const nameSafe = escapeHtml(name);
         const ico = escapeAttr(getSafeIconPath(item));
@@ -796,6 +826,12 @@
                 aria-label="${formatNumberFull(item.update)}">${formatNumber(item.update)}</td>
             <td class="px-4 py-3 text-right stat-number text-gray-700 dark:text-gray-200 font-semibold"
                 aria-label="${formatNumberFull(item.alltorrents)}">${formatNumber(item.alltorrents)}</td>
+            <td class="px-4 py-3 text-right stat-number text-green-600 dark:text-green-400"
+                aria-label="${formatNumberFull(tracks.confirm)}">${formatNumber(tracks.confirm)}</td>
+            <td class="px-4 py-3 text-right stat-number text-yellow-600 dark:text-yellow-400"
+                aria-label="${formatNumberFull(tracks.wait)}">${formatNumber(tracks.wait)}</td>
+            <td class="px-4 py-3 text-right stat-number text-red-600 dark:text-red-400"
+                aria-label="${formatNumberFull(tracks.skip)}">${formatNumber(tracks.skip)}</td>
           </tr>`;
       };
 
@@ -817,16 +853,38 @@
           boxClass: 'bg-gray-100/80 dark:bg-gray-800/60 rounded-xl p-4 border border-gray-300 dark:border-gray-700/50',
           labelClass: 'text-xs text-gray-700 dark:text-gray-300 mb-2 font-medium',
           valueClass: 'stat-number text-2xl font-bold text-gray-900 dark:text-gray-100'
+        },
+        {
+          key: 'confirm', label: 'Подтверждено',
+          boxClass: 'bg-green-100/60 dark:bg-green-950/40 rounded-xl p-4 border border-green-200 dark:border-green-900/30',
+          labelClass: 'text-xs text-green-700 dark:text-green-300 mb-2 font-medium',
+          valueClass: 'stat-number text-2xl font-bold text-green-900 dark:text-green-200'
+        },
+        {
+          key: 'wait', label: 'Ожидает',
+          boxClass: 'bg-yellow-100/60 dark:bg-yellow-950/40 rounded-xl p-4 border border-yellow-200 dark:border-yellow-900/30',
+          labelClass: 'text-xs text-yellow-700 dark:text-yellow-300 mb-2 font-medium',
+          valueClass: 'stat-number text-2xl font-bold text-yellow-900 dark:text-yellow-200'
+        },
+        {
+          key: 'skip', label: 'Пропущено',
+          boxClass: 'bg-red-100/60 dark:bg-red-950/40 rounded-xl p-4 border border-red-200 dark:border-red-900/30',
+          labelClass: 'text-xs text-red-700 dark:text-red-300 mb-2 font-medium',
+          valueClass: 'stat-number text-2xl font-bold text-red-900 dark:text-red-200'
         }
       ];
 
       const renderAggregate = (list) => {
         const sum = list.reduce((acc, item) => {
+          const tracks = getTracksData(item);
           acc.newtor += Number(item.newtor) || 0;
           acc.update += Number(item.update) || 0;
           acc.alltorrents += Number(item.alltorrents) || 0;
+          acc.confirm += tracks.confirm;
+          acc.wait += tracks.wait;
+          acc.skip += tracks.skip;
           return acc;
-        }, { newtor: 0, update: 0, alltorrents: 0 });
+        }, { newtor: 0, update: 0, alltorrents: 0, confirm: 0, wait: 0, skip: 0 });
 
         const statBoxes = AGGREGATE_STATS.map(({ key, label, boxClass, labelClass, valueClass }) =>
           `<div class="${boxClass}">
@@ -861,6 +919,9 @@
           case 'newtor': return Number(item.newtor) || 0;
           case 'update': return Number(item.update) || 0;
           case 'alltorrents': return Number(item.alltorrents) || 0;
+          case 'confirm': return getTracksData(item).confirm;
+          case 'wait': return getTracksData(item).wait;
+          case 'skip': return getTracksData(item).skip;
           default: return 0;
         }
       };

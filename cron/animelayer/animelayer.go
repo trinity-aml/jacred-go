@@ -240,7 +240,7 @@ func (p *Parser) saveTorrents(ctx context.Context, cookie string, torrents []fil
 		if exists {
 			ex = existing
 		}
-		result := filedb.MergeTorrent(ex, t)
+		result := filedb.MergeTorrent(ex, t, p.Config.TracksAttempt)
 		if !result.Changed {
 			skippedCount++
 			continue

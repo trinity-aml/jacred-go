@@ -21,6 +21,11 @@ type Evercache struct {
 	DropCacheTake    int  `json:"dropCacheTake"`
 }
 
+type TracksIntervalConfig struct {
+	Task0 int `json:"task0"`
+	Task1 int `json:"task1"`
+}
+
 type TrackerSettings struct {
 	Host               string        `json:"host"`
 	Alias              string        `json:"alias,omitempty"`
@@ -72,6 +77,14 @@ type Config struct {
 	TimeStatsUpdate    int                  `json:"timeStatsUpdate"`
 	TimeSync           int                  `json:"timeSync"`
 	TimeSyncSpidr      int                  `json:"timeSyncSpidr"`
+	Tracks             bool                 `json:"tracks"`
+	TracksMod          int                  `json:"tracksmod"`
+	TracksDelay        int                  `json:"tracksdelay"`
+	TracksLog          bool                 `json:"trackslog"`
+	TracksAttempt      int                  `json:"tracksatempt"`
+	TracksCategory     string               `json:"trackscategory"`
+	TracksInterval     TracksIntervalConfig `json:"tracksinterval"`
+	TSURI              []string             `json:"tsuri"`
 	FlareSolverr       string               `json:"flaresolverr,omitempty"`   // Legacy: FlareSolverr URL (ignored, kept for config compat)
 	FlareSolverrGo     FlareSolverrGoConfig `json:"flaresolverr_go"`          // Embedded flaresolverr-go settings
 	Rutor              TrackerSettings      `json:"Rutor"`
@@ -116,6 +129,12 @@ func DefaultConfig() Config {
 		TimeStatsUpdate:    90,
 		TimeSync:           60,
 		TimeSyncSpidr:      60,
+		Tracks:             false,
+		TracksDelay:        20000,
+		TracksAttempt:      20,
+		TracksCategory:     "jacred",
+		TracksInterval:     TracksIntervalConfig{Task0: 180, Task1: 60},
+		TSURI:              []string{"http://127.0.0.1:8090"},
 		LogFdbRetentionDays: 7,
 		Rutor:              TrackerSettings{Host: "https://rutor.is", ReqMinute: 8, ParseDelay: 7000},
 		Megapeer:           TrackerSettings{Host: "https://megapeer.vip", ReqMinute: 8, ParseDelay: 7000},

@@ -19,6 +19,7 @@ import (
 	"jacred/core"
 	"jacred/filedb"
 	"jacred/server"
+	"jacred/tracks"
 )
 
 func setupLog(logDir string) (*os.File, error) {
@@ -63,6 +64,7 @@ func main() {
 	_ = os.MkdirAll(filepath.Join("Data", "fdb"), 0o755)
 	_ = os.MkdirAll(filepath.Join("Data", "temp"), 0o755)
 	_ = os.MkdirAll(filepath.Join("Data", "log"), 0o755)
+	_ = os.MkdirAll(filepath.Join("Data", "tracks"), 0o755)
 
 	// Memory limits
 	gcpct := cfg.GCPercent
@@ -111,7 +113,21 @@ func main() {
 	go db.RunBackgroundJobs(ctx)
 	go background.RunTrackersCron(ctx, db, "Data", "wwwroot", cfg.Evercache.Enable && cfg.Evercache.ValidHour <= 0)
 
-	srv := server.New(cfg, db, "wwwroot")
+	tracksDB := tracks.New("Data")
+	if err := tracksDB.Load(); err != nil {
+		log.Printf("tracks load error: %v", err)
+	} else {
+		log.Printf("tracks loaded: %d", tracksDB.Count())
+	}
+
+	if cfg.Tracks {
+		manager := tracks.NewManager(cfg, db, tracksDB, "Data")
+		for i := 1; i <= 5; i++ {
+			go manager.RunLoop(ctx, i)
+		}
+	}
+
+	srv := server.New(cfg, db, tracksDB, "wwwroot")
 
 	// Config hot-reload: check init.yaml mtime every 10 seconds
 	reloader := background.NewConfigReloader("init.yaml", cfg)
