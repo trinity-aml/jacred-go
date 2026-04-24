@@ -395,6 +395,19 @@ func (f *Fetcher) GetFlareCookies(rawURL string) (cookie, userAgent string) {
 	return sess.cookies, sess.userAgent
 }
 
+// PeekFlareCookies returns cached flaresolverr cookies + UA for a URL's domain
+// without triggering a solve. Use this when a parser wants to piggyback on
+// another parser's solved session (e.g. bitruapi reusing bitru's cf_clearance)
+// without initiating its own CF-bypass flow. Returns ok=false when there's no
+// valid cached session.
+func (f *Fetcher) PeekFlareCookies(rawURL string) (cookie, userAgent string, ok bool) {
+	sess := f.getFlareSession(extractDomain(rawURL))
+	if sess == nil {
+		return "", "", false
+	}
+	return sess.cookies, sess.userAgent, true
+}
+
 // InvalidateSession clears cached flaresolverr cookies for a URL's domain.
 func (f *Fetcher) InvalidateSession(rawURL string) {
 	domain := extractDomain(rawURL)

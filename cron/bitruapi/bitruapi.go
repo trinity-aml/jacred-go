@@ -240,6 +240,19 @@ func (p *Parser) apiRequestAsync(ctx context.Context, jsonParams map[string]any)
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json, text/plain, */*")
+	req.Header.Set("Accept-Language", "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7")
+	// Piggyback on bitru parser's solved session if available (cf_clearance
+	// cookie + matching UA) so CF sees a consistent browser identity. Falls
+	// back to a plausible desktop UA when no cache yet.
+	cookie, ua, _ := p.Fetcher.PeekFlareCookies(apiURL)
+	if ua == "" {
+		ua = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36"
+	}
+	req.Header.Set("User-Agent", ua)
+	if cookie != "" {
+		req.Header.Set("Cookie", cookie)
+	}
 	resp, err := p.Client.Do(req)
 	if err != nil {
 		return nil, err
@@ -402,7 +415,16 @@ func (p *Parser) saveTorrentsAndMagnets(ctx context.Context, torrents []filedb.T
 }
 
 func (p *Parser) download(ctx context.Context, rawURL, referer string) ([]byte, error) {
-	data, status, err := p.Fetcher.Download(rawURL, p.Config.Bitru)
+	// bitruapi must not trigger its own flaresolverr solves (that's bitru
+	// parser's job), so force standard HTTP. If the bitru parser has already
+	// solved CF for this domain, piggyback on those cookies — they're
+	// domain-scoped and cover /download.php too.
+	tracker := p.Config.Bitru
+	tracker.FetchMode = "standard"
+	if cookie, _, ok := p.Fetcher.PeekFlareCookies(rawURL); ok && cookie != "" {
+		tracker.Cookie = core.MergeCookieStrings(tracker.Cookie, cookie)
+	}
+	data, status, err := p.Fetcher.Download(rawURL, tracker)
 	if err != nil {
 		return nil, err
 	}
