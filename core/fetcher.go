@@ -54,9 +54,23 @@ var (
 	// another Chrome that almost certainly times out again.
 	flareFailMu   sync.RWMutex
 	flareLastFail = make(map[string]time.Time)
+
+	// Idle-session reaper: destroy flaresolverr-go browser sessions that
+	// haven't been used for flareSessionIdleTTL so Camoufox doesn't sit in
+	// RAM between cron runs. One session ≈ 800–1000 MB resident; without
+	// reaping, every domain we solve once pins a browser until jacred exits.
+	flareLastUsedMu sync.Mutex
+	flareLastUsed   = make(map[string]time.Time)
+
+	flareReaperStop chan struct{}
+	flareReaperDone chan struct{}
 )
 
-const flareFailCooldown = 3 * time.Minute
+const (
+	flareFailCooldown     = 3 * time.Minute
+	flareSessionIdleTTL   = 5 * time.Minute
+	flareReaperInterval   = 1 * time.Minute
+)
 
 // InitFlareService initializes the shared Xvfb display and flaresolverr-go config. Call once at startup.
 func InitFlareService(cfg app.FlareSolverrGoConfig) {
@@ -80,11 +94,78 @@ func InitFlareService(cfg app.FlareSolverrGoConfig) {
 	if os.Getenv("DISPLAY") == "" {
 		startXvfb()
 	}
+
+	// Start idle-session reaper.
+	flareReaperStop = make(chan struct{})
+	flareReaperDone = make(chan struct{})
+	go reapIdleSessions()
+}
+
+// markSessionUsed records when a session was last accessed for the idle reaper.
+func markSessionUsed(domain string) {
+	flareLastUsedMu.Lock()
+	flareLastUsed[domain] = time.Now()
+	flareLastUsedMu.Unlock()
+}
+
+// reapIdleSessions destroys flaresolverr-go sessions that have been idle for
+// longer than flareSessionIdleTTL. The browser is recreated on the next solve.
+// Cookies in flareCache / on-disk persist stay untouched: they remain valid
+// for their own TTL and let HTTP+cookies fast-path keep working.
+func reapIdleSessions() {
+	defer close(flareReaperDone)
+	ticker := time.NewTicker(flareReaperInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-flareReaperStop:
+			return
+		case <-ticker.C:
+			if flareShutdown.Load() {
+				return
+			}
+			svc := flareSvc
+			if svc == nil {
+				continue
+			}
+			cutoff := time.Now().Add(-flareSessionIdleTTL)
+			var idle []string
+			flareLastUsedMu.Lock()
+			for domain, last := range flareLastUsed {
+				if last.Before(cutoff) {
+					idle = append(idle, domain)
+					delete(flareLastUsed, domain)
+				}
+			}
+			flareLastUsedMu.Unlock()
+			for _, domain := range idle {
+				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				resp, _ := svc.ControllerV1(ctx, &flaresolverr.V1Request{
+					Cmd:     "sessions.destroy",
+					Session: "jacred-" + domain,
+				})
+				cancel()
+				if resp.Status == "ok" {
+					log.Printf("flaresolverr: reaped idle session for %s", domain)
+				}
+			}
+		}
+	}
 }
 
 // CloseFlareService shuts down the shared flaresolverr-go service and Xvfb. Call on shutdown.
 func CloseFlareService() {
 	flareShutdown.Store(true)
+
+	// Stop idle reaper first so it doesn't race with Close().
+	if flareReaperStop != nil {
+		close(flareReaperStop)
+		select {
+		case <-flareReaperDone:
+		case <-time.After(2 * time.Second):
+		}
+		flareReaperStop = nil
+	}
 
 	// Wait for in-flight solves to finish their defer client.Close() so Chrome
 	// processes are terminated before we proceed with service shutdown.
@@ -623,6 +704,7 @@ func (f *Fetcher) solveFlare(rawURL, domain string, forceRender bool) (*flareSes
 		Session:           browserID,
 		SessionTTLMinutes: int(flareSessionTTL / time.Minute),
 	})
+	markSessionUsed(domain)
 
 	if resp.Status != "ok" {
 		markFlareFailure(domain)
