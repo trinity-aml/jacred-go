@@ -99,6 +99,18 @@ func InitFlareService(cfg app.FlareSolverrGoConfig) {
 			log.Printf("chrome-pin: chrome=%s driver=%s", bp, dp)
 		}
 	}
+	// Auto-download Camoufox when geckodriver backend is selected without an
+	// explicit browser_path. Avoids a manual ~680 MB install step and keeps
+	// CF-gated parsers working out of the box on first run.
+	if strings.TrimSpace(flareSvcCfg.BrowserPath) == "" &&
+		strings.EqualFold(strings.TrimSpace(flareSvcCfg.BrowserBackend), "geckodriver") {
+		if p, err := EnsureCamoufox(); err != nil {
+			log.Printf("camoufox: %v (flaresolverr-go will try its own discovery)", err)
+		} else {
+			flareSvcCfg.BrowserPath = p
+			log.Printf("camoufox: using %s", p)
+		}
+	}
 	// Start persistent Xvfb if no DISPLAY and not on a desktop
 	if os.Getenv("DISPLAY") == "" {
 		startXvfb()
