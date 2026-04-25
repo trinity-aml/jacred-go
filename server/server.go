@@ -327,7 +327,7 @@ func (s *Server) handleJackett(w http.ResponseWriter, r *http.Request) {
 		writeCanonicalJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "jacred": true, "Results": []any{}})
 		return
 	}
-	data := writeCanonicalJSONCached(w, http.StatusOK, map[string]any{"Results": buildResults(res.Results, res.RqNum), "jacred": true})
+	data := writeCanonicalJSONCached(w, http.StatusOK, map[string]any{"Results": s.buildResults(res.Results, res.RqNum), "jacred": true})
 	if data != nil {
 		s.cache.Set(cacheKey, data)
 	}
@@ -1022,9 +1022,10 @@ func (s *Server) handleCronMazepaParseLatest(w http.ResponseWriter, r *http.Requ
 	writeJSON(w, http.StatusOK, map[string]any{"status": text})
 }
 
-func buildResults(items []filedb.TorrentDetails, rqnum bool) []map[string]any {
+func (s *Server) buildResults(items []filedb.TorrentDetails, rqnum bool) []map[string]any {
 	out := make([]map[string]any, 0, len(items))
-	for _, t := range items {
+	for _, src := range items {
+		t := s.enrichTorrentWithTracks(cloneMap(src))
 		category, categoryDesc := categories(t)
 		result := map[string]any{
 			"Tracker":      t["trackerName"],

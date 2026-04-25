@@ -17,6 +17,24 @@ func init() {
 	}
 }
 
+// FFStreamLite is the minimal projection of an ffprobe audio stream consumed by
+// UpdateFullDetails for voice mining. Defined here (instead of in tracks/) to
+// avoid a tracks→filedb→tracks import cycle. The tracks package registers an
+// adapter via SetFFProbeLookup at startup.
+type FFStreamLite struct {
+	CodecType string
+	TagsTitle string
+}
+
+var ffprobeVoiceLookup func(magnet string, types []string) []FFStreamLite
+
+// SetFFProbeLookup wires an ffprobe stream provider used by UpdateFullDetails
+// to mine extra voice studios out of audio stream tags.title (port of C#
+// FileDB.cs:537-561). Pass nil to disable. Safe to call once at startup.
+func SetFFProbeLookup(fn func(magnet string, types []string) []FFStreamLite) {
+	ffprobeVoiceLookup = fn
+}
+
 // UpdateFullDetails computes quality, videotype, voices, languages, seasons and size
 // for a torrent entry, modifying the map in-place. Port of C# FileDB.updateFullDetails.
 //
@@ -71,6 +89,26 @@ func UpdateFullDetails(t TorrentDetails) {
 	for i, vLow := range allVoicesLower {
 		if len(allVoices[i]) > 4 && strings.Contains(titleLower, vLow) {
 			voices[allVoices[i]] = struct{}{}
+		}
+	}
+	if ffprobeVoiceLookup != nil {
+		magnet := strings.TrimSpace(asString(t["magnet"]))
+		if magnet != "" {
+			streams := ffprobeVoiceLookup(magnet, asStringSlice(t["types"]))
+			for _, s := range streams {
+				if s.CodecType != "audio" || s.TagsTitle == "" {
+					continue
+				}
+				tlow := strings.ToLower(s.TagsTitle)
+				for i, vLow := range allVoicesLower {
+					if len(allVoices[i]) > 4 && strings.Contains(tlow, vLow) {
+						voices[allVoices[i]] = struct{}{}
+					}
+				}
+				if reDub.MatchString(tlow) {
+					voices["Дубляж"] = struct{}{}
+				}
+			}
 		}
 	}
 	voiceList := setToSlice(voices)

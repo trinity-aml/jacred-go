@@ -119,6 +119,21 @@ func main() {
 	} else {
 		log.Printf("tracks loaded: %d", tracksDB.Count())
 	}
+	filedb.SetFFProbeLookup(func(magnet string, types []string) []filedb.FFStreamLite {
+		streams, ok := tracksDB.GetByMagnet(magnet, types, true)
+		if !ok || len(streams) == 0 {
+			return nil
+		}
+		out := make([]filedb.FFStreamLite, 0, len(streams))
+		for _, s := range streams {
+			lite := filedb.FFStreamLite{CodecType: s.CodecType}
+			if s.Tags != nil {
+				lite.TagsTitle = s.Tags.Title
+			}
+			out = append(out, lite)
+		}
+		return out
+	})
 
 	if cfg.Tracks {
 		manager := tracks.NewManager(cfg, db, tracksDB, "Data")

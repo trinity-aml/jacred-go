@@ -1698,6 +1698,9 @@ func (s *Server) generateStatsFile() {
 		Update      int
 		Check       int
 		AllTorrents int
+		TrkConfirm  int
+		TrkWait     int
+		TrkError    int
 	}
 
 	trackers := map[string]*trackerStat{}
@@ -1724,6 +1727,7 @@ func (s *Server) generateStatsFile() {
 
 			ct := filedbTime(t, "createTime")
 			ut := filedbTime(t, "updateTime")
+			chk := filedbTime(t, "checkTime")
 
 			if ct.After(st.LastNewTor) {
 				st.LastNewTor = ct
@@ -1734,17 +1738,38 @@ func (s *Server) generateStatsFile() {
 			if !ut.Before(today) {
 				st.Update++
 			}
+			if !chk.IsZero() && !chk.Before(today) {
+				st.Check++
+			}
+
+			magnet := strings.TrimSpace(asString(t["magnet"]))
+			types := toStringSliceAny(t["types"])
+			if magnet != "" && !tracks.TheBad(types) {
+				if asInt(t["ffprobe_tryingdata"]) >= 3 {
+					st.TrkError++
+				} else if t["ffprobe"] != nil || s.tracksHasFFProbe(magnet, types) {
+					st.TrkConfirm++
+				} else {
+					st.TrkWait++
+				}
+			}
 		}
 	}
 
 	// Build output array sorted by alltorrents desc
+	type tracksEntry struct {
+		Wait    int `json:"wait"`
+		Confirm int `json:"confirm"`
+		Skip    int `json:"skip"`
+	}
 	type statsEntry struct {
-		TrackerName string `json:"trackerName"`
-		LastNewTor  string `json:"lastnewtor"`
-		NewTor      int    `json:"newtor"`
-		Update      int    `json:"update"`
-		Check       int    `json:"check"`
-		AllTorrents int    `json:"alltorrents"`
+		TrackerName string      `json:"trackerName"`
+		LastNewTor  string      `json:"lastnewtor"`
+		NewTor      int         `json:"newtor"`
+		Update      int         `json:"update"`
+		Check       int         `json:"check"`
+		AllTorrents int         `json:"alltorrents"`
+		Tracks      tracksEntry `json:"tracks"`
 	}
 
 	entries := make([]statsEntry, 0, len(trackers))
@@ -1760,6 +1785,11 @@ func (s *Server) generateStatsFile() {
 			Update:      st.Update,
 			Check:       st.Check,
 			AllTorrents: st.AllTorrents,
+			Tracks: tracksEntry{
+				Wait:    st.TrkWait,
+				Confirm: st.TrkConfirm,
+				Skip:    st.TrkError,
+			},
 		})
 	}
 
@@ -1882,6 +1912,18 @@ func (s *Server) handleDevTestFetch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, result)
+}
+
+// tracksHasFFProbe reports whether the tracks DB holds an ffprobe entry for
+// the given magnet (port of C# `TracksDB.Get(t.magnet) != null` used by stats).
+// types is passed so TheBad-rejected categories (sport/tvshow/docuserial) are
+// not counted as confirmed.
+func (s *Server) tracksHasFFProbe(magnet string, types []string) bool {
+	if s.TracksDB == nil || strings.TrimSpace(magnet) == "" {
+		return false
+	}
+	streams, ok := s.TracksDB.GetByMagnet(magnet, types, true)
+	return ok && len(streams) > 0
 }
 
 // enrichTorrentWithTracks augments a torrent map with ffprobe streams and
