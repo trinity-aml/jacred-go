@@ -153,9 +153,6 @@ func (p *Parser) parseRange(ctx context.Context, pageFrom, pageTo int) (ParseRes
 			}
 		}
 	}
-	if totalPages > 100 {
-		totalPages = 100
-	}
 	if pageTo <= 0 || pageTo > totalPages {
 		pageTo = totalPages
 	}
