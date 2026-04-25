@@ -308,23 +308,53 @@
         <!-- Tracks -->
         <details class="section">
           <summary>
-            <span>Tracks (TorrServer)</span>
+            <span>Tracks (анализ через TorrServer + ffprobe)</span>
             <svg class="chevron w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
           </summary>
           <div class="body space-y-4">
+            <p class="text-sm text-gray-500 dark:text-gray-400">
+              Подсистема скачивает метаданные раздач через TorrServer (ffprobe-анализ потоков),
+              чтобы у торрентов появлялись поля <code>ffprobe</code>, <code>languages</code>
+              и студии озвучки из <code>stream.tags.title</code>.
+              Категории <code>sport</code>, <code>tvshow</code>, <code>docuserial</code> пропускаются.
+            </p>
             <div class="grid-fields">
-              <div class="checkbox-row"><input type="checkbox" id="cb_tracks" data-path="tracks"/><label for="cb_tracks">tracks</label></div>
-              <div class="checkbox-row"><input type="checkbox" id="cb_trackslog" data-path="trackslog"/><label for="cb_trackslog">trackslog</label></div>
-              <div><label class="field-label">tracksmod</label><input type="number" class="field-input" data-path="tracksmod"/></div>
-              <div><label class="field-label">tracksdelay (мс)</label><input type="number" class="field-input" data-path="tracksdelay"/></div>
-              <div><label class="field-label">tracksatempt</label><input type="number" class="field-input" data-path="tracksatempt"/></div>
-              <div><label class="field-label">trackscategory</label><input class="field-input" data-path="trackscategory"/></div>
-              <div><label class="field-label">tracksinterval.task0</label><input type="number" class="field-input" data-path="tracksinterval.task0"/></div>
-              <div><label class="field-label">tracksinterval.task1</label><input type="number" class="field-input" data-path="tracksinterval.task1"/></div>
+              <div class="checkbox-row">
+                <input type="checkbox" id="cb_tracks" data-path="tracks"/>
+                <label for="cb_tracks" title="Запустить 5 фоновых воркеров (день / месяц / год / старые / обновления)">tracks — включить анализ</label>
+              </div>
+              <div class="checkbox-row">
+                <input type="checkbox" id="cb_trackslog" data-path="trackslog"/>
+                <label for="cb_trackslog" title="Подробные логи добавления/анализа торрентов">trackslog — verbose-лог</label>
+              </div>
+              <div>
+                <label class="field-label" title="0 — все 5 воркеров; 1 — пропускать year (typetask 3) и old (typetask 4)">tracksmod (0 = полный, 1 = без year/old)</label>
+                <input type="number" class="field-input" data-path="tracksmod" min="0" max="1"/>
+              </div>
+              <div>
+                <label class="field-label" title="Пауза между добавлением торрента в TorrServer и запросом /ffp/&lt;hash&gt;/1">tracksdelay (мс, по умолчанию 20000)</label>
+                <input type="number" class="field-input" data-path="tracksdelay" min="0"/>
+              </div>
+              <div>
+                <label class="field-label" title="Сколько раз пытаться проанализировать раздачу до пометки skip (ffprobe_tryingdata ≥ N)">tracksatempt — макс попыток (по умолчанию 20)</label>
+                <input type="number" class="field-input" data-path="tracksatempt" min="1"/>
+              </div>
+              <div>
+                <label class="field-label" title="Категория, под которой торрент добавляется в TorrServer">trackscategory — категория в TorrServer</label>
+                <input class="field-input" data-path="trackscategory" placeholder="jacred"/>
+              </div>
+              <div>
+                <label class="field-label" title="Интервал между прогонами day-окна (typetask 1)">tracksinterval.task0 — интервал day-окна (мин)</label>
+                <input type="number" class="field-input" data-path="tracksinterval.task0" min="1"/>
+              </div>
+              <div>
+                <label class="field-label" title="Интервал между прогонами month / year / old / updates окон (typetask 2-5)">tracksinterval.task1 — интервал прочих окон (мин)</label>
+                <input type="number" class="field-input" data-path="tracksinterval.task1" min="1"/>
+              </div>
             </div>
             <div>
-              <label class="field-label">tsuri (TorrServer URLs)</label>
-              <textarea class="field-textarea" data-path="tsuri" data-type="lines" rows="2"></textarea>
+              <label class="field-label" title="Список TorrServer-серверов; запросы балансируются по числу торрентов">tsuri — TorrServer URLs (по одному на строку)</label>
+              <textarea class="field-textarea" data-path="tsuri" data-type="lines" rows="3" placeholder="http://127.0.0.1:8090"></textarea>
             </div>
           </div>
         </details>
@@ -358,22 +388,73 @@
         <!-- FlareSolverr-go -->
         <details class="section">
           <summary>
-            <span>flaresolverr-go (встроенный)</span>
+            <span>flaresolverr-go (встроенный обход Cloudflare)</span>
             <svg class="chevron w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
           </summary>
-          <div class="body grid-fields">
-            <div class="checkbox-row"><input type="checkbox" id="cb_fs_headless" data-path="flaresolverr_go.headless"/><label for="cb_fs_headless">headless</label></div>
-            <div>
-              <label class="field-label">browser_backend</label>
-              <select class="field-select" data-path="flaresolverr_go.browser_backend">
-                <option value="">auto (по browser_path)</option>
-                <option value="geckodriver">geckodriver + Firefox/Camoufox</option>
-                <option value="chromedriver">chromedriver + Chrome/Chromium</option>
-              </select>
-            </div>
-            <div><label class="field-label">browser_path (Chrome/Chromium или Firefox/Camoufox; пусто = авто)</label><input class="field-input" data-path="flaresolverr_go.browser_path"/></div>
-            <div><label class="field-label">driver_path (chromedriver или geckodriver; пусто = авто-скачивание)</label><input class="field-input" data-path="flaresolverr_go.driver_path"/></div>
-            <div><label class="field-label">chrome_version (напр. 146; используется только с chromedriver backend)</label><input class="field-input" data-path="flaresolverr_go.chrome_version"/></div>
+          <div class="body space-y-4">
+            <p class="text-sm text-gray-500 dark:text-gray-400">
+              Один общий браузер для всех CF-защищённых парсеров (anistar, anifilm, bitru,
+              megapeer, mazepa, torrentby). Рекомендуется
+              <strong>geckodriver + Camoufox</strong> — проходит CF Managed Challenge Invisible.
+              Для трекера нужно выставить <code>fetchmode: flaresolverr</code>.
+            </p>
+
+            <!-- Backend choice -->
+            <fieldset class="border border-gray-300 dark:border-gray-700 rounded-lg p-3">
+              <legend class="px-2 text-sm font-semibold">Backend</legend>
+              <div class="grid-fields">
+                <div>
+                  <label class="field-label" title="auto — по browser_path; geckodriver — Firefox/Camoufox; chromedriver — Chrome/Chromium">
+                    browser_backend
+                  </label>
+                  <select class="field-select" data-path="flaresolverr_go.browser_backend">
+                    <option value="">auto (определить по browser_path)</option>
+                    <option value="geckodriver">geckodriver + Firefox/Camoufox (рекомендуется)</option>
+                    <option value="chromedriver">chromedriver + Chrome/Chromium</option>
+                  </select>
+                </div>
+                <div class="checkbox-row">
+                  <input type="checkbox" id="cb_fs_headless" data-path="flaresolverr_go.headless"/>
+                  <label for="cb_fs_headless" title="Запускать браузер без видимого окна (Xvfb всё равно требуется на Linux)">
+                    headless — фоновый режим
+                  </label>
+                </div>
+              </div>
+            </fieldset>
+
+            <!-- Paths -->
+            <fieldset class="border border-gray-300 dark:border-gray-700 rounded-lg p-3">
+              <legend class="px-2 text-sm font-semibold">Пути (пусто = авто-скачивание)</legend>
+              <div class="space-y-3">
+                <div>
+                  <label class="field-label" title="Путь к Chrome/Chromium или Firefox/Camoufox. Если пусто — для chromedriver скачивается Chrome for Testing, для geckodriver — Camoufox.">
+                    browser_path — путь к браузеру
+                  </label>
+                  <input class="field-input" data-path="flaresolverr_go.browser_path"
+                         placeholder="/usr/bin/google-chrome  или  /opt/camoufox/camoufox"/>
+                </div>
+                <div>
+                  <label class="field-label" title="Путь к chromedriver или geckodriver. Если пусто — драйвер скачивается автоматически в Data/drivers/.">
+                    driver_path — путь к WebDriver
+                  </label>
+                  <input class="field-input" data-path="flaresolverr_go.driver_path"
+                         placeholder="/usr/local/bin/chromedriver  или  /usr/local/bin/geckodriver"/>
+                </div>
+              </div>
+            </fieldset>
+
+            <!-- chromedriver-specific -->
+            <fieldset class="border border-gray-300 dark:border-gray-700 rounded-lg p-3">
+              <legend class="px-2 text-sm font-semibold">Только для chromedriver</legend>
+              <div class="grid-fields">
+                <div>
+                  <label class="field-label" title="Закрепить версию Chrome for Testing для авто-скачивания. Игнорируется при backend=geckodriver.">
+                    chrome_version — фикс версии (напр. 146)
+                  </label>
+                  <input class="field-input" data-path="flaresolverr_go.chrome_version" placeholder="latest"/>
+                </div>
+              </div>
+            </fieldset>
           </div>
         </details>
 
