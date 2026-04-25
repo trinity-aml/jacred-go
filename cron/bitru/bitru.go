@@ -185,9 +185,26 @@ func (p *Parser) ParseAllTask(ctx context.Context) (string, error) {
 	snapshot := cloneTasks(p.tasks)
 	p.mu.Unlock()
 	defer func() { p.mu.Lock(); p.allWork = false; p.mu.Unlock() }()
+
+	if len(snapshot) == 0 {
+		log.Printf("bitru: parsealltask — tasks empty, running updatetasksparse first")
+		if _, err := p.UpdateTasksParse(ctx); err != nil {
+			return "", err
+		}
+		p.mu.Lock()
+		snapshot = cloneTasks(p.tasks)
+		p.mu.Unlock()
+	}
+
+	totalPages := 0
+	for _, tasks := range snapshot {
+		totalPages += len(tasks)
+	}
+	processed, fetched, added, updated, skipped, failed, errs := 0, 0, 0, 0, 0, 0, 0
 	for cat, tasks := range snapshot {
 		for _, task := range tasks {
 			if task.UpdatedToday() {
+				skipped++
 				continue
 			}
 			if p.Config.Bitru.ParseDelay > 0 {
@@ -199,14 +216,27 @@ func (p *Parser) ParseAllTask(ctx context.Context) (string, error) {
 			}
 			items, err := p.parsePage(ctx, cat, task.Page)
 			if err != nil {
-				return "", err
-			}
-			if len(items) == 0 {
+				log.Printf("bitru: parsealltask cat=%s page=%d error: %v", cat, task.Page, err)
+				errs++
 				continue
 			}
-			if _, _, _, _, err := p.saveTorrents(ctx, items); err != nil {
-				return "", err
+			processed++
+			if len(items) == 0 {
+				log.Printf("bitru: parsealltask cat=%s page=%d empty", cat, task.Page)
+				continue
 			}
+			a, u, s, f, err := p.saveTorrents(ctx, items)
+			if err != nil {
+				log.Printf("bitru: parsealltask cat=%s page=%d save error: %v", cat, task.Page, err)
+				errs++
+				continue
+			}
+			fetched += len(items)
+			added += a
+			updated += u
+			skipped += s
+			failed += f
+			log.Printf("bitru: parsealltask cat=%s page=%d fetched=%d added=%d skipped=%d failed=%d", cat, task.Page, len(items), a, s, f)
 			p.mu.Lock()
 			for i := range p.tasks[cat] {
 				if p.tasks[cat][i].Page == task.Page {
@@ -220,6 +250,7 @@ func (p *Parser) ParseAllTask(ctx context.Context) (string, error) {
 			p.mu.Unlock()
 		}
 	}
+	log.Printf("bitru: parsealltask done processed=%d/%d fetched=%d added=%d updated=%d skipped=%d failed=%d errors=%d", processed, totalPages, fetched, added, updated, skipped, failed, errs)
 	return "ok", nil
 }
 
@@ -232,7 +263,19 @@ func (p *Parser) ParseLatest(ctx context.Context, pages int) (string, error) {
 	p.mu.Lock()
 	snapshot := cloneTasks(p.tasks)
 	p.mu.Unlock()
+
+	if len(snapshot) == 0 {
+		log.Printf("bitru: parselatest — tasks empty, running updatetasksparse first")
+		if _, err := p.UpdateTasksParse(ctx); err != nil {
+			return "", err
+		}
+		p.mu.Lock()
+		snapshot = cloneTasks(p.tasks)
+		p.mu.Unlock()
+	}
+
 	logLines := make([]string, 0)
+	processed, fetched, added, updated, skipped, failed, errs := 0, 0, 0, 0, 0, 0, 0
 	for cat, tasks := range snapshot {
 		sort.Slice(tasks, func(i, j int) bool { return tasks[i].Page < tasks[j].Page })
 		if len(tasks) > pages {
@@ -248,14 +291,27 @@ func (p *Parser) ParseLatest(ctx context.Context, pages int) (string, error) {
 			}
 			items, err := p.parsePage(ctx, cat, task.Page)
 			if err != nil {
-				return "", err
-			}
-			if len(items) == 0 {
+				log.Printf("bitru: parselatest cat=%s page=%d error: %v", cat, task.Page, err)
+				errs++
 				continue
 			}
-			if _, _, _, _, err := p.saveTorrents(ctx, items); err != nil {
-				return "", err
+			processed++
+			if len(items) == 0 {
+				log.Printf("bitru: parselatest cat=%s page=%d empty", cat, task.Page)
+				continue
 			}
+			a, u, s, f, err := p.saveTorrents(ctx, items)
+			if err != nil {
+				log.Printf("bitru: parselatest cat=%s page=%d save error: %v", cat, task.Page, err)
+				errs++
+				continue
+			}
+			fetched += len(items)
+			added += a
+			updated += u
+			skipped += s
+			failed += f
+			log.Printf("bitru: parselatest cat=%s page=%d fetched=%d added=%d skipped=%d failed=%d", cat, task.Page, len(items), a, s, f)
 			logLines = append(logLines, fmt.Sprintf("%s - %d", cat, task.Page))
 			p.mu.Lock()
 			for i := range p.tasks[cat] {
@@ -267,6 +323,7 @@ func (p *Parser) ParseLatest(ctx context.Context, pages int) (string, error) {
 			p.mu.Unlock()
 		}
 	}
+	log.Printf("bitru: parselatest done processed=%d fetched=%d added=%d updated=%d skipped=%d failed=%d errors=%d", processed, fetched, added, updated, skipped, failed, errs)
 	if len(logLines) == 0 {
 		return "ok", nil
 	}

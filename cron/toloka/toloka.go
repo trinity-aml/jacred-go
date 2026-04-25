@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"html"
+	"io"
 	"log"
 	"net/http"
 	"net/url"
@@ -339,9 +340,25 @@ func (p *Parser) ParseAllTask(ctx context.Context) (string, error) {
 	p.mu.Unlock()
 	defer func() { p.mu.Lock(); p.allWork = false; p.mu.Unlock() }()
 
+	if len(snapshot) == 0 {
+		log.Printf("toloka: parsealltask — tasks empty, running updatetasksparse first")
+		if _, err := p.UpdateTasksParse(ctx); err != nil {
+			return "", err
+		}
+		p.mu.Lock()
+		snapshot = cloneTasks(p.tasks)
+		p.mu.Unlock()
+	}
+
+	totalPages := 0
+	for _, list := range snapshot {
+		totalPages += len(list)
+	}
+	processed, fetched, added, updated, skipped, failed, errs := 0, 0, 0, 0, 0, 0, 0
 	for cat, list := range snapshot {
 		for _, task := range list {
 			if task.UpdatedToday(p.loc) {
+				skipped++
 				continue
 			}
 			if p.Config.Toloka.ParseDelay > 0 {
@@ -353,20 +370,34 @@ func (p *Parser) ParseAllTask(ctx context.Context) (string, error) {
 			}
 			items, err := p.parsePage(ctx, cat, task.Page)
 			if err != nil {
-				return "", err
-			}
-			if len(items) == 0 {
+				log.Printf("toloka: parsealltask cat=%s page=%d error: %v", cat, task.Page, err)
+				errs++
 				continue
 			}
-			if _, _, _, _, err := p.saveTorrents(ctx, items); err != nil {
-				return "", err
+			processed++
+			if len(items) == 0 {
+				log.Printf("toloka: parsealltask cat=%s page=%d empty", cat, task.Page)
+				continue
 			}
+			a, u, s, f, err := p.saveTorrents(ctx, items)
+			if err != nil {
+				log.Printf("toloka: parsealltask cat=%s page=%d save error: %v", cat, task.Page, err)
+				errs++
+				continue
+			}
+			fetched += len(items)
+			added += a
+			updated += u
+			skipped += s
+			failed += f
+			log.Printf("toloka: parsealltask cat=%s page=%d fetched=%d added=%d skipped=%d failed=%d", cat, task.Page, len(items), a, s, f)
 			p.markTask(cat, task.Page)
 			if err := p.saveTasks(); err != nil {
 				return "", err
 			}
 		}
 	}
+	log.Printf("toloka: parsealltask done processed=%d/%d fetched=%d added=%d updated=%d skipped=%d failed=%d errors=%d", processed, totalPages, fetched, added, updated, skipped, failed, errs)
 	return "ok", nil
 }
 
@@ -390,6 +421,7 @@ func (p *Parser) ParseLatest(ctx context.Context, pages int) (string, error) {
 		p.mu.Unlock()
 	}
 	var lines []string
+	processed, fetched, added, updated, skipped, failed, errs := 0, 0, 0, 0, 0, 0, 0
 	for cat, list := range snapshot {
 		sort.Slice(list, func(i, j int) bool { return list[i].Page < list[j].Page })
 		if len(list) > pages {
@@ -405,14 +437,27 @@ func (p *Parser) ParseLatest(ctx context.Context, pages int) (string, error) {
 			}
 			items, err := p.parsePage(ctx, cat, task.Page)
 			if err != nil {
-				return "", err
-			}
-			if len(items) == 0 {
+				log.Printf("toloka: parselatest cat=%s page=%d error: %v", cat, task.Page, err)
+				errs++
 				continue
 			}
-			if _, _, _, _, err := p.saveTorrents(ctx, items); err != nil {
-				return "", err
+			processed++
+			if len(items) == 0 {
+				log.Printf("toloka: parselatest cat=%s page=%d empty", cat, task.Page)
+				continue
 			}
+			a, u, s, f, err := p.saveTorrents(ctx, items)
+			if err != nil {
+				log.Printf("toloka: parselatest cat=%s page=%d save error: %v", cat, task.Page, err)
+				errs++
+				continue
+			}
+			fetched += len(items)
+			added += a
+			updated += u
+			skipped += s
+			failed += f
+			log.Printf("toloka: parselatest cat=%s page=%d fetched=%d added=%d skipped=%d failed=%d", cat, task.Page, len(items), a, s, f)
 			p.markTask(cat, task.Page)
 			if err := p.saveTasks(); err != nil {
 				return "", err
@@ -420,6 +465,7 @@ func (p *Parser) ParseLatest(ctx context.Context, pages int) (string, error) {
 			lines = append(lines, fmt.Sprintf("%s - %d", cat, task.Page))
 		}
 	}
+	log.Printf("toloka: parselatest done processed=%d fetched=%d added=%d updated=%d skipped=%d failed=%d errors=%d", processed, fetched, added, updated, skipped, failed, errs)
 	if len(lines) == 0 {
 		return "ok", nil
 	}
@@ -706,14 +752,21 @@ func (p *Parser) fetchPageHTML(ctx context.Context, cat string, page int) (strin
 		urlv = fmt.Sprintf("%s/f%s-%d", host, cat, page*45)
 	}
 	urlv += "?sort=8"
-	ts := p.Config.Toloka
-	ts.Cookie = cookie
 	for attempt := 1; attempt <= 3; attempt++ {
-		body, status, err := p.Fetcher.GetString(urlv, ts)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, urlv, nil)
 		if err != nil {
 			return "", err
 		}
-		if status == 429 && attempt < 3 {
+		req.Header.Set("User-Agent", defaultUA())
+		req.Header.Set("Cookie", cookie)
+		req.Header.Set("Referer", host+"/")
+		resp, err := p.Client.Do(req)
+		if err != nil {
+			return "", err
+		}
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 5<<20))
+		resp.Body.Close()
+		if resp.StatusCode == 429 && attempt < 3 {
 			select {
 			case <-ctx.Done():
 				return "", ctx.Err()
@@ -721,10 +774,10 @@ func (p *Parser) fetchPageHTML(ctx context.Context, cat string, page int) (strin
 			}
 			continue
 		}
-		if status < 200 || status >= 300 {
-			return "", fmt.Errorf("toloka status %d", status)
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			return "", fmt.Errorf("toloka status %d", resp.StatusCode)
 		}
-		return body, nil
+		return string(body), nil
 	}
 	return "", fmt.Errorf("toloka: max retries exceeded")
 }
@@ -735,14 +788,21 @@ func (p *Parser) downloadMagnet(ctx context.Context, downloadID, cookie string) 
 	}
 	host := strings.TrimRight(p.Config.Toloka.Host, "/")
 	rawURL := fmt.Sprintf("%s/download.php?id=%s", host, url.QueryEscape(downloadID))
-	ts := p.Config.Toloka
-	ts.Cookie = cookie
 	for attempt := 1; attempt <= 3; attempt++ {
-		data, status, err := p.Fetcher.Download(rawURL, ts)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 		if err != nil {
 			return "", err
 		}
-		if status == 429 && attempt < 3 {
+		req.Header.Set("User-Agent", defaultUA())
+		req.Header.Set("Cookie", cookie)
+		req.Header.Set("Referer", host+"/")
+		resp, err := p.Client.Do(req)
+		if err != nil {
+			return "", err
+		}
+		data, _ := io.ReadAll(io.LimitReader(resp.Body, 5<<20))
+		resp.Body.Close()
+		if resp.StatusCode == 429 && attempt < 3 {
 			select {
 			case <-ctx.Done():
 				return "", ctx.Err()
@@ -750,8 +810,8 @@ func (p *Parser) downloadMagnet(ctx context.Context, downloadID, cookie string) 
 			}
 			continue
 		}
-		if status < 200 || status >= 300 {
-			return "", fmt.Errorf("toloka download status %d", status)
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			return "", fmt.Errorf("toloka download status %d", resp.StatusCode)
 		}
 		return core.TorrentBytesToMagnet(data), nil
 	}
