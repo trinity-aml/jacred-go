@@ -25,7 +25,6 @@ const trackerName = "bitru"
 var (
 	rowSplitRe       = regexp.MustCompile(`(?i)<div class="b-title"`)
 	cleanSpaceRe     = regexp.MustCompile(`[\n\r\t\x{00A0} ]+`)
-	maxPagesRe       = regexp.MustCompile(`(?i)<a href="browse\.php\?tmp=[^"]+&page=[^"]+">([0-9]+)</a></div>`)
 	detailsURLRe     = regexp.MustCompile(`(?i)href="(details\.php\?id=[0-9]+)"`)
 	titleRe          = regexp.MustCompile(`(?i)<div class="it-title">([^<]+)</div>`)
 	sidRe            = regexp.MustCompile(`(?i)<span class="b-seeders">([0-9]+)</span>`)
@@ -145,28 +144,45 @@ func (p *Parser) UpdateTasksParse(ctx context.Context) (map[string][]Task, error
 	for _, cat := range []string{"movie", "serial"} {
 		htmlBody, err := p.fetchBrowse(ctx, cat, 1)
 		if err != nil || htmlBody == "" {
+			log.Printf("bitru: updatetasksparse cat=%s fetch failed: %v", cat, err)
 			continue
 		}
+		// Match pagination links scoped to the CURRENT category only — Go's
+		// previous regex used tmp=[^"]+ which would also catch links to other
+		// categories present on the page (sidebar, etc.) and inflate maxPages.
+		// Take the actual numerical maximum over all matches rather than the
+		// first one (HTML order is not guaranteed to put the highest page link
+		// first; some templates list "1 2 3 ... last" and others "last ... 3 2 1").
+		catEsc := regexp.QuoteMeta(cat)
+		catRe := regexp.MustCompile(`(?i)<a href="browse\.php\?tmp=` + catEsc + `&page=[^"]+">([0-9]+)</a></div>`)
 		maxPages := 1
-		if m := maxPagesRe.FindStringSubmatch(htmlBody); len(m) > 1 {
-			if n, _ := strconv.Atoi(strings.TrimSpace(m[1])); n > 0 {
-				maxPages = n
+		for _, m := range catRe.FindAllStringSubmatch(htmlBody, -1) {
+			if len(m) > 1 {
+				if n, _ := strconv.Atoi(strings.TrimSpace(m[1])); n > maxPages {
+					maxPages = n
+				}
 			}
 		}
-		pagesMap := map[int]Task{}
+		log.Printf("bitru: updatetasksparse cat=%s detected maxPages=%d", cat, maxPages)
+		// Rebuild the page list strictly from the freshly detected maxPages,
+		// preserving only UpdateTime for pages that still exist. This drops
+		// stale tasks (e.g. 2619-page leftovers from when the regex matched
+		// the wrong category) so ParseAllTask doesn't keep iterating forever.
+		existing := map[int]Task{}
 		for _, t := range p.tasks[cat] {
-			pagesMap[t.Page] = t
+			existing[t.Page] = t
 		}
+		merged := make([]Task, 0, maxPages)
 		for page := 1; page <= maxPages; page++ {
-			if _, ok := pagesMap[page]; !ok {
-				pagesMap[page] = Task{Page: page}
+			if t, ok := existing[page]; ok {
+				merged = append(merged, t)
+			} else {
+				merged = append(merged, Task{Page: page})
 			}
 		}
-		merged := make([]Task, 0, len(pagesMap))
-		for _, t := range pagesMap {
-			merged = append(merged, t)
+		if dropped := len(p.tasks[cat]) - maxPages; dropped > 0 {
+			log.Printf("bitru: updatetasksparse cat=%s pruned %d stale page tasks (was %d, now %d)", cat, dropped, len(p.tasks[cat]), maxPages)
 		}
-		sort.Slice(merged, func(i, j int) bool { return merged[i].Page < merged[j].Page })
 		p.tasks[cat] = merged
 	}
 	if err := p.saveTasksLocked(); err != nil {

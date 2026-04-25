@@ -61,6 +61,7 @@ var (
 	inlineReB76eb1Re = regexp.MustCompile(`toloka_sid=([^;]+)(;|$)`)
 	inlineReB96ce0Re = regexp.MustCompile(`(?i)Збір коштів`)
 	inlineReEbc614Re = regexp.MustCompile(`toloka_data=([^;]+)(;|$)`)
+	useridRe         = regexp.MustCompile(`"userid";i:(-?\d+)`)
 )
 
 type Task struct {
@@ -481,6 +482,12 @@ func (p *Parser) parsePage(ctx context.Context, cat string, page int) ([]parseIt
 		return nil, err
 	}
 	if htmlBody == "" || !strings.Contains(htmlBody, `<html lang="uk"`) {
+		// Page didn't render as the Ukrainian forum view. Most common cause:
+		// session cookie expired and toloka 302'd us to /login.php (whose body
+		// our http.Client transparently followed). Invalidate the cookie so
+		// the next call re-authenticates.
+		log.Printf("toloka: page check failed cat=%s page=%d bodyLen=%d (cookie likely expired, invalidating)", cat, page, len(htmlBody))
+		p.invalidateCookie()
 		return nil, nil
 	}
 	return parsePageHTML(strings.TrimRight(p.Config.Toloka.Host, "/"), cat, htmlBody), nil
@@ -680,9 +687,11 @@ func (p *Parser) ensureCookie(ctx context.Context) (string, error) {
 		p.cookieMu.Unlock()
 		return cookie, nil
 	}
-	if time.Since(p.lastLoginAttempt) < 5*time.Minute {
+	if !p.lastLoginAttempt.IsZero() && time.Since(p.lastLoginAttempt) < 5*time.Minute {
+		remaining := 5*time.Minute - time.Since(p.lastLoginAttempt)
 		p.cookieMu.Unlock()
-		return "", fmt.Errorf("TakeLogin == null")
+		log.Printf("toloka: login on cooldown for %s after recent failure", remaining.Round(time.Second))
+		return "", fmt.Errorf("TakeLogin == null (cooldown)")
 	}
 	p.lastLoginAttempt = time.Now()
 	p.cookieMu.Unlock()
@@ -693,15 +702,30 @@ func (p *Parser) ensureCookie(ctx context.Context) (string, error) {
 	}
 	p.cookieMu.Lock()
 	p.cookie = cookie
+	p.lastLoginAttempt = time.Time{} // clear cooldown on success
 	p.cookieMu.Unlock()
 	return cookie, nil
 }
 
+func (p *Parser) invalidateCookie() {
+	p.cookieMu.Lock()
+	p.cookie = ""
+	p.lastLoginAttempt = time.Time{} // allow immediate re-login
+	p.cookieMu.Unlock()
+}
+
 func (p *Parser) takeLogin(ctx context.Context) (string, error) {
 	host := strings.TrimRight(p.Config.Toloka.Host, "/")
+	user := strings.TrimSpace(p.Config.Toloka.Login.U)
+	pass := strings.TrimSpace(p.Config.Toloka.Login.P)
+	if user == "" || pass == "" {
+		log.Printf("toloka: login skipped — username/password empty in config")
+		return "", fmt.Errorf("toloka: login credentials missing")
+	}
+	log.Printf("toloka: login as user=%s host=%s", user, host)
 	vals := url.Values{}
-	vals.Set("username", p.Config.Toloka.Login.U)
-	vals.Set("password", p.Config.Toloka.Login.P)
+	vals.Set("username", user)
+	vals.Set("password", pass)
 	vals.Set("autologin", "on")
 	vals.Set("ssl", "on")
 	vals.Set("redirect", "index.php?")
@@ -721,9 +745,11 @@ func (p *Parser) takeLogin(ctx context.Context) (string, error) {
 	}
 	resp, err := loginClient.Do(req)
 	if err != nil {
+		log.Printf("toloka: login HTTP error: %v", err)
 		return "", err
 	}
 	defer resp.Body.Close()
+	location := resp.Header.Get("Location")
 	var sid, data string
 	for _, setCookie := range resp.Header.Values("Set-Cookie") {
 		for _, part := range strings.Split(setCookie, ",") {
@@ -736,8 +762,22 @@ func (p *Parser) takeLogin(ctx context.Context) (string, error) {
 		}
 	}
 	if sid == "" || data == "" {
+		log.Printf("toloka: login FAILED — no toloka_sid/toloka_data cookies (status=%d location=%q)", resp.StatusCode, location)
 		return "", fmt.Errorf("TakeLogin == null")
 	}
+	// Detect guest cookie: toloka_data is URL-encoded PHP serialized blob; on
+	// failed credentials toloka still returns a session but with userid=-1.
+	// PHP-encoded variants of "userid";i:-1 — match either raw or URL-encoded.
+	dataDecoded, _ := url.QueryUnescape(data)
+	if strings.Contains(dataDecoded, `"userid";i:-1`) || strings.Contains(data, "%22userid%22%3Bi%3A-1") {
+		log.Printf("toloka: login FAILED — server returned guest cookie (userid=-1, wrong credentials?)")
+		return "", fmt.Errorf("TakeLogin == null (guest)")
+	}
+	useridStr := ""
+	if m := useridRe.FindStringSubmatch(dataDecoded); len(m) > 1 {
+		useridStr = m[1]
+	}
+	log.Printf("toloka: login OK userid=%s redirect=%s", useridStr, location)
 	return fmt.Sprintf("toloka_sid=%s; toloka_ssl=1; toloka_data=%s;", sid, data), nil
 }
 
