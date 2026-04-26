@@ -206,6 +206,24 @@ func (p *Parser) ParseAllTask(ctx context.Context) (string, error) {
 	snapshot := cloneTasks(p.tasks)
 	p.mu.Unlock()
 	defer func() { p.mu.Lock(); p.allWork = false; p.mu.Unlock() }()
+
+	if len(snapshot) == 0 {
+		log.Printf("kinozal: parsealltask — tasks empty, running updatetasksparse first")
+		if _, err := p.UpdateTasksParse(ctx); err != nil {
+			return "", err
+		}
+		p.mu.Lock()
+		snapshot = cloneTasks(p.tasks)
+		p.mu.Unlock()
+	}
+
+	totalPages := 0
+	for _, byArg := range snapshot {
+		for _, list := range byArg {
+			totalPages += len(list)
+		}
+	}
+	processed, fetched, added, updated, skipped, failed, errs := 0, 0, 0, 0, 0, 0, 0
 	for cat, byArg := range snapshot {
 		for arg, list := range byArg {
 			for _, task := range list {
@@ -221,14 +239,27 @@ func (p *Parser) ParseAllTask(ctx context.Context) (string, error) {
 				}
 				items, err := p.parsePage(ctx, cat, task.Page, arg)
 				if err != nil {
-					return "", err
-				}
-				if len(items) == 0 {
+					log.Printf("kinozal: parsealltask cat=%s arg=%s page=%d error: %v", cat, arg, task.Page, err)
+					errs++
 					continue
 				}
-				if _, _, _, _, err := p.saveTorrents(ctx, items); err != nil {
-					return "", err
+				processed++
+				if len(items) == 0 {
+					log.Printf("kinozal: parsealltask cat=%s arg=%s page=%d empty", cat, arg, task.Page)
+					continue
 				}
+				a, u, s, f, err := p.saveTorrents(ctx, items)
+				if err != nil {
+					log.Printf("kinozal: parsealltask cat=%s arg=%s page=%d save error: %v", cat, arg, task.Page, err)
+					errs++
+					continue
+				}
+				fetched += len(items)
+				added += a
+				updated += u
+				skipped += s
+				failed += f
+				log.Printf("kinozal: parsealltask cat=%s arg=%s page=%d fetched=%d added=%d skipped=%d failed=%d", cat, arg, task.Page, len(items), a, s, f)
 				p.mu.Lock()
 				if argMap, ok := p.tasks[cat]; ok {
 					if list2, ok := argMap[arg]; ok {
@@ -249,6 +280,7 @@ func (p *Parser) ParseAllTask(ctx context.Context) (string, error) {
 			}
 		}
 	}
+	log.Printf("kinozal: parsealltask done processed=%d/%d fetched=%d added=%d updated=%d skipped=%d failed=%d errors=%d", processed, totalPages, fetched, added, updated, skipped, failed, errs)
 	return "ok", nil
 }
 
@@ -275,6 +307,7 @@ func (p *Parser) ParseLatest(ctx context.Context, pages int) (string, error) {
 		p.mu.Unlock()
 	}
 	var lines []string
+	processed, fetched, added, updated, skipped, failed, errs := 0, 0, 0, 0, 0, 0, 0
 	for cat, byArg := range snapshot {
 		for arg, list := range byArg {
 			sort.Slice(list, func(i, j int) bool { return list[i].Page < list[j].Page })
@@ -291,14 +324,27 @@ func (p *Parser) ParseLatest(ctx context.Context, pages int) (string, error) {
 				}
 				items, err := p.parsePage(ctx, cat, task.Page, arg)
 				if err != nil {
-					return "", err
-				}
-				if len(items) == 0 {
+					log.Printf("kinozal: parselatest cat=%s arg=%s page=%d error: %v", cat, arg, task.Page, err)
+					errs++
 					continue
 				}
-				if _, _, _, _, err := p.saveTorrents(ctx, items); err != nil {
-					return "", err
+				processed++
+				if len(items) == 0 {
+					log.Printf("kinozal: parselatest cat=%s arg=%s page=%d empty", cat, arg, task.Page)
+					continue
 				}
+				a, u, s, f, err := p.saveTorrents(ctx, items)
+				if err != nil {
+					log.Printf("kinozal: parselatest cat=%s arg=%s page=%d save error: %v", cat, arg, task.Page, err)
+					errs++
+					continue
+				}
+				fetched += len(items)
+				added += a
+				updated += u
+				skipped += s
+				failed += f
+				log.Printf("kinozal: parselatest cat=%s arg=%s page=%d fetched=%d added=%d skipped=%d failed=%d", cat, arg, task.Page, len(items), a, s, f)
 				p.mu.Lock()
 				if argMap, ok := p.tasks[cat]; ok {
 					if list2, ok := argMap[arg]; ok {
@@ -320,6 +366,7 @@ func (p *Parser) ParseLatest(ctx context.Context, pages int) (string, error) {
 			}
 		}
 	}
+	log.Printf("kinozal: parselatest done processed=%d fetched=%d added=%d updated=%d skipped=%d failed=%d errors=%d", processed, fetched, added, updated, skipped, failed, errs)
 	if len(lines) == 0 {
 		return "ok", nil
 	}

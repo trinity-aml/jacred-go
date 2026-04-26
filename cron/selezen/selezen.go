@@ -490,6 +490,18 @@ func (p *Parser) ParseAllTask(ctx context.Context) (string, error) {
 	p.mu.Unlock()
 	defer func() { p.mu.Lock(); p.allWork = false; p.mu.Unlock() }()
 
+	if len(snapshot) == 0 {
+		log.Printf("selezen: parsealltask — tasks empty, running updatetasksparse first")
+		if _, err := p.UpdateTasksParse(ctx); err != nil {
+			return "", err
+		}
+		p.mu.Lock()
+		snapshot = cloneTasks(p.tasks)
+		p.mu.Unlock()
+	}
+
+	totalPages := len(snapshot)
+	processed, fetched, totalAdded, totalUpdated, totalSkipped, totalFailed, errs := 0, 0, 0, 0, 0, 0, 0
 	for _, task := range snapshot {
 		if task.UpdatedToday() {
 			continue
@@ -503,24 +515,35 @@ func (p *Parser) ParseAllTask(ctx context.Context) (string, error) {
 		}
 		parsed, added, updated, skipped, failed, err := p.parsePage(ctx, task.Page)
 		if err != nil {
-			return "", err
+			log.Printf("selezen: parsealltask page=%d error: %v", task.Page, err)
+			errs++
+			continue
 		}
-		if parsed > 0 {
-			log.Printf("selezen: page=%d fetched=%d added=%d updated=%d skipped=%d failed=%d", task.Page, parsed, added, updated, skipped, failed)
-			p.mu.Lock()
-			for i := range p.tasks {
-				if p.tasks[i].Page == task.Page {
-					p.tasks[i].MarkToday()
-					break
-				}
+		processed++
+		if parsed == 0 {
+			log.Printf("selezen: parsealltask page=%d empty", task.Page)
+			continue
+		}
+		fetched += parsed
+		totalAdded += added
+		totalUpdated += updated
+		totalSkipped += skipped
+		totalFailed += failed
+		log.Printf("selezen: parsealltask page=%d fetched=%d added=%d skipped=%d failed=%d", task.Page, parsed, added, skipped, failed)
+		p.mu.Lock()
+		for i := range p.tasks {
+			if p.tasks[i].Page == task.Page {
+				p.tasks[i].MarkToday()
+				break
 			}
-			if err2 := p.saveTasksLocked(); err2 != nil {
-				p.mu.Unlock()
-				return "", err2
-			}
+		}
+		if err2 := p.saveTasksLocked(); err2 != nil {
 			p.mu.Unlock()
+			return "", err2
 		}
+		p.mu.Unlock()
 	}
+	log.Printf("selezen: parsealltask done processed=%d/%d fetched=%d added=%d updated=%d skipped=%d failed=%d errors=%d", processed, totalPages, fetched, totalAdded, totalUpdated, totalSkipped, totalFailed, errs)
 	return "ok", nil
 }
 
@@ -548,6 +571,7 @@ func (p *Parser) ParseLatest(ctx context.Context, pages int) (string, error) {
 		snapshot = snapshot[:pages]
 	}
 	var lines []string
+	processed, fetched, totalAdded, totalUpdated, totalSkipped, totalFailed, errs := 0, 0, 0, 0, 0, 0, 0
 	for _, task := range snapshot {
 		if p.Config.Selezen.ParseDelay > 0 {
 			select {
@@ -558,12 +582,21 @@ func (p *Parser) ParseLatest(ctx context.Context, pages int) (string, error) {
 		}
 		parsed, added, updated, skipped, failed, err := p.parsePage(ctx, task.Page)
 		if err != nil {
-			return "", err
-		}
-		if parsed == 0 {
+			log.Printf("selezen: parselatest page=%d error: %v", task.Page, err)
+			errs++
 			continue
 		}
-		log.Printf("selezen: page=%d fetched=%d added=%d updated=%d skipped=%d failed=%d", task.Page, parsed, added, updated, skipped, failed)
+		processed++
+		if parsed == 0 {
+			log.Printf("selezen: parselatest page=%d empty", task.Page)
+			continue
+		}
+		fetched += parsed
+		totalAdded += added
+		totalUpdated += updated
+		totalSkipped += skipped
+		totalFailed += failed
+		log.Printf("selezen: parselatest page=%d fetched=%d added=%d skipped=%d failed=%d", task.Page, parsed, added, skipped, failed)
 		p.mu.Lock()
 		for i := range p.tasks {
 			if p.tasks[i].Page == task.Page {
@@ -578,6 +611,7 @@ func (p *Parser) ParseLatest(ctx context.Context, pages int) (string, error) {
 		p.mu.Unlock()
 		lines = append(lines, fmt.Sprintf("page=%d", task.Page))
 	}
+	log.Printf("selezen: parselatest done processed=%d fetched=%d added=%d updated=%d skipped=%d failed=%d errors=%d", processed, fetched, totalAdded, totalUpdated, totalSkipped, totalFailed, errs)
 	if len(lines) == 0 {
 		return "ok", nil
 	}

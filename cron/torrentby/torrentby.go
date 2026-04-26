@@ -253,6 +253,22 @@ func (p *Parser) ParseAllTask(ctx context.Context) (string, error) {
 	p.mu.Lock()
 	snapshot := cloneTasks(p.tasks)
 	p.mu.Unlock()
+
+	if len(snapshot) == 0 {
+		log.Printf("torrentby: parsealltask — tasks empty, running updatetasksparse first")
+		if _, err := p.UpdateTasksParse(ctx); err != nil {
+			return "", err
+		}
+		p.mu.Lock()
+		snapshot = cloneTasks(p.tasks)
+		p.mu.Unlock()
+	}
+
+	totalPages := 0
+	for _, list := range snapshot {
+		totalPages += len(list)
+	}
+	processed, fetched, added, updated, skipped, failed, errs := 0, 0, 0, 0, 0, 0, 0
 	for cat, list := range snapshot {
 		for _, task := range list {
 			if task.UpdatedToday(p.loc) {
@@ -267,29 +283,44 @@ func (p *Parser) ParseAllTask(ctx context.Context) (string, error) {
 			}
 			items, err := p.parsePage(ctx, cat, task.Page)
 			if err != nil {
+				log.Printf("torrentby: parsealltask cat=%s page=%d error: %v", cat, task.Page, err)
+				errs++
+				continue
+			}
+			processed++
+			if len(items) == 0 {
+				log.Printf("torrentby: parsealltask cat=%s page=%d empty", cat, task.Page)
+				continue
+			}
+			a, u, s, f, err := p.saveTorrents(items)
+			if err != nil {
+				log.Printf("torrentby: parsealltask cat=%s page=%d save error: %v", cat, task.Page, err)
+				errs++
+				continue
+			}
+			fetched += len(items)
+			added += a
+			updated += u
+			skipped += s
+			failed += f
+			log.Printf("torrentby: parsealltask cat=%s page=%d fetched=%d added=%d skipped=%d failed=%d", cat, task.Page, len(items), a, s, f)
+			p.mu.Lock()
+			if list2, ok := p.tasks[cat]; ok {
+				for i := range list2 {
+					if list2[i].Page == task.Page {
+						list2[i].MarkToday(p.loc)
+					}
+				}
+				p.tasks[cat] = list2
+			}
+			if err := p.saveTasksLocked(); err != nil {
+				p.mu.Unlock()
 				return "", err
 			}
-			if len(items) > 0 {
-				if _, _, _, _, err := p.saveTorrents(items); err != nil {
-					return "", err
-				}
-				p.mu.Lock()
-				if list2, ok := p.tasks[cat]; ok {
-					for i := range list2 {
-						if list2[i].Page == task.Page {
-							list2[i].MarkToday(p.loc)
-						}
-					}
-					p.tasks[cat] = list2
-				}
-				if err := p.saveTasksLocked(); err != nil {
-					p.mu.Unlock()
-					return "", err
-				}
-				p.mu.Unlock()
-			}
+			p.mu.Unlock()
 		}
 	}
+	log.Printf("torrentby: parsealltask done processed=%d/%d fetched=%d added=%d updated=%d skipped=%d failed=%d errors=%d", processed, totalPages, fetched, added, updated, skipped, failed, errs)
 	return "ok", nil
 }
 
@@ -316,6 +347,7 @@ func (p *Parser) ParseLatest(ctx context.Context, pages int) (string, error) {
 	}
 
 	var lines []string
+	processed, fetched, added, updated, skipped, failed, errs := 0, 0, 0, 0, 0, 0, 0
 	for cat, list := range snapshot {
 		sort.Slice(list, func(i, j int) bool { return list[i].Page < list[j].Page })
 		if len(list) > pages {
@@ -331,30 +363,45 @@ func (p *Parser) ParseLatest(ctx context.Context, pages int) (string, error) {
 			}
 			items, err := p.parsePage(ctx, cat, task.Page)
 			if err != nil {
+				log.Printf("torrentby: parselatest cat=%s page=%d error: %v", cat, task.Page, err)
+				errs++
+				continue
+			}
+			processed++
+			if len(items) == 0 {
+				log.Printf("torrentby: parselatest cat=%s page=%d empty", cat, task.Page)
+				continue
+			}
+			a, u, s, f, err := p.saveTorrents(items)
+			if err != nil {
+				log.Printf("torrentby: parselatest cat=%s page=%d save error: %v", cat, task.Page, err)
+				errs++
+				continue
+			}
+			fetched += len(items)
+			added += a
+			updated += u
+			skipped += s
+			failed += f
+			log.Printf("torrentby: parselatest cat=%s page=%d fetched=%d added=%d skipped=%d failed=%d", cat, task.Page, len(items), a, s, f)
+			p.mu.Lock()
+			if list2, ok := p.tasks[cat]; ok {
+				for i := range list2 {
+					if list2[i].Page == task.Page {
+						list2[i].MarkToday(p.loc)
+					}
+				}
+				p.tasks[cat] = list2
+			}
+			if err := p.saveTasksLocked(); err != nil {
+				p.mu.Unlock()
 				return "", err
 			}
-			if len(items) > 0 {
-				if _, _, _, _, err := p.saveTorrents(items); err != nil {
-					return "", err
-				}
-				p.mu.Lock()
-				if list2, ok := p.tasks[cat]; ok {
-					for i := range list2 {
-						if list2[i].Page == task.Page {
-							list2[i].MarkToday(p.loc)
-						}
-					}
-					p.tasks[cat] = list2
-				}
-				if err := p.saveTasksLocked(); err != nil {
-					p.mu.Unlock()
-					return "", err
-				}
-				p.mu.Unlock()
-				lines = append(lines, fmt.Sprintf("%s - %d", cat, task.Page))
-			}
+			p.mu.Unlock()
+			lines = append(lines, fmt.Sprintf("%s - %d", cat, task.Page))
 		}
 	}
+	log.Printf("torrentby: parselatest done processed=%d fetched=%d added=%d updated=%d skipped=%d failed=%d errors=%d", processed, fetched, added, updated, skipped, failed, errs)
 	if len(lines) == 0 {
 		return "ok", nil
 	}
