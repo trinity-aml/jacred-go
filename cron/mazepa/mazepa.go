@@ -420,7 +420,23 @@ func (p *Parser) ParseAllTask(ctx context.Context) (string, error) {
 			return "", fmt.Errorf("mazepa: login failed")
 		}
 	}
+
+	if len(snapshot) == 0 {
+		log.Printf("mazepa: parsealltask — tasks empty, running updatetasksparse first")
+		if _, err := p.UpdateTasksParse(ctx); err != nil {
+			return "", err
+		}
+		p.mu.Lock()
+		snapshot = cloneTasks(p.tasks)
+		p.mu.Unlock()
+	}
+
 	host := strings.TrimRight(p.Config.Mazepa.Host, "/")
+	totalPages := 0
+	for _, list := range snapshot {
+		totalPages += len(list)
+	}
+	processed, errs := 0, 0
 	var total ParseResult
 	for catID, list := range snapshot {
 		types := categories[catID]
@@ -438,20 +454,27 @@ func (p *Parser) ParseAllTask(ctx context.Context) (string, error) {
 			pageURL := fmt.Sprintf("%s/viewforum.php?f=%s&start=%d", host, catID, task.Page*50)
 			items, _, err := p.parseForumPage(ctx, pageURL, types, host)
 			if err != nil {
-				return "", err
+				log.Printf("mazepa: parsealltask cat=%s page=%d error: %v", catID, task.Page, err)
+				errs++
+				continue
 			}
+			processed++
 			if len(items) == 0 {
+				log.Printf("mazepa: parsealltask cat=%s page=%d empty", catID, task.Page)
+				continue
+			}
+			a, u, s, f, err := p.saveTorrents(items)
+			if err != nil {
+				log.Printf("mazepa: parsealltask cat=%s page=%d save error: %v", catID, task.Page, err)
+				errs++
 				continue
 			}
 			total.Fetched += len(items)
-			a, u, s, f, err := p.saveTorrents(items)
-			if err != nil {
-				return "", err
-			}
 			total.Added += a
 			total.Updated += u
 			total.Skipped += s
 			total.Failed += f
+			log.Printf("mazepa: parsealltask cat=%s page=%d fetched=%d added=%d skipped=%d failed=%d", catID, task.Page, len(items), a, s, f)
 			p.mu.Lock()
 			if list2, ok := p.tasks[catID]; ok {
 				for i := range list2 {
@@ -468,7 +491,7 @@ func (p *Parser) ParseAllTask(ctx context.Context) (string, error) {
 			p.mu.Unlock()
 		}
 	}
-	log.Printf("mazepa: parsealltask done fetched=%d added=%d skipped=%d failed=%d", total.Fetched, total.Added, total.Skipped, total.Failed)
+	log.Printf("mazepa: parsealltask done processed=%d/%d fetched=%d added=%d updated=%d skipped=%d failed=%d errors=%d", processed, totalPages, total.Fetched, total.Added, total.Updated, total.Skipped, total.Failed, errs)
 	return fmt.Sprintf("fetched=%d added=%d skipped=%d failed=%d", total.Fetched, total.Added, total.Skipped, total.Failed), nil
 }
 
@@ -498,6 +521,8 @@ func (p *Parser) ParseLatest(ctx context.Context, pages int) (string, error) {
 	}
 	host := strings.TrimRight(p.Config.Mazepa.Host, "/")
 	var lines []string
+	processed, errs := 0, 0
+	var total ParseResult
 	for catID, list := range snapshot {
 		types := categories[catID]
 		sort.Slice(list, func(i, j int) bool { return list[i].Page < list[j].Page })
@@ -515,14 +540,27 @@ func (p *Parser) ParseLatest(ctx context.Context, pages int) (string, error) {
 			pageURL := fmt.Sprintf("%s/viewforum.php?f=%s&start=%d", host, catID, task.Page*50)
 			items, _, err := p.parseForumPage(ctx, pageURL, types, host)
 			if err != nil {
-				return "", err
-			}
-			if len(items) == 0 {
+				log.Printf("mazepa: parselatest cat=%s page=%d error: %v", catID, task.Page, err)
+				errs++
 				continue
 			}
-			if _, _, _, _, err := p.saveTorrents(items); err != nil {
-				return "", err
+			processed++
+			if len(items) == 0 {
+				log.Printf("mazepa: parselatest cat=%s page=%d empty", catID, task.Page)
+				continue
 			}
+			a, u, s, f, err := p.saveTorrents(items)
+			if err != nil {
+				log.Printf("mazepa: parselatest cat=%s page=%d save error: %v", catID, task.Page, err)
+				errs++
+				continue
+			}
+			total.Fetched += len(items)
+			total.Added += a
+			total.Updated += u
+			total.Skipped += s
+			total.Failed += f
+			log.Printf("mazepa: parselatest cat=%s page=%d fetched=%d added=%d skipped=%d failed=%d", catID, task.Page, len(items), a, s, f)
 			p.mu.Lock()
 			if list2, ok := p.tasks[catID]; ok {
 				for i := range list2 {
@@ -540,6 +578,7 @@ func (p *Parser) ParseLatest(ctx context.Context, pages int) (string, error) {
 			lines = append(lines, fmt.Sprintf("%s - %d", catID, task.Page))
 		}
 	}
+	log.Printf("mazepa: parselatest done processed=%d fetched=%d added=%d updated=%d skipped=%d failed=%d errors=%d", processed, total.Fetched, total.Added, total.Updated, total.Skipped, total.Failed, errs)
 	if len(lines) == 0 {
 		return "ok", nil
 	}
