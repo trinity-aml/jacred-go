@@ -460,7 +460,18 @@ func (p *Parser) ParseAllTask(ctx context.Context) (string, error) {
 			}
 			processed++
 			if len(items) == 0 {
-				log.Printf("mazepa: parsealltask cat=%s page=%d empty", catID, task.Page)
+				log.Printf("mazepa: parsealltask cat=%s page=%d empty (marking today)", catID, task.Page)
+				p.mu.Lock()
+				if list2, ok := p.tasks[catID]; ok {
+					for i := range list2 {
+						if list2[i].Page == task.Page {
+							list2[i].MarkToday()
+						}
+					}
+					p.tasks[catID] = list2
+				}
+				_ = p.saveTasksLocked()
+				p.mu.Unlock()
 				continue
 			}
 			a, u, s, f, err := p.saveTorrents(items)
@@ -546,7 +557,18 @@ func (p *Parser) ParseLatest(ctx context.Context, pages int) (string, error) {
 			}
 			processed++
 			if len(items) == 0 {
-				log.Printf("mazepa: parselatest cat=%s page=%d empty", catID, task.Page)
+				log.Printf("mazepa: parselatest cat=%s page=%d empty (marking today)", catID, task.Page)
+				p.mu.Lock()
+				if list2, ok := p.tasks[catID]; ok {
+					for i := range list2 {
+						if list2[i].Page == task.Page {
+							list2[i].MarkToday()
+						}
+					}
+					p.tasks[catID] = list2
+				}
+				_ = p.saveTasksLocked()
+				p.mu.Unlock()
 				continue
 			}
 			a, u, s, f, err := p.saveTorrents(items)

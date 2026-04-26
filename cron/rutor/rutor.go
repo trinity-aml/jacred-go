@@ -390,7 +390,18 @@ func (p *Parser) ParseAllTask(ctx context.Context) (string, error) {
 			}
 			processed++
 			if len(items) == 0 {
-				log.Printf("rutor: parsealltask cat=%s page=%d empty", cat, task.Page)
+				log.Printf("rutor: parsealltask cat=%s page=%d empty (marking today)", cat, task.Page)
+				p.mu.Lock()
+				if list2, ok := p.tasks[cat]; ok {
+					for i := range list2 {
+						if list2[i].Page == task.Page {
+							list2[i].MarkToday()
+						}
+					}
+					p.tasks[cat] = list2
+				}
+				_ = p.saveTasksLocked()
+				p.mu.Unlock()
 				continue
 			}
 			a, u, s, f, err := p.saveTorrents(items)
@@ -467,7 +478,18 @@ func (p *Parser) ParseLatest(ctx context.Context, pages int) (string, error) {
 			}
 			processed++
 			if len(items) == 0 {
-				log.Printf("rutor: parselatest cat=%s page=%d empty", cat, task.Page)
+				log.Printf("rutor: parselatest cat=%s page=%d empty (marking today)", cat, task.Page)
+				p.mu.Lock()
+				if list2, ok := p.tasks[cat]; ok {
+					for i := range list2 {
+						if list2[i].Page == task.Page {
+							list2[i].MarkToday()
+						}
+					}
+					p.tasks[cat] = list2
+				}
+				_ = p.saveTasksLocked()
+				p.mu.Unlock()
 				continue
 			}
 			a, u, s, f, err := p.saveTorrents(items)

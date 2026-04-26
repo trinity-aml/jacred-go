@@ -238,7 +238,15 @@ func (p *Parser) ParseAllTask(ctx context.Context) (string, error) {
 			}
 			processed++
 			if len(items) == 0 {
-				log.Printf("bitru: parsealltask cat=%s page=%d empty", cat, task.Page)
+				log.Printf("bitru: parsealltask cat=%s page=%d empty (marking today)", cat, task.Page)
+				p.mu.Lock()
+				for i := range p.tasks[cat] {
+					if p.tasks[cat][i].Page == task.Page {
+						p.tasks[cat][i].MarkToday()
+					}
+				}
+				_ = p.saveTasksLocked()
+				p.mu.Unlock()
 				continue
 			}
 			a, u, s, f, err := p.saveTorrents(ctx, items)
@@ -313,7 +321,15 @@ func (p *Parser) ParseLatest(ctx context.Context, pages int) (string, error) {
 			}
 			processed++
 			if len(items) == 0 {
-				log.Printf("bitru: parselatest cat=%s page=%d empty", cat, task.Page)
+				log.Printf("bitru: parselatest cat=%s page=%d empty (marking today)", cat, task.Page)
+				p.mu.Lock()
+				for i := range p.tasks[cat] {
+					if p.tasks[cat][i].Page == task.Page {
+						p.tasks[cat][i].MarkToday()
+					}
+				}
+				_ = p.saveTasksLocked()
+				p.mu.Unlock()
 				continue
 			}
 			a, u, s, f, err := p.saveTorrents(ctx, items)

@@ -521,7 +521,16 @@ func (p *Parser) ParseAllTask(ctx context.Context) (string, error) {
 		}
 		processed++
 		if parsed == 0 {
-			log.Printf("selezen: parsealltask page=%d empty", task.Page)
+			log.Printf("selezen: parsealltask page=%d empty (marking today)", task.Page)
+			p.mu.Lock()
+			for i := range p.tasks {
+				if p.tasks[i].Page == task.Page {
+					p.tasks[i].MarkToday()
+					break
+				}
+			}
+			_ = p.saveTasksLocked()
+			p.mu.Unlock()
 			continue
 		}
 		fetched += parsed
@@ -588,7 +597,16 @@ func (p *Parser) ParseLatest(ctx context.Context, pages int) (string, error) {
 		}
 		processed++
 		if parsed == 0 {
-			log.Printf("selezen: parselatest page=%d empty", task.Page)
+			log.Printf("selezen: parselatest page=%d empty (marking today)", task.Page)
+			p.mu.Lock()
+			for i := range p.tasks {
+				if p.tasks[i].Page == task.Page {
+					p.tasks[i].MarkToday()
+					break
+				}
+			}
+			_ = p.saveTasksLocked()
+			p.mu.Unlock()
 			continue
 		}
 		fetched += parsed

@@ -245,7 +245,21 @@ func (p *Parser) ParseAllTask(ctx context.Context) (string, error) {
 				}
 				processed++
 				if len(items) == 0 {
-					log.Printf("kinozal: parsealltask cat=%s arg=%s page=%d empty", cat, arg, task.Page)
+					log.Printf("kinozal: parsealltask cat=%s arg=%s page=%d empty (marking today)", cat, arg, task.Page)
+					p.mu.Lock()
+					if argMap, ok := p.tasks[cat]; ok {
+						if list2, ok := argMap[arg]; ok {
+							for i := range list2 {
+								if list2[i].Page == task.Page {
+									list2[i].MarkToday(p.loc)
+								}
+							}
+							argMap[arg] = list2
+							p.tasks[cat] = argMap
+						}
+					}
+					_ = p.saveTasksLocked()
+					p.mu.Unlock()
 					continue
 				}
 				a, u, s, f, err := p.saveTorrents(ctx, items)
@@ -330,7 +344,21 @@ func (p *Parser) ParseLatest(ctx context.Context, pages int) (string, error) {
 				}
 				processed++
 				if len(items) == 0 {
-					log.Printf("kinozal: parselatest cat=%s arg=%s page=%d empty", cat, arg, task.Page)
+					log.Printf("kinozal: parselatest cat=%s arg=%s page=%d empty (marking today)", cat, arg, task.Page)
+					p.mu.Lock()
+					if argMap, ok := p.tasks[cat]; ok {
+						if list2, ok := argMap[arg]; ok {
+							for i := range list2 {
+								if list2[i].Page == task.Page {
+									list2[i].MarkToday(p.loc)
+								}
+							}
+							argMap[arg] = list2
+							p.tasks[cat] = argMap
+						}
+					}
+					_ = p.saveTasksLocked()
+					p.mu.Unlock()
 					continue
 				}
 				a, u, s, f, err := p.saveTorrents(ctx, items)

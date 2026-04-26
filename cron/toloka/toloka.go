@@ -377,7 +377,9 @@ func (p *Parser) ParseAllTask(ctx context.Context) (string, error) {
 			}
 			processed++
 			if len(items) == 0 {
-				log.Printf("toloka: parsealltask cat=%s page=%d empty", cat, task.Page)
+				log.Printf("toloka: parsealltask cat=%s page=%d empty (marking today)", cat, task.Page)
+				p.markTask(cat, task.Page)
+				_ = p.saveTasks()
 				continue
 			}
 			a, u, s, f, err := p.saveTorrents(ctx, items)
@@ -444,7 +446,9 @@ func (p *Parser) ParseLatest(ctx context.Context, pages int) (string, error) {
 			}
 			processed++
 			if len(items) == 0 {
-				log.Printf("toloka: parselatest cat=%s page=%d empty", cat, task.Page)
+				log.Printf("toloka: parselatest cat=%s page=%d empty (marking today)", cat, task.Page)
+				p.markTask(cat, task.Page)
+				_ = p.saveTasks()
 				continue
 			}
 			a, u, s, f, err := p.saveTorrents(ctx, items)
