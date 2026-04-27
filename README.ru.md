@@ -65,7 +65,8 @@ Dist/
   jacred-freebsd-amd64
   jacred-freebsd-arm64
 
-jacred-{version}-{gitSHA}.tar.gz   ← бинарники + wwwroot + init.yaml + init.yaml.example
+jacred-{version}-{gitSHA}.tar.gz   ← бинарники + init.yaml + init.yaml.example
+                                     (веб-интерфейс встроен в каждый бинарник через //go:embed)
 ```
 
 Требуется Go 1.21+. Все бинарники статически слинкованы (`CGO_ENABLED=0`), без внешних зависимостей.
@@ -1037,7 +1038,7 @@ curl "http://127.0.0.1:9117/dev/removeBucket?key=матрица:the+matrix&migra
 
 ## Веб-интерфейс
 
-При `web: true` из директории `wwwroot/` раздаются три страницы:
+При `web: true` раздаются три страницы. Файлы UI (HTML, иконки, manifest) встроены в бинарник на этапе сборки через `//go:embed all:wwwroot` в `server/embed.go` — внешняя директория `wwwroot/` во время работы не требуется. Если рядом с бинарником есть директория `wwwroot/`, отдельные файлы в ней переопределяют встроенную копию (удобно для правки HTML без пересборки).
 
 | Путь | Назначение |
 |------|-----------|

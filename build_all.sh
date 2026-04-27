@@ -76,5 +76,5 @@ echo "creating ${ARCHIVE} ..."
 
 tar -czf "${ARCHIVE}" \
   -C "${OUT}" . \
-  -C "$(pwd)" wwwroot init.yaml init.yaml.example
+  -C "$(pwd)" init.yaml init.yaml.example
 mv -f ${ARCHIVE} ${OUT}/${ARCHIVE}

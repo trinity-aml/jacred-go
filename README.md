@@ -65,7 +65,8 @@ Dist/
   jacred-freebsd-amd64
   jacred-freebsd-arm64
 
-jacred-{version}-{gitSHA}.tar.gz   ← binaries + wwwroot + init.yaml + init.yaml.example
+jacred-{version}-{gitSHA}.tar.gz   ← binaries + init.yaml + init.yaml.example
+                                     (the web UI is embedded into each binary via //go:embed)
 ```
 
 Requires Go 1.21+. All binaries are statically linked (`CGO_ENABLED=0`), no external dependencies.
@@ -1038,7 +1039,7 @@ curl "http://127.0.0.1:9117/dev/removeBucket?key=матрица:the+matrix&migra
 
 ## Web UI
 
-When `web: true`, three pages are served from `wwwroot/`:
+When `web: true`, three pages are served. The UI assets (HTML, icons, manifest) are embedded into the binary at build time via `//go:embed all:wwwroot` in `server/embed.go` — no external `wwwroot/` directory is required at runtime. If a `wwwroot/` directory exists alongside the binary, individual files in it override the embedded copy (handy for live-editing during development).
 
 | Path | Purpose |
 |------|---------|
