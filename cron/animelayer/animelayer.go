@@ -61,10 +61,20 @@ type Parser struct {
 	cookieMu         sync.Mutex
 	cookie           string
 	lastLoginAttempt time.Time
+	cookieStore      *core.CookieStore
 }
 
 func New(cfg app.Config, db *filedb.DB) *Parser {
-	return &Parser{Config: cfg, DB: db, Fetcher: core.NewFetcher(cfg)}
+	dataDir := ""
+	if db != nil {
+		dataDir = db.DataDir
+	}
+	p := &Parser{Config: cfg, DB: db, Fetcher: core.NewFetcher(cfg), cookieStore: core.NewCookieStore(dataDir)}
+	if saved := p.cookieStore.Load(trackerName); saved != "" {
+		p.cookie = saved
+		log.Printf("animelayer: loaded saved cookie from disk")
+	}
+	return p
 }
 
 func (p *Parser) Parse(ctx context.Context, maxpage int) (ParseResult, error) {
@@ -286,6 +296,9 @@ func (p *Parser) ensureCookie(ctx context.Context) (string, error) {
 	p.cookieMu.Lock()
 	p.cookie = cookie
 	p.cookieMu.Unlock()
+	if p.cookieStore != nil && cookie != "" {
+		_ = p.cookieStore.Save(trackerName, cookie)
+	}
 	return cookie, nil
 }
 

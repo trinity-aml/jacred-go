@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 )
 
 // CookieStore persists per-tracker auth cookies to Data/cookie/<name>.txt so
@@ -37,6 +38,23 @@ func (s *CookieStore) Load(name string) string {
 		return ""
 	}
 	return strings.TrimSpace(string(b))
+}
+
+// LoadWithTime returns the saved cookie and its file modification time.
+// Empty cookie/zero time if no file exists.
+func (s *CookieStore) LoadWithTime(name string) (string, time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p := s.path(name)
+	b, err := os.ReadFile(p)
+	if err != nil {
+		return "", time.Time{}
+	}
+	st, err := os.Stat(p)
+	if err != nil {
+		return strings.TrimSpace(string(b)), time.Time{}
+	}
+	return strings.TrimSpace(string(b)), st.ModTime()
 }
 
 // Save writes the cookie atomically. Empty input deletes the stored cookie.

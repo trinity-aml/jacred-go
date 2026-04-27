@@ -96,6 +96,7 @@ type Parser struct {
 	cookieMu         sync.Mutex
 	dynCookie        string
 	lastLoginAttempt time.Time
+	cookieStore      *core.CookieStore
 }
 
 type ParseResult struct {
@@ -112,8 +113,12 @@ func New(cfg app.Config, db *filedb.DB, dataDir string) *Parser {
 	p := &Parser{Config: cfg, DB: db, DataDir: dataDir, Client: &http.Client{
 		Timeout:   30 * time.Second,
 		Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}},
-	}, Fetcher: core.NewFetcher(cfg), loc: loc, tasks: map[string][]Task{}}
+	}, Fetcher: core.NewFetcher(cfg), loc: loc, tasks: map[string][]Task{}, cookieStore: core.NewCookieStore(dataDir)}
 	_ = p.loadTasks()
+	if saved := p.cookieStore.Load(trackerName); saved != "" {
+		p.dynCookie = saved
+		log.Printf("torrentby: loaded saved cookie from disk")
+	}
 	return p
 }
 
@@ -728,6 +733,9 @@ func (p *Parser) takeLogin(ctx context.Context) error {
 		p.cookieMu.Lock()
 		p.dynCookie = cookieStr
 		p.cookieMu.Unlock()
+		if p.cookieStore != nil {
+			_ = p.cookieStore.Save(trackerName, cookieStr)
+		}
 		log.Printf("torrentby: login OK")
 		return nil
 	}

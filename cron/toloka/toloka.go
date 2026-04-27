@@ -100,6 +100,7 @@ type Parser struct {
 	cookieMu         sync.Mutex
 	cookie           string
 	lastLoginAttempt time.Time
+	cookieStore      *core.CookieStore
 }
 
 func (t Task) UpdatedToday(loc *time.Location) bool {
@@ -227,8 +228,12 @@ func New(cfg app.Config, db *filedb.DB, dataDir string) *Parser {
 	if err != nil || loc == nil {
 		loc = time.FixedZone("+0200", 2*3600)
 	}
-	p := &Parser{Config: cfg, DB: db, DataDir: dataDir, Client: &http.Client{Timeout: 35 * time.Second}, Fetcher: core.NewFetcher(cfg), loc: loc, tasks: map[string][]Task{}}
+	p := &Parser{Config: cfg, DB: db, DataDir: dataDir, Client: &http.Client{Timeout: 35 * time.Second}, Fetcher: core.NewFetcher(cfg), loc: loc, tasks: map[string][]Task{}, cookieStore: core.NewCookieStore(dataDir)}
 	_ = p.loadTasks()
+	if saved := p.cookieStore.Load(trackerName); saved != "" {
+		p.cookie = saved
+		log.Printf("toloka: loaded saved cookie from disk")
+	}
 	return p
 }
 
@@ -708,6 +713,9 @@ func (p *Parser) ensureCookie(ctx context.Context) (string, error) {
 	p.cookie = cookie
 	p.lastLoginAttempt = time.Time{} // clear cooldown on success
 	p.cookieMu.Unlock()
+	if p.cookieStore != nil {
+		_ = p.cookieStore.Save(trackerName, cookie)
+	}
 	return cookie, nil
 }
 
@@ -716,6 +724,9 @@ func (p *Parser) invalidateCookie() {
 	p.cookie = ""
 	p.lastLoginAttempt = time.Time{} // allow immediate re-login
 	p.cookieMu.Unlock()
+	if p.cookieStore != nil {
+		_ = p.cookieStore.Delete(trackerName)
+	}
 }
 
 func (p *Parser) takeLogin(ctx context.Context) (string, error) {

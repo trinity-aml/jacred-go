@@ -85,6 +85,7 @@ type Parser struct {
 	cookieMu         sync.Mutex
 	cookie           string
 	lastLoginAttempt time.Time
+	cookieStore      *core.CookieStore
 }
 
 func New(cfg app.Config, db *filedb.DB, dataDir string) *Parser {
@@ -92,8 +93,12 @@ func New(cfg app.Config, db *filedb.DB, dataDir string) *Parser {
 	if loc == nil {
 		loc = time.Local
 	}
-	p := &Parser{Config: cfg, DB: db, DataDir: dataDir, Client: &http.Client{Timeout: 35 * time.Second}, Fetcher: core.NewFetcher(cfg), loc: loc, tasks: map[string]map[string][]Task{}}
+	p := &Parser{Config: cfg, DB: db, DataDir: dataDir, Client: &http.Client{Timeout: 35 * time.Second}, Fetcher: core.NewFetcher(cfg), loc: loc, tasks: map[string]map[string][]Task{}, cookieStore: core.NewCookieStore(dataDir)}
 	_ = p.loadTasks()
+	if saved := p.cookieStore.Load(trackerName); saved != "" {
+		p.cookie = saved
+		log.Printf("kinozal: loaded saved cookie from disk")
+	}
 	return p
 }
 
@@ -667,9 +672,13 @@ func (p *Parser) takeLogin(ctx context.Context) error {
 		}
 	}
 	if uid != "" && pass != "" {
+		cookie := fmt.Sprintf("uid=%s; pass=%s;", uid, pass)
 		p.cookieMu.Lock()
-		p.cookie = fmt.Sprintf("uid=%s; pass=%s;", uid, pass)
+		p.cookie = cookie
 		p.cookieMu.Unlock()
+		if p.cookieStore != nil {
+			_ = p.cookieStore.Save(trackerName, cookie)
+		}
 		log.Printf("kinozal: login OK — uid=%s", uid)
 	} else {
 		log.Printf("kinozal: login FAILED — uid=%q pass=%q", uid, pass)

@@ -90,6 +90,7 @@ type Parser struct {
 	cookieMu         sync.Mutex
 	cookie           string
 	lastLoginAttempt time.Time
+	cookieStore      *core.CookieStore
 }
 
 type ParseResult struct {
@@ -102,8 +103,12 @@ type ParseResult struct {
 }
 
 func New(cfg app.Config, db *filedb.DB, dataDir string) *Parser {
-	p := &Parser{Config: cfg, DB: db, DataDir: dataDir, Client: &http.Client{Timeout: 25 * time.Second}, Fetcher: core.NewFetcher(cfg)}
+	p := &Parser{Config: cfg, DB: db, DataDir: dataDir, Client: &http.Client{Timeout: 25 * time.Second}, Fetcher: core.NewFetcher(cfg), cookieStore: core.NewCookieStore(dataDir)}
 	_ = p.loadTasks()
+	if saved := p.cookieStore.Load(trackerName); saved != "" {
+		p.cookie = saved
+		log.Printf("selezen: loaded saved cookie from disk")
+	}
 	return p
 }
 
@@ -352,6 +357,9 @@ func (p *Parser) ensureCookie(ctx context.Context) (string, error) {
 	p.cookieMu.Lock()
 	p.cookie = cookie
 	p.cookieMu.Unlock()
+	if p.cookieStore != nil && cookie != "" {
+		_ = p.cookieStore.Save(trackerName, cookie)
+	}
 	return cookie, nil
 }
 
