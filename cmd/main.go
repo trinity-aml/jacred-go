@@ -111,7 +111,7 @@ func main() {
 	defer cancel()
 
 	go db.RunBackgroundJobs(ctx)
-	go background.RunTrackersCron(ctx, db, "Data", "wwwroot", cfg.Evercache.Enable && cfg.Evercache.ValidHour <= 0)
+	go background.RunTrackersCron(ctx, db, "Data", cfg.Evercache.Enable && cfg.Evercache.ValidHour <= 0)
 
 	tracksDB := tracks.New("Data")
 	if err := tracksDB.Load(); err != nil {
@@ -142,7 +142,15 @@ func main() {
 		}
 	}
 
-	srv := server.New(cfg, db, tracksDB, "wwwroot")
+	// WWWRoot is an optional disk override for embedded UI assets. When the
+	// "wwwroot" directory exists alongside the binary it is preferred per-file
+	// (handy for live-editing HTML during dev); otherwise the embedded copy
+	// is served and the binary is fully self-contained.
+	wwwroot := ""
+	if st, err := os.Stat("wwwroot"); err == nil && st.IsDir() {
+		wwwroot = "wwwroot"
+	}
+	srv := server.New(cfg, db, tracksDB, wwwroot)
 
 	// Config hot-reload: check init.yaml mtime every 10 seconds
 	reloader := background.NewConfigReloader("init.yaml", cfg)

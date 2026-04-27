@@ -1,6 +1,8 @@
 package server
 
 import (
+	"bytes"
+	"io/fs"
 	"mime"
 	"net/http"
 	"os"
@@ -9,65 +11,106 @@ import (
 	"time"
 )
 
-func (s *Server) serveHTMLFile(w http.ResponseWriter, r *http.Request, name string) {
-	path := filepath.Join(s.WWWRoot, name)
-	if st, err := os.Stat(path); err == nil && !st.IsDir() {
-		setStaticHeaders(w, path)
-		if maybeNotModified(w, r, st.ModTime()) {
-			return
-		}
-		http.ServeFile(w, r, path)
-		return
+// buildTime is used as Last-Modified for embedded assets. Set once at process
+// start so the embedded FS exposes a stable timestamp for caching.
+var buildTime = time.Now().UTC().Truncate(time.Second)
+
+// readStatic resolves a slash-separated path to its bytes, mod time, and a
+// flag indicating whether it was found. Disk override (s.WWWRoot) wins when
+// the file exists; otherwise the embedded FS is used.
+func (s *Server) readStatic(name string) ([]byte, time.Time, bool) {
+	clean := strings.TrimPrefix(filepath.ToSlash(name), "/")
+	if clean == "" || strings.Contains(clean, "..") {
+		return nil, time.Time{}, false
 	}
-	http.NotFound(w, r)
+	if s.WWWRoot != "" {
+		diskPath := filepath.Join(s.WWWRoot, filepath.FromSlash(clean))
+		if isWithinRoot(s.WWWRoot, diskPath) {
+			if st, err := os.Stat(diskPath); err == nil && !st.IsDir() {
+				if b, err := os.ReadFile(diskPath); err == nil {
+					return b, st.ModTime(), true
+				}
+			}
+		}
+	}
+	b, err := fs.ReadFile(staticFS(), clean)
+	if err != nil {
+		return nil, time.Time{}, false
+	}
+	return b, buildTime, true
 }
 
-func (s *Server) serveMaybeStatic(w http.ResponseWriter, r *http.Request) {
-	if s.WWWRoot == "" {
+func (s *Server) serveStaticBytes(w http.ResponseWriter, r *http.Request, name string, body []byte, modTime time.Time) {
+	setStaticHeaders(w, name, modTime)
+	if maybeNotModified(w, r, modTime) {
+		return
+	}
+	if r.Method == http.MethodHead {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	http.ServeContent(w, r, name, modTime, bytes.NewReader(body))
+}
+
+func (s *Server) serveHTMLFile(w http.ResponseWriter, r *http.Request, name string) {
+	body, modTime, ok := s.readStatic(name)
+	if !ok {
 		http.NotFound(w, r)
 		return
 	}
+	s.serveStaticBytes(w, r, name, body, modTime)
+}
+
+func (s *Server) serveMaybeStatic(w http.ResponseWriter, r *http.Request) {
 	clean := canonicalStaticPath(r.URL.Path)
 	if clean == "." || clean == "" {
 		s.serveHTMLFile(w, r, "index.html")
 		return
 	}
-	path := filepath.Join(s.WWWRoot, filepath.FromSlash(clean))
-	if !isWithinRoot(s.WWWRoot, path) {
-		http.NotFound(w, r)
-		return
-	}
-	if st, err := os.Stat(path); err == nil && !st.IsDir() {
-		setStaticHeaders(w, path)
-		if maybeNotModified(w, r, st.ModTime()) {
+	// trackers.txt is generated at runtime by background/trackerscron and lives
+	// in DataDir, not the embedded UI bundle.
+	if strings.EqualFold(clean, "trackers.txt") {
+		if s.serveDataFile(w, r, "trackers.txt") {
 			return
 		}
-		http.ServeFile(w, r, path)
+	}
+	if body, modTime, ok := s.readStatic(clean); ok {
+		s.serveStaticBytes(w, r, clean, body, modTime)
 		return
 	}
 	if alias := staticAlias(clean); alias != "" {
-		aliasPath := filepath.Join(s.WWWRoot, filepath.FromSlash(alias))
-		if st, err := os.Stat(aliasPath); err == nil && !st.IsDir() {
-			setStaticHeaders(w, aliasPath)
-			if maybeNotModified(w, r, st.ModTime()) {
-				return
-			}
-			http.ServeFile(w, r, aliasPath)
+		if body, modTime, ok := s.readStatic(alias); ok {
+			s.serveStaticBytes(w, r, alias, body, modTime)
 			return
 		}
 	}
 	if shouldFallbackToIndex(r.URL.Path, r.Header.Get("Accept")) {
-		fallback := filepath.Join(s.WWWRoot, "index.html")
-		if st, err := os.Stat(fallback); err == nil && !st.IsDir() {
-			setStaticHeaders(w, fallback)
-			if maybeNotModified(w, r, st.ModTime()) {
-				return
-			}
-			http.ServeFile(w, r, fallback)
+		if body, modTime, ok := s.readStatic("index.html"); ok {
+			s.serveStaticBytes(w, r, "index.html", body, modTime)
 			return
 		}
 	}
 	http.NotFound(w, r)
+}
+
+// serveDataFile serves a runtime-generated file from DataDir (e.g. trackers.txt).
+// Returns true if the file existed and was served.
+func (s *Server) serveDataFile(w http.ResponseWriter, r *http.Request, name string) bool {
+	dataDir := "Data"
+	if s.DB != nil && s.DB.DataDir != "" {
+		dataDir = s.DB.DataDir
+	}
+	path := filepath.Join(dataDir, name)
+	st, err := os.Stat(path)
+	if err != nil || st.IsDir() {
+		return false
+	}
+	setStaticHeaders(w, name, st.ModTime())
+	if maybeNotModified(w, r, st.ModTime()) {
+		return true
+	}
+	http.ServeFile(w, r, path)
+	return true
 }
 
 func canonicalStaticPath(path string) string {
@@ -134,8 +177,8 @@ func shouldFallbackToIndex(path, accept string) bool {
 	return accept == "" || strings.Contains(accept, "text/html") || strings.Contains(accept, "*/*")
 }
 
-func setStaticHeaders(w http.ResponseWriter, path string) {
-	ext := strings.ToLower(filepath.Ext(path))
+func setStaticHeaders(w http.ResponseWriter, name string, modTime time.Time) {
+	ext := strings.ToLower(filepath.Ext(name))
 	if ct := mime.TypeByExtension(ext); ct != "" {
 		if ext == ".json" || ext == ".webmanifest" {
 			if !strings.Contains(strings.ToLower(ct), "charset=") {
@@ -158,7 +201,7 @@ func setStaticHeaders(w http.ResponseWriter, path string) {
 	}
 	w.Header().Set("Vary", "Accept-Encoding")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
-	if st, err := os.Stat(path); err == nil {
-		w.Header().Set("Last-Modified", st.ModTime().UTC().Format(http.TimeFormat))
+	if !modTime.IsZero() {
+		w.Header().Set("Last-Modified", modTime.UTC().Format(http.TimeFormat))
 	}
 }

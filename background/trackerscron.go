@@ -19,7 +19,7 @@ import (
 var trRe = regexp.MustCompile(`tr=([^&]+)`)
 var nestedAnnounceRe = regexp.MustCompile(`[^/]+/[^/]+/announce`)
 
-func RunTrackersCron(ctx context.Context, db *filedb.DB, dataDir, wwwroot string, enabled bool) {
+func RunTrackersCron(ctx context.Context, db *filedb.DB, dataDir string, enabled bool) {
 	if !enabled {
 		return
 	}
@@ -28,7 +28,7 @@ func RunTrackersCron(ctx context.Context, db *filedb.DB, dataDir, wwwroot string
 		return
 	case <-time.After(20 * time.Second):
 	}
-	if err := RunTrackersCronOnce(ctx, db, dataDir, wwwroot); err != nil {
+	if err := RunTrackersCronOnce(ctx, db, dataDir); err != nil {
 		fmt.Printf("trackers: error / %v\n", err)
 	}
 	ticker := time.NewTicker(time.Hour)
@@ -38,14 +38,14 @@ func RunTrackersCron(ctx context.Context, db *filedb.DB, dataDir, wwwroot string
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if err := RunTrackersCronOnce(ctx, db, dataDir, wwwroot); err != nil {
+			if err := RunTrackersCronOnce(ctx, db, dataDir); err != nil {
 				fmt.Printf("trackers: error / %v\n", err)
 			}
 		}
 	}
 }
 
-func RunTrackersCronOnce(ctx context.Context, db *filedb.DB, dataDir, wwwroot string) error {
+func RunTrackersCronOnce(ctx context.Context, db *filedb.DB, dataDir string) error {
 	trackers := map[string]struct{}{}
 	httpClient := &http.Client{Timeout: 7 * time.Second}
 
@@ -90,10 +90,13 @@ func RunTrackersCronOnce(ctx context.Context, db *filedb.DB, dataDir, wwwroot st
 		list = append(list, tr)
 	}
 	sort.Strings(list)
-	if err := os.MkdirAll(wwwroot, 0o755); err != nil {
+	if dataDir == "" {
+		dataDir = "Data"
+	}
+	if err := os.MkdirAll(dataDir, 0o755); err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(wwwroot, "trackers.txt"), []byte(strings.Join(list, "\n")), 0o644)
+	return os.WriteFile(filepath.Join(dataDir, "trackers.txt"), []byte(strings.Join(list, "\n")), 0o644)
 }
 
 func checkTrackerWith(ctx context.Context, client *http.Client, tracker string) bool {
