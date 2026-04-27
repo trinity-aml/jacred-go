@@ -1,6 +1,6 @@
 # jacred-go
 
-Go-based multi-tracker torrent aggregator. Port of C# project jacred (mainly from https://github.com/jacred-fdb/jacred, web interface 100% from)
+Go-based multi-tracker torrent aggregator. Port of C# project jacred (mainly from https://github.com/jacred-fdb/jacred)
 
 Collects torrent metadata from 20 Russian/Ukrainian trackers into a unified flat-file database with search, sync, and stats APIs.
 
