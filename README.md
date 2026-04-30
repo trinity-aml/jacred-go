@@ -121,25 +121,27 @@ gcpercent: 50    # Go's GOGC knob: 50 = GC at +50% heap growth (default 50, Go d
 
 `memlimit: 0` disables the hard cap (Go default behaviour).
 
-### CloudFlare Bypass (flaresolverr-go + cfclient)
+### CloudFlare Bypass (flaresolverr-go)
 
-For trackers protected by CloudFlare (megapeer, bitru, anistar, anifilm, torrentby, mazepa), the system uses two built-in components (no external Docker services required):
+For trackers protected by CloudFlare (megapeer, bitru, anistar, anifilm, torrentby, mazepa), the system uses an embedded **flaresolverr-go** solver — no external Docker service required.
 
-1. **flaresolverr-go** — embedded Chromium-based CF challenge solver. Runs via Xvfb virtual display. Cookies are cached for 30 minutes per domain.
-2. **cfclient** — TLS fingerprint spoofing (tls-client with Chrome profile). Used for HTTP requests after cookies are obtained.
+How it works:
 
-The flow: flaresolverr-go solves the CF challenge and obtains cookies → cfclient uses those cookies with Chrome TLS fingerprint → falls back to standard HTTP if cfclient fails.
+1. The first request to a CF-gated domain spawns a real browser (Camoufox via geckodriver by default, or Chrome for Testing via chromedriver) on a virtual Xvfb display, lets it pass the CF managed challenge, and extracts the resulting `cf_clearance` cookies and User-Agent.
+2. Solved cookies are cached in memory for 60 minutes per domain and persisted to `Data/temp/flare/` so quick restarts reuse them.
+3. Subsequent requests for the same domain use plain `net/http` with those cookies + the browser's UA (fast path). Only on a fresh CF challenge (403 or interstitial markers in the body) is the browser invoked again.
+4. Idle browser sessions are reaped after 5 minutes of inactivity to free RAM (~800 MB per Camoufox process).
 
 ```yaml
-# Embedded flaresolverr-go settings (no external service needed)
 flaresolverr_go:
-  headless: true              # true = headless Chrome (default), false = visible (needs Xvfb)
-  browser_path: ""            # Custom Chromium path (empty = auto-detect)
-
-# TLS fingerprint for CF-protected requests
-cfclient:
-  profile: "chrome_146"       # TLS profile: chrome_133, chrome_144, chrome_146, firefox_117, etc.
+  headless: true               # true = headless mode, false = visible (still needs Xvfb on servers)
+  browser_backend: geckodriver # geckodriver (Camoufox, recommended) | chromedriver (Chrome for Testing)
+  browser_path: ""             # Browser binary. Empty + geckodriver = auto-download Camoufox (~680 MB, one-time) into ~/.cache. Empty + chromedriver = system Chrome.
+  driver_path: ""              # Custom geckodriver/chromedriver path. Empty = library auto-downloads a matching driver.
+  chrome_version: ""           # Pin Chrome for Testing to a major (e.g. "146") — only used with browser_backend: chromedriver.
 ```
+
+Requires `Xvfb` on headless servers (`apt install xvfb`). jacred starts its own Xvfb instance on `:99-:119` if `DISPLAY` is unset.
 
 Enable per tracker via `fetchmode`:
 
@@ -149,7 +151,7 @@ Megapeer:
   host: "https://megapeer.vip"
 ```
 
-If the response is a CF challenge page (403 or missing content marker), the session is automatically invalidated and re-solved.
+If the response is a CF challenge page (interstitial markers in the body), the cached session is automatically invalidated and re-solved. A circuit breaker puts a domain into a 3-minute cooldown after a solve failure to prevent retry storms.
 
 ### Evercache (In-Memory Bucket Cache)
 
