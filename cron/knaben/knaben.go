@@ -1,11 +1,9 @@
 package knaben
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
 	"net/url"
@@ -59,7 +57,6 @@ var (
 type Parser struct {
 	Config  app.Config
 	DB      *filedb.DB
-	Client  *http.Client
 	Fetcher *core.Fetcher
 	mu      sync.Mutex
 	working bool
@@ -106,7 +103,7 @@ type hit struct {
 }
 
 func New(cfg app.Config, db *filedb.DB) *Parser {
-	return &Parser{Config: cfg, DB: db, Client: &http.Client{Timeout: 20 * time.Second}, Fetcher: core.NewFetcher(cfg)}
+	return &Parser{Config: cfg, DB: db, Fetcher: core.NewFetcher(cfg)}
 }
 
 func (p *Parser) Parse(ctx context.Context, from, size, pages int, query string, hours int, orderBy, categoriesRaw string) (ParseResult, error) {
@@ -166,30 +163,24 @@ func (p *Parser) fetchPage(ctx context.Context, from, size, secondsSince int, qu
 		reqBody.SecondsSinceLastSeen = &secondsSince
 	}
 	payload, _ := json.Marshal(reqBody)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(p.Config.Knaben.Host, "/")+"/v1", bytes.NewReader(payload))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/json")
 	select {
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	case <-time.After(p.apiDelay()):
 	}
-	resp, err := p.Client.Do(req)
+	res, err := p.Fetcher.Do(strings.TrimRight(p.Config.Knaben.Host, "/")+"/v1", p.Config.Knaben, core.FetchOptions{
+		Method:      http.MethodPost,
+		Body:        payload,
+		ContentType: "application/json",
+	})
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 5<<20))
-	if err != nil {
-		return nil, err
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("knaben api status %d", resp.StatusCode)
+	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		return nil, fmt.Errorf("knaben api status %d", res.StatusCode)
 	}
 	var parsed apiResponse
-	if err := json.Unmarshal(body, &parsed); err != nil {
+	if err := json.Unmarshal(res.Body, &parsed); err != nil {
 		return nil, err
 	}
 	out := make([]filedb.TorrentDetails, 0, len(parsed.Hits))

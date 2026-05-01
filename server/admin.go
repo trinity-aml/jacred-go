@@ -1966,3 +1966,37 @@ func (s *Server) handleSyncTracks(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleSyncTracksCheck(w http.ResponseWriter, r *http.Request) {
 	writeBareNotFound(w)
 }
+
+// handleAdminCFDomains exposes the auto-detected CF-protected domain registry.
+//
+//	GET                       — list flagged domains and their last-seen timestamps
+//	DELETE                    — clear all entries
+//	DELETE ?domain=example.tld — clear a single entry
+//
+// LAN-only.
+func (s *Server) handleAdminCFDomains(w http.ResponseWriter, r *http.Request) {
+	if !isLocalRequest(r) {
+		writeJSON(w, http.StatusForbidden, map[string]any{"badip": true})
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		snap := core.CFAutoSnapshot()
+		out := make([]map[string]any, 0, len(snap))
+		for domain, t := range snap {
+			out = append(out, map[string]any{
+				"domain":   domain,
+				"detected": t.UTC().Format(time.RFC3339),
+				"ageHours": int(time.Since(t).Hours()),
+			})
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "count": len(out), "domains": out})
+	case http.MethodDelete:
+		domain := strings.TrimSpace(r.URL.Query().Get("domain"))
+		removed := core.ClearCFAuto(domain)
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "removed": removed})
+	default:
+		w.Header().Set("Allow", "GET, DELETE")
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"ok": false, "error": "GET/DELETE only"})
+	}
+}

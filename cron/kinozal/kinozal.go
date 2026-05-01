@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"html"
-	"io"
 	"log"
 	"net/http"
 	"net/url"
@@ -73,7 +72,6 @@ type Parser struct {
 	Config  app.Config
 	DB      *filedb.DB
 	DataDir string
-	Client  *http.Client
 	Fetcher *core.Fetcher
 	loc     *time.Location
 
@@ -93,7 +91,7 @@ func New(cfg app.Config, db *filedb.DB, dataDir string) *Parser {
 	if loc == nil {
 		loc = time.Local
 	}
-	p := &Parser{Config: cfg, DB: db, DataDir: dataDir, Client: &http.Client{Timeout: 35 * time.Second}, Fetcher: core.NewFetcher(cfg), loc: loc, tasks: map[string]map[string][]Task{}, cookieStore: core.NewCookieStore(dataDir)}
+	p := &Parser{Config: cfg, DB: db, DataDir: dataDir, Fetcher: core.NewFetcher(cfg), loc: loc, tasks: map[string]map[string][]Task{}, cookieStore: core.NewCookieStore(dataDir)}
 	_ = p.loadTasks()
 	if saved := p.cookieStore.Load(trackerName); saved != "" {
 		p.cookie = saved
@@ -569,27 +567,34 @@ func (p *Parser) resolveMagnet(ctx context.Context, detailURL string) (string, e
 	form := url.Values{}
 	form.Set("id", id)
 	form.Set("action", "2")
-	reqURL := strings.TrimRight(requestHost(p.Config.Kinozal), "/") + "/get_srv_details.php?id=" + id + "&action=2"
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, bytes.NewBufferString(form.Encode()))
-	if err != nil {
+	host := strings.TrimRight(requestHost(p.Config.Kinozal), "/")
+	reqURL := host + "/get_srv_details.php?id=" + id + "&action=2"
+	if err := ctx.Err(); err != nil {
 		return "", err
 	}
-	setKinozalHeaders(req, requestHost(p.Config.Kinozal), cookie)
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	resp, err := p.Client.Do(req)
+	res, err := p.Fetcher.Do(reqURL, p.Config.Kinozal, core.FetchOptions{
+		Method:      http.MethodPost,
+		Body:        []byte(form.Encode()),
+		ContentType: "application/x-www-form-urlencoded",
+		ExtraCookie: cookie,
+		UserAgent:   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/99.0.4844.51 Safari/537.36",
+		ExtraHeaders: map[string]string{
+			"Cache-Control":             "no-cache",
+			"Pragma":                    "no-cache",
+			"DNT":                       "1",
+			"Origin":                    host,
+			"Referer":                   host + "/",
+			"Upgrade-Insecure-Requests": "1",
+		},
+	})
 	if err != nil {
 		log.Printf("kinozal: resolveMagnet id=%s error: %v", id, err)
 		return "", err
 	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 5<<20))
-	if err != nil {
-		return "", err
-	}
 	// Server may return UTF-8 or CP1251 — try raw first
-	text := string(body)
+	text := string(res.Body)
 	if !strings.Contains(text, "Инфо хеш") {
-		text = core.DecodeCP1251(body)
+		text = core.DecodeCP1251(res.Body)
 	}
 	if m := hashRe.FindStringSubmatch(text); len(m) > 1 {
 		h := strings.TrimSpace(m[1])
@@ -599,9 +604,9 @@ func (p *Parser) resolveMagnet(ctx context.Context, detailURL string) (string, e
 	}
 	// Log first failures for debugging
 	if len(text) < 500 {
-		log.Printf("kinozal: resolveMagnet id=%s FAILED status=%d cookie=%q body=%q", id, resp.StatusCode, cookie[:min(len(cookie), 30)], text)
+		log.Printf("kinozal: resolveMagnet id=%s FAILED status=%d cookie=%q body=%q", id, res.StatusCode, cookie[:min(len(cookie), 30)], text)
 	} else {
-		log.Printf("kinozal: resolveMagnet id=%s FAILED status=%d cookie=%q bodyLen=%d", id, resp.StatusCode, cookie[:min(len(cookie), 30)], len(text))
+		log.Printf("kinozal: resolveMagnet id=%s FAILED status=%d cookie=%q bodyLen=%d", id, res.StatusCode, cookie[:min(len(cookie), 30)], len(text))
 	}
 	return "", nil
 }

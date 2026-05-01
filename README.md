@@ -143,15 +143,26 @@ flaresolverr_go:
 
 Requires `Xvfb` on headless servers (`apt install xvfb`). jacred starts its own Xvfb instance on `:99-:119` if `DISPLAY` is unset.
 
-Enable per tracker via `fetchmode`:
+#### Auto-detection
+
+CloudFlare detection is automatic — `fetchmode` in `init.yaml` is now an optional hint, not a requirement. When any parser's standard request returns a CF interstitial page (markers like `<title>Just a moment`, `cf-browser-verification`, `window._cf_chl_opt`), the Fetcher:
+
+1. Logs `cf-auto: detected CloudFlare on <domain> — future requests will use flaresolverr`.
+2. Flags the domain in an in-memory + on-disk registry (`Data/temp/cf_auto.json`).
+3. Transparently retries the same request through flaresolverr-go in the same call — the caller gets the real response.
+4. Routes every subsequent request for that domain through flaresolverr automatically (skipping the wasted standard roundtrip).
+
+Setting `fetchmode: "flaresolverr"` explicitly still works; it just saves the very first wasted request. POST requests are auto-promoted too: when CF rejects a POST, the original body never reached the upstream API, so the retry through flaresolverr (which obtains `cf_clearance` and re-issues the POST via `net/http` + browser UA) is safe.
+
+Registry entries persist across restarts and age out after 30 days (any domain that's gone quiet that long is rechecked from scratch). To inspect or clear the registry manually, use `/admin/cf-domains` (see [Database Admin Endpoints](#database-admin-endpoints)).
 
 ```yaml
 Megapeer:
-  fetchmode: "flaresolverr"   # "standard" (default) or "flaresolverr"
+  fetchmode: "flaresolverr"   # optional: skip the first detection roundtrip for known CF sites
   host: "https://megapeer.vip"
 ```
 
-If the response is a CF challenge page (interstitial markers in the body), the cached session is automatically invalidated and re-solved. A circuit breaker puts a domain into a 3-minute cooldown after a solve failure to prevent retry storms.
+If a previously-flagged site stops using CF, either wait 30 days or `curl -X DELETE 'http://127.0.0.1:9117/admin/cf-domains?domain=megapeer.vip'`. A circuit breaker also puts a domain into a 3-minute cooldown after a flaresolverr solve failure to prevent retry storms.
 
 ### Evercache (In-Memory Bucket Cache)
 
@@ -1069,6 +1080,36 @@ jq '.log = true' current.json | curl -X POST -H 'Content-Type: application/json'
 ```
 
 Responses: `{"ok": true}` on success, `{"ok": false, "error": "..."}` on failure. The JSON writer normalizes to the structure `init.yaml` parser expects — existing comments in `init.yaml` are lost on save (the file is regenerated from the config struct).
+
+### `GET /admin/cf-domains`
+
+Returns the auto-detected CloudFlare domain registry — domains that returned a CF challenge during a standard fetch and were promoted to flaresolverr routing automatically. **Local IPs only.**
+
+```bash
+curl -s "http://127.0.0.1:9117/admin/cf-domains"
+```
+
+```json
+{
+  "ok": true,
+  "count": 2,
+  "domains": [
+    {"domain": "megapeer.vip", "detected": "2026-04-30T12:34:56Z", "ageHours": 21},
+    {"domain": "bitru.org",    "detected": "2026-05-01T08:10:00Z", "ageHours": 2}
+  ]
+}
+```
+
+### `DELETE /admin/cf-domains`
+
+Clears one entry (when `?domain=` is supplied) or the whole registry (when omitted). Useful when a site stops using CloudFlare. Returns `{"ok": true, "removed": N}`. **Local IPs only.**
+
+```bash
+# Clear a single domain
+curl -X DELETE "http://127.0.0.1:9117/admin/cf-domains?domain=megapeer.vip"
+# Clear all
+curl -X DELETE "http://127.0.0.1:9117/admin/cf-domains"
+```
 
 ## Config Hot-Reload
 

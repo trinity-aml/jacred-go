@@ -1,6 +1,7 @@
 package core
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"fmt"
@@ -447,9 +448,29 @@ type FetchResult struct {
 // Get fetches a URL using the mode specified in tracker settings.
 // Modes: "standard" (default), "flaresolverr".
 func (f *Fetcher) Get(rawURL string, tracker app.TrackerSettings) (*FetchResult, error) {
+	return f.GetExt(rawURL, tracker, "", "")
+}
+
+// GetExt is like Get but lets callers merge an extra runtime cookie
+// (e.g. from a parser's own login flow) and override the User-Agent used for
+// standard-mode requests. Empty strings keep defaults. Flare-mode always uses
+// the browser's User-Agent regardless of the userAgent argument, since the
+// cookie is bound to the UA that solved the challenge.
+func (f *Fetcher) GetExt(rawURL string, tracker app.TrackerSettings, extraCookie, userAgent string) (*FetchResult, error) {
+	if strings.TrimSpace(extraCookie) != "" {
+		tracker.Cookie = MergeCookieStrings(tracker.Cookie, extraCookie)
+	}
+
 	mode := strings.ToLower(strings.TrimSpace(tracker.FetchMode))
 	if mode == "" {
 		mode = "standard"
+	}
+
+	// Auto-CF: a previous standard fetch on this domain returned a CF
+	// challenge. Skip the wasted request and go straight to flare.
+	domain := extractDomain(rawURL)
+	if mode != "flaresolverr" && isDomainCFAuto(domain) {
+		mode = "flaresolverr"
 	}
 
 	cookie := strings.TrimSpace(tracker.Cookie)
@@ -470,13 +491,34 @@ func (f *Fetcher) Get(rawURL string, tracker app.TrackerSettings) (*FetchResult,
 	case "flaresolverr":
 		return f.fetchViaFlare(rawURL, cookie, proxy)
 	default:
-		return f.fetchStandard(rawURL, cookie, proxy)
+		ua := userAgent
+		if strings.TrimSpace(ua) == "" {
+			ua = "Mozilla/5.0"
+		}
+		res, err := f.doHTTP(http.MethodGet, rawURL, cookie, ua, "", nil, nil, proxy)
+		if err != nil {
+			return res, err
+		}
+		// Auto-detect: if the standard response is a CF interstitial, flag the
+		// domain and transparently retry via flare. The retry result is what
+		// the caller actually wanted; subsequent calls skip the doomed standard
+		// roundtrip via the isDomainCFAuto check above.
+		if isCloudflareChallenge(res.Body) {
+			markDomainCF(domain)
+			return f.fetchViaFlare(rawURL, cookie, proxy)
+		}
+		return res, nil
 	}
 }
 
 // GetString is a convenience wrapper that returns body as string.
 func (f *Fetcher) GetString(rawURL string, tracker app.TrackerSettings) (string, int, error) {
-	res, err := f.Get(rawURL, tracker)
+	return f.GetStringExt(rawURL, tracker, "", "")
+}
+
+// GetStringExt is the string-result variant of GetExt.
+func (f *Fetcher) GetStringExt(rawURL string, tracker app.TrackerSettings, extraCookie, userAgent string) (string, int, error) {
+	res, err := f.GetExt(rawURL, tracker, extraCookie, userAgent)
 	if err != nil {
 		return "", 0, err
 	}
@@ -485,31 +527,156 @@ func (f *Fetcher) GetString(rawURL string, tracker app.TrackerSettings) (string,
 
 // Download fetches raw bytes (for torrent files, etc).
 func (f *Fetcher) Download(rawURL string, tracker app.TrackerSettings) ([]byte, int, error) {
-	res, err := f.Get(rawURL, tracker)
+	return f.DownloadExt(rawURL, tracker, "", "")
+}
+
+// DownloadExt is the byte-result variant of GetExt.
+func (f *Fetcher) DownloadExt(rawURL string, tracker app.TrackerSettings, extraCookie, userAgent string) ([]byte, int, error) {
+	res, err := f.GetExt(rawURL, tracker, extraCookie, userAgent)
 	if err != nil {
 		return nil, 0, err
 	}
 	return res.Body, res.StatusCode, nil
 }
 
-func (f *Fetcher) fetchStandard(rawURL, cookie string, transport *http.Transport) (*FetchResult, error) {
-	return f.doHTTP(rawURL, cookie, "Mozilla/5.0", transport)
+// FetchOptions configures Fetcher.Do. Empty fields use sensible defaults.
+type FetchOptions struct {
+	Method       string            // "GET" (default), "POST", etc.
+	Body         []byte            // request body (for POST/PUT)
+	ContentType  string            // Content-Type for the body
+	ExtraCookie  string            // merged with tracker.Cookie
+	UserAgent    string            // overrides the default UA (standard mode)
+	ExtraHeaders map[string]string // additional request headers
 }
 
-func (f *Fetcher) doHTTP(rawURL, cookie, userAgent string, transport *http.Transport) (*FetchResult, error) {
+// Do sends a request honoring opts. Routes through standard HTTP or
+// flaresolverr per tracker.FetchMode.
+//
+//   - GET in flare mode delegates to the browser-rendered fast path
+//     (cached cf_clearance → standard HTTP, fallback to full browser fetch).
+//     ExtraHeaders are not honored in this case (flaresolverr controls headers).
+//   - POST in flare mode obtains cf_clearance via cached or freshly-solved
+//     browser session, then sends the actual POST via standard HTTP with
+//     those cookies + the browser's User-Agent. The body itself never goes
+//     through the headless browser.
+//   - POST in standard mode is a plain net/http POST with the supplied body,
+//     content-type, cookies, UA, and extra headers.
+func (f *Fetcher) Do(rawURL string, tracker app.TrackerSettings, opts FetchOptions) (*FetchResult, error) {
+	method := strings.ToUpper(strings.TrimSpace(opts.Method))
+	if method == "" {
+		method = http.MethodGet
+	}
+
+	if strings.TrimSpace(opts.ExtraCookie) != "" {
+		tracker.Cookie = MergeCookieStrings(tracker.Cookie, opts.ExtraCookie)
+	}
+
+	mode := strings.ToLower(strings.TrimSpace(tracker.FetchMode))
+	if mode == "" {
+		mode = "standard"
+	}
+
+	// Auto-CF: domain previously observed serving a challenge — go through
+	// flare from the start instead of wasting a request.
+	domain := extractDomain(rawURL)
+	if mode != "flaresolverr" && isDomainCFAuto(domain) {
+		mode = "flaresolverr"
+	}
+
+	cookie := strings.TrimSpace(tracker.Cookie)
+	proxy := ProxyForURL(rawURL, tracker.UseProxy, f.cfg)
+	if tracker.InsecureSkipVerify {
+		if proxy != nil {
+			if proxy.TLSClientConfig == nil {
+				proxy.TLSClientConfig = &tls.Config{}
+			}
+			proxy.TLSClientConfig.InsecureSkipVerify = true
+		} else {
+			proxy = &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}
+		}
+	}
+
+	// GET in flare mode goes through the full browser-aware path so it can
+	// re-solve on stale cookies or fall back to a browser-rendered body.
+	// Non-GET can't use that path because the browser only navigates.
+	if mode == "flaresolverr" && method == http.MethodGet {
+		return f.fetchViaFlare(rawURL, cookie, proxy)
+	}
+
+	ua := opts.UserAgent
+	if mode == "flaresolverr" {
+		// Non-GET flare path: piggyback on cached cf_clearance, solving on the
+		// origin if needed. The actual request goes via standard HTTP.
+		flareCookie, flareUA := f.GetFlareCookies(rawURL)
+		if flareCookie != "" {
+			cookie = mergeCookies(cookie, flareCookie)
+		}
+		if strings.TrimSpace(ua) == "" && flareUA != "" {
+			ua = flareUA
+		}
+	}
+	if strings.TrimSpace(ua) == "" {
+		ua = "Mozilla/5.0"
+	}
+
+	res, err := f.doHTTP(method, rawURL, cookie, ua, opts.ContentType, opts.Body, opts.ExtraHeaders, proxy)
+	if err != nil {
+		return res, err
+	}
+	// Auto-detect: standard-mode response is a CF interstitial. Flag the
+	// domain and retry through flare. Safe to retry POST because CF rejects
+	// before forwarding to the upstream API — the original request had no
+	// effect. Future calls take the fast path via isDomainCFAuto above.
+	if mode != "flaresolverr" && isCloudflareChallenge(res.Body) {
+		markDomainCF(domain)
+		if method == http.MethodGet {
+			return f.fetchViaFlare(rawURL, cookie, proxy)
+		}
+		flareCookie, flareUA := f.GetFlareCookies(rawURL)
+		if flareCookie != "" {
+			cookie = mergeCookies(cookie, flareCookie)
+		}
+		retryUA := opts.UserAgent
+		if strings.TrimSpace(retryUA) == "" {
+			retryUA = flareUA
+		}
+		if strings.TrimSpace(retryUA) == "" {
+			retryUA = "Mozilla/5.0"
+		}
+		return f.doHTTP(method, rawURL, cookie, retryUA, opts.ContentType, opts.Body, opts.ExtraHeaders, proxy)
+	}
+	return res, nil
+}
+
+// doHTTP performs an HTTP request honoring the caller's method, body,
+// content-type, cookie, UA, and any extra headers. Body is capped at 5 MiB.
+func (f *Fetcher) doHTTP(method, rawURL, cookie, userAgent, contentType string, body []byte, extraHeaders map[string]string, transport *http.Transport) (*FetchResult, error) {
+	if strings.TrimSpace(method) == "" {
+		method = http.MethodGet
+	}
 	client := f.stdClient
 	if transport != nil {
 		client = &http.Client{Timeout: 30 * time.Second, Transport: transport}
 	}
-	req, err := http.NewRequest(http.MethodGet, rawURL, nil)
+	var bodyReader io.Reader
+	if len(body) > 0 {
+		bodyReader = bytes.NewReader(body)
+	}
+	req, err := http.NewRequest(method, rawURL, bodyReader)
 	if err != nil {
 		return nil, err
 	}
 	if userAgent != "" {
 		req.Header.Set("User-Agent", userAgent)
 	}
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
+	}
 	if cookie != "" {
 		req.Header.Set("Cookie", cookie)
+	}
+	for k, v := range extraHeaders {
+		req.Header.Set(k, v)
 	}
 	resp, err := client.Do(req)
 	if err != nil {
@@ -615,7 +782,7 @@ func (f *Fetcher) fetchWithCookies(rawURL, cookie string, sess *flareSession, tr
 	if ua == "" {
 		ua = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36"
 	}
-	return f.doHTTP(rawURL, merged, ua, transport)
+	return f.doHTTP(http.MethodGet, rawURL, merged, ua, "", nil, nil, transport)
 }
 
 func (f *Fetcher) getFlareSession(domain string) *flareSession {

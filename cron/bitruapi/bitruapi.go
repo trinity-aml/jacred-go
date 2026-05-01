@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
 	"net/url"
@@ -32,7 +31,6 @@ var detailsIDRe = regexp.MustCompile(`\?id=(\d+)`)
 type Parser struct {
 	Config  app.Config
 	DB      *filedb.DB
-	Client  *http.Client
 	Fetcher *core.Fetcher
 	DataDir string
 	mu      sync.Mutex
@@ -130,7 +128,7 @@ func New(cfg app.Config, db *filedb.DB, dataDir string) *Parser {
 	if strings.TrimSpace(dataDir) == "" {
 		dataDir = "Data"
 	}
-	return &Parser{Config: cfg, DB: db, DataDir: dataDir, Client: &http.Client{Timeout: 20 * time.Second}, Fetcher: core.NewFetcher(cfg)}
+	return &Parser{Config: cfg, DB: db, DataDir: dataDir, Fetcher: core.NewFetcher(cfg)}
 }
 
 func (p *Parser) Parse(ctx context.Context, limit int) (ParseResult, error) {
@@ -235,41 +233,33 @@ func (p *Parser) apiRequestAsync(ctx context.Context, jsonParams map[string]any)
 	case <-time.After(apiDelay()):
 	}
 	apiURL := strings.TrimRight(p.Config.Bitru.Host, "/") + "/api.php"
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, bytes.NewBufferString(form.Encode()))
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	// Routing through Fetcher.Do means cf_clearance / browser-UA piggybacking
+	// happens inside Fetcher when bitru's fetchmode is "flaresolverr": the
+	// POST is sent via standard HTTP with cookies already obtained from the
+	// shared flare session. Standard mode just sends a plain POST.
+	res, err := p.Fetcher.Do(apiURL, p.Config.Bitru, core.FetchOptions{
+		Method:      http.MethodPost,
+		Body:        []byte(form.Encode()),
+		ContentType: "application/x-www-form-urlencoded",
+		ExtraHeaders: map[string]string{
+			"Accept":          "application/json, text/plain, */*",
+			"Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
+		},
+	})
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("Accept", "application/json, text/plain, */*")
-	req.Header.Set("Accept-Language", "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7")
-	// Piggyback on bitru parser's solved session if available (cf_clearance
-	// cookie + matching UA) so CF sees a consistent browser identity. Falls
-	// back to a plausible desktop UA when no cache yet.
-	cookie, ua, _ := p.Fetcher.PeekFlareCookies(apiURL)
-	if ua == "" {
-		ua = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36"
+	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		return nil, fmt.Errorf("bitru api status %d", res.StatusCode)
 	}
-	req.Header.Set("User-Agent", ua)
-	if cookie != "" {
-		req.Header.Set("Cookie", cookie)
-	}
-	resp, err := p.Client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 5<<20))
-	if err != nil {
-		return nil, err
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("bitru api status %d", resp.StatusCode)
-	}
-	if len(bytes.TrimSpace(body)) == 0 {
+	if len(bytes.TrimSpace(res.Body)) == 0 {
 		return nil, nil
 	}
 	var out apiResponse
-	if err := json.Unmarshal(body, &out); err != nil {
+	if err := json.Unmarshal(res.Body, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil

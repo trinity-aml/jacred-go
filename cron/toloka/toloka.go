@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"html"
-	"io"
 	"log"
 	"net/http"
 	"net/url"
@@ -88,7 +87,6 @@ type Parser struct {
 	Config  app.Config
 	DB      *filedb.DB
 	DataDir string
-	Client  *http.Client
 	Fetcher *core.Fetcher
 	loc     *time.Location
 
@@ -228,7 +226,7 @@ func New(cfg app.Config, db *filedb.DB, dataDir string) *Parser {
 	if err != nil || loc == nil {
 		loc = time.FixedZone("+0200", 2*3600)
 	}
-	p := &Parser{Config: cfg, DB: db, DataDir: dataDir, Client: &http.Client{Timeout: 35 * time.Second}, Fetcher: core.NewFetcher(cfg), loc: loc, tasks: map[string][]Task{}, cookieStore: core.NewCookieStore(dataDir)}
+	p := &Parser{Config: cfg, DB: db, DataDir: dataDir, Fetcher: core.NewFetcher(cfg), loc: loc, tasks: map[string][]Task{}, cookieStore: core.NewCookieStore(dataDir)}
 	_ = p.loadTasks()
 	if saved := p.cookieStore.Load(trackerName); saved != "" {
 		p.cookie = saved
@@ -796,6 +794,9 @@ func (p *Parser) takeLogin(ctx context.Context) (string, error) {
 	return fmt.Sprintf("toloka_sid=%s; toloka_ssl=1; toloka_data=%s;", sid, data), nil
 }
 
+// fetchPageHTML routes through the shared Fetcher so the tracker's fetchmode
+// (standard / flaresolverr) takes effect. The login cookie is merged with any
+// config-side cookie inside Fetcher.GetExt. Retries on 429 with backoff.
 func (p *Parser) fetchPageHTML(ctx context.Context, cat string, page int) (string, error) {
 	host := strings.TrimRight(p.Config.Toloka.Host, "/")
 	cookie, err := p.ensureCookie(ctx)
@@ -808,20 +809,14 @@ func (p *Parser) fetchPageHTML(ctx context.Context, cat string, page int) (strin
 	}
 	urlv += "?sort=8"
 	for attempt := 1; attempt <= 3; attempt++ {
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, urlv, nil)
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
+		body, status, err := p.Fetcher.GetStringExt(urlv, p.Config.Toloka, cookie, defaultUA())
 		if err != nil {
 			return "", err
 		}
-		req.Header.Set("User-Agent", defaultUA())
-		req.Header.Set("Cookie", cookie)
-		req.Header.Set("Referer", host+"/")
-		resp, err := p.Client.Do(req)
-		if err != nil {
-			return "", err
-		}
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 5<<20))
-		resp.Body.Close()
-		if resp.StatusCode == 429 && attempt < 3 {
+		if status == 429 && attempt < 3 {
 			select {
 			case <-ctx.Done():
 				return "", ctx.Err()
@@ -829,10 +824,10 @@ func (p *Parser) fetchPageHTML(ctx context.Context, cat string, page int) (strin
 			}
 			continue
 		}
-		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			return "", fmt.Errorf("toloka status %d", resp.StatusCode)
+		if status < 200 || status >= 300 {
+			return "", fmt.Errorf("toloka status %d", status)
 		}
-		return string(body), nil
+		return body, nil
 	}
 	return "", fmt.Errorf("toloka: max retries exceeded")
 }
@@ -844,20 +839,14 @@ func (p *Parser) downloadMagnet(ctx context.Context, downloadID, cookie string) 
 	host := strings.TrimRight(p.Config.Toloka.Host, "/")
 	rawURL := fmt.Sprintf("%s/download.php?id=%s", host, url.QueryEscape(downloadID))
 	for attempt := 1; attempt <= 3; attempt++ {
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
+		data, status, err := p.Fetcher.DownloadExt(rawURL, p.Config.Toloka, cookie, defaultUA())
 		if err != nil {
 			return "", err
 		}
-		req.Header.Set("User-Agent", defaultUA())
-		req.Header.Set("Cookie", cookie)
-		req.Header.Set("Referer", host+"/")
-		resp, err := p.Client.Do(req)
-		if err != nil {
-			return "", err
-		}
-		data, _ := io.ReadAll(io.LimitReader(resp.Body, 5<<20))
-		resp.Body.Close()
-		if resp.StatusCode == 429 && attempt < 3 {
+		if status == 429 && attempt < 3 {
 			select {
 			case <-ctx.Done():
 				return "", ctx.Err()
@@ -865,8 +854,8 @@ func (p *Parser) downloadMagnet(ctx context.Context, downloadID, cookie string) 
 			}
 			continue
 		}
-		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			return "", fmt.Errorf("toloka download status %d", resp.StatusCode)
+		if status < 200 || status >= 300 {
+			return "", fmt.Errorf("toloka download status %d", status)
 		}
 		return core.TorrentBytesToMagnet(data), nil
 	}

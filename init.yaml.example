@@ -82,8 +82,14 @@ evercache:
 # ── CloudFlare bypass (flaresolverr-go) ──────────────────────────────────────
 # Built-in CF challenge solver — no external Docker service needed.
 # Embedded browser solves CF challenges, cookies cached 60 min and reused via
-# standard HTTP where possible. Used by trackers with fetchmode: "flaresolverr"
-# (megapeer, bitru, anistar, anifilm, mazepa, torrentby).
+# standard HTTP where possible.
+#
+# Auto-detect: any tracker that returns a CF challenge during a standard
+# request is automatically promoted to flaresolverr routing for future calls;
+# the registry persists in Data/temp/cf_auto.json (30-day TTL). Setting
+# fetchmode: "flaresolverr" below is now an optional hint that skips the very
+# first detection roundtrip for known CF sites (megapeer, bitru, anistar,
+# anifilm, mazepa, torrentby).
 # Requires Xvfb on headless servers: apt install xvfb
 
 flaresolverr_go:

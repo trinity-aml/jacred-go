@@ -98,6 +98,10 @@ func main() {
 	// a fresh Chrome solve. Directory is created if missing.
 	core.SetFlarePersistDir(filepath.Join("Data", "temp", "flare"))
 
+	// Load auto-detected CF domains so a restart doesn't waste a fresh
+	// standard request on each known CF-protected site before re-flagging it.
+	core.SetCFAutoPersistFile(filepath.Join("Data", "temp", "cf_auto.json"))
+
 	db := filedb.New(cfg, "Data")
 	if err := db.RebuildIndexes(); err != nil {
 		log.Fatal(err)
