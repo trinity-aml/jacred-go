@@ -404,7 +404,7 @@ func (p *Parser) UpdateTasksParse(ctx context.Context) (map[string][]Task, error
 	return cloneTasks(p.tasks), nil
 }
 
-func (p *Parser) ParseAllTask(ctx context.Context) (string, error) {
+func (p *Parser) ParseAllTask(ctx context.Context, force bool) (string, error) {
 	p.mu.Lock()
 	if p.allWork {
 		p.mu.Unlock()
@@ -441,7 +441,7 @@ func (p *Parser) ParseAllTask(ctx context.Context) (string, error) {
 	for catID, list := range snapshot {
 		types := categories[catID]
 		for _, task := range list {
-			if task.UpdatedToday() {
+			if !force && task.UpdatedToday() {
 				continue
 			}
 			if p.Config.Mazepa.ParseDelay > 0 {

@@ -191,7 +191,7 @@ func (p *Parser) UpdateTasksParse(ctx context.Context) (map[string][]Task, error
 	return cloneTasks(p.tasks), nil
 }
 
-func (p *Parser) ParseAllTask(ctx context.Context) (string, error) {
+func (p *Parser) ParseAllTask(ctx context.Context, force bool) (string, error) {
 	p.mu.Lock()
 	if p.allWork {
 		p.mu.Unlock()
@@ -219,7 +219,7 @@ func (p *Parser) ParseAllTask(ctx context.Context) (string, error) {
 	processed, fetched, added, updated, skipped, failed, errs := 0, 0, 0, 0, 0, 0, 0
 	for cat, tasks := range snapshot {
 		for _, task := range tasks {
-			if task.UpdatedToday() {
+			if !force && task.UpdatedToday() {
 				skipped++
 				continue
 			}

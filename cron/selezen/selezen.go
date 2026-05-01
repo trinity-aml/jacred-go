@@ -473,7 +473,7 @@ func (p *Parser) UpdateTasksParse(ctx context.Context) ([]Task, error) {
 	return cloneTasks(p.tasks), nil
 }
 
-func (p *Parser) ParseAllTask(ctx context.Context) (string, error) {
+func (p *Parser) ParseAllTask(ctx context.Context, force bool) (string, error) {
 	p.mu.Lock()
 	if p.allWork {
 		p.mu.Unlock()
@@ -497,7 +497,7 @@ func (p *Parser) ParseAllTask(ctx context.Context) (string, error) {
 	totalPages := len(snapshot)
 	processed, fetched, totalAdded, totalUpdated, totalSkipped, totalFailed, errs := 0, 0, 0, 0, 0, 0, 0
 	for _, task := range snapshot {
-		if task.UpdatedToday() {
+		if !force && task.UpdatedToday() {
 			continue
 		}
 		if p.Config.Selezen.ParseDelay > 0 {

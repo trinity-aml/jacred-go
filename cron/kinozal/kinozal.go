@@ -196,7 +196,7 @@ func (p *Parser) UpdateTasksParse(ctx context.Context) (map[string]map[string][]
 	return cloneTasks(p.tasks), nil
 }
 
-func (p *Parser) ParseAllTask(ctx context.Context) (string, error) {
+func (p *Parser) ParseAllTask(ctx context.Context, force bool) (string, error) {
 	if p.getCookie() == "" {
 		_ = p.takeLogin(ctx)
 	}
@@ -230,7 +230,7 @@ func (p *Parser) ParseAllTask(ctx context.Context) (string, error) {
 	for cat, byArg := range snapshot {
 		for arg, list := range byArg {
 			for _, task := range list {
-				if task.UpdatedToday(p.loc) {
+				if !force && task.UpdatedToday(p.loc) {
 					continue
 				}
 				if p.Config.Kinozal.ParseDelay > 0 {

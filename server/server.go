@@ -469,7 +469,7 @@ func (s *Server) handleCronBitruParseAllTask(w http.ResponseWriter, r *http.Requ
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	res, err := s.BitruParser.ParseAllTask(context.Background())
+	res, err := s.BitruParser.ParseAllTask(context.Background(), parseBool(r.URL.Query().Get("force")))
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
@@ -601,7 +601,7 @@ func (s *Server) handleCronRutorParseAllTask(w http.ResponseWriter, r *http.Requ
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	text, err := s.RutorParser.ParseAllTask(context.Background())
+	text, err := s.RutorParser.ParseAllTask(context.Background(), parseBool(r.URL.Query().Get("force")))
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
@@ -684,7 +684,7 @@ func (s *Server) handleCronTorrentByParseAllTask(w http.ResponseWriter, r *http.
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	textRes, err := s.TorrentByParser.ParseAllTask(context.Background())
+	textRes, err := s.TorrentByParser.ParseAllTask(context.Background(), parseBool(r.URL.Query().Get("force")))
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
@@ -736,7 +736,7 @@ func (s *Server) handleCronRutrackerParseAllTask(w http.ResponseWriter, r *http.
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	textRes, err := s.RutrackerParser.ParseAllTask(context.Background())
+	textRes, err := s.RutrackerParser.ParseAllTask(context.Background(), parseBool(r.URL.Query().Get("force")))
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
@@ -788,7 +788,7 @@ func (s *Server) handleCronKinozalParseAllTask(w http.ResponseWriter, r *http.Re
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	textRes, err := s.KinozalParser.ParseAllTask(context.Background())
+	textRes, err := s.KinozalParser.ParseAllTask(context.Background(), parseBool(r.URL.Query().Get("force")))
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
@@ -840,7 +840,7 @@ func (s *Server) handleCronTolokaParseAllTask(w http.ResponseWriter, r *http.Req
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	textRes, err := s.TolokaParser.ParseAllTask(context.Background())
+	textRes, err := s.TolokaParser.ParseAllTask(context.Background(), parseBool(r.URL.Query().Get("force")))
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
@@ -893,7 +893,7 @@ func (s *Server) handleCronSelezenParseAllTask(w http.ResponseWriter, r *http.Re
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	text, err := s.SelezenParser.ParseAllTask(context.Background())
+	text, err := s.SelezenParser.ParseAllTask(context.Background(), parseBool(r.URL.Query().Get("force")))
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
@@ -1002,7 +1002,7 @@ func (s *Server) handleCronMazepaParseAllTask(w http.ResponseWriter, r *http.Req
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	text, err := s.MazepaParser.ParseAllTask(context.Background())
+	text, err := s.MazepaParser.ParseAllTask(context.Background(), parseBool(r.URL.Query().Get("force")))
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
@@ -1305,7 +1305,7 @@ func (s *Server) handleCronNNMClubParseAllTask(w http.ResponseWriter, r *http.Re
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	text, err := s.NNMClubParser.ParseAllTask(context.Background())
+	text, err := s.NNMClubParser.ParseAllTask(context.Background(), parseBool(r.URL.Query().Get("force")))
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
