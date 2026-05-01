@@ -609,7 +609,9 @@ func (f *Fetcher) Do(rawURL string, tracker app.TrackerSettings, opts FetchOptio
 		// origin if needed. The actual request goes via standard HTTP.
 		flareCookie, flareUA := f.GetFlareCookies(rawURL)
 		if flareCookie != "" {
-			cookie = mergeCookies(cookie, flareCookie)
+			// Login PHPSESSID in `cookie` must win over flare's guest PHPSESSID.
+			// cf_clearance from flare has no name conflict and is still added.
+			cookie = mergeCookies(flareCookie, cookie)
 		}
 		if strings.TrimSpace(ua) == "" && flareUA != "" {
 			ua = flareUA
@@ -634,7 +636,7 @@ func (f *Fetcher) Do(rawURL string, tracker app.TrackerSettings, opts FetchOptio
 		}
 		flareCookie, flareUA := f.GetFlareCookies(rawURL)
 		if flareCookie != "" {
-			cookie = mergeCookies(cookie, flareCookie)
+			cookie = mergeCookies(flareCookie, cookie)
 		}
 		retryUA := opts.UserAgent
 		if strings.TrimSpace(retryUA) == "" {
@@ -777,7 +779,10 @@ func isCloudflareChallenge(body []byte) bool {
 // Pass the UA that was used by the browser during solve so CF sees a consistent
 // (cookie, UA) pair. Mismatch invalidates cf_clearance and triggers a re-challenge.
 func (f *Fetcher) fetchWithCookies(rawURL, cookie string, sess *flareSession, transport *http.Transport) (*FetchResult, error) {
-	merged := mergeCookies(cookie, sess.cookies)
+	// Caller's cookie carries the login PHPSESSID and must win over the
+	// browser's guest session captured during solve. Unique flare cookies
+	// (cf_clearance) still get added — only same-name conflicts flip.
+	merged := mergeCookies(sess.cookies, cookie)
 	ua := sess.userAgent
 	if ua == "" {
 		ua = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36"
