@@ -392,17 +392,15 @@ func (p *Parser) takeLogin(ctx context.Context) error {
 	}
 	log.Printf("anifilm: attempting login to %s as %s", host, p.Config.Anifilm.Login.U)
 
-	// /account/login itself is not behind CF's managed challenge, so we hit it
-	// directly. Triggering a flare solve on the site origin from here has two
-	// problems on some hosts: (1) the root path gets a stricter interactive
-	// challenge than /releases/*, which Camoufox/geckodriver can't auto-click
-	// today; (2) if that solve fails, the domain-wide cooldown blocks every
-	// subsequent /releases/* fetch for 3 minutes, breaking the whole parser.
+	// /account/login is not CF-protected, so we hit it directly via plain HTTP
+	// without a flare solve. cf_clearance for the domain comes from listing
+	// fetches (which DO go through CF) and is stored separately as the flare
+	// half of the session file.
+	loginPageURL := host + "/account/login"
 	flareCookie := ""
 	ua := "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
 
 	// Step 1: GET login page to obtain CSRF token cookie
-	loginPageURL := host + "/account/login"
 	getReq, err := http.NewRequestWithContext(ctx, http.MethodGet, loginPageURL, nil)
 	if err != nil {
 		return err

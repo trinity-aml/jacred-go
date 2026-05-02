@@ -131,6 +131,19 @@ func (p *Parser) takeLogin(ctx context.Context) error {
 	}
 	log.Printf("nnmclub: attempting login to %s as %s", host, p.Config.NNMClub.Login.U)
 
+	loginURL := host + "/forum/login.php"
+	// /forum/login.php is itself behind Cloudflare, so we must obtain
+	// cf_clearance + the matching browser UA *before* posting credentials.
+	// GetFlareCookies persists the flare half to Data/cookie/<domain>.json on
+	// success, so subsequent listing fetches will reuse it.
+	flareCookie, flareUA := p.Fetcher.GetFlareCookies(loginURL)
+	if strings.TrimSpace(flareCookie) == "" {
+		return fmt.Errorf("nnmclub: flare solve failed for %s", loginURL)
+	}
+	if strings.TrimSpace(flareUA) == "" {
+		flareUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+	}
+
 	form := url.Values{}
 	form.Set("username", p.Config.NNMClub.Login.U)
 	form.Set("password", p.Config.NNMClub.Login.P)
@@ -138,12 +151,14 @@ func (p *Parser) takeLogin(ctx context.Context) error {
 	form.Set("redirect", "")
 	form.Set("login", "\xc2\xf5\xee\xe4") // "Вход" in CP1251 — the form is CP1251
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, host+"/forum/login.php", strings.NewReader(form.Encode()))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, loginURL, strings.NewReader(form.Encode()))
 	if err != nil {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+	req.Header.Set("User-Agent", flareUA)
+	req.Header.Set("Cookie", flareCookie)
+	req.Header.Set("Referer", loginURL)
 
 	loginClient := &http.Client{
 		Timeout: 20 * time.Second,
