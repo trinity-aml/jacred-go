@@ -267,9 +267,17 @@ func (p *Parser) UpdateTasksParse(ctx context.Context) (map[string][]Task, error
 		if m := inlineHrefRe.FindStringSubmatch(htmlBody); len(m) > 1 {
 			maxPages, _ = strconv.Atoi(strings.TrimSpace(m[1]))
 		}
+		// portal.php caps start at 10000; with 25 items per page that means
+		// pages above 400 always come back empty, so don't enqueue them.
+		if maxPages > 400 {
+			maxPages = 400
+		}
 		existing := p.tasks[cat]
 		pages := map[int]Task{}
 		for _, t := range existing {
+			if t.Page > 400 {
+				continue
+			}
 			pages[t.Page] = t
 		}
 		for page := 0; page <= maxPages; page++ {
@@ -478,7 +486,7 @@ func (p *Parser) ParseLatest(ctx context.Context, pages int) (string, error) {
 }
 
 func (p *Parser) parsePage(ctx context.Context, cat string, page int) ([]filedb.TorrentDetails, error) {
-	rawURL := strings.TrimRight(requestHost(p.Config.NNMClub), "/") + "/forum/portal.php?c=" + cat + "&start=" + strconv.Itoa(page*20)
+	rawURL := strings.TrimRight(requestHost(p.Config.NNMClub), "/") + "/forum/portal.php?c=" + cat + "&start=" + strconv.Itoa(page*25)
 	ts := p.Config.NNMClub
 	if c := p.cookie(); c != "" {
 		ts.Cookie = c
@@ -488,18 +496,37 @@ func (p *Parser) parsePage(ctx context.Context, cat string, page int) ([]filedb.
 		return nil, err
 	}
 	htmlBody := core.DecodeCP1251(data)
-	if status < 200 || status >= 300 || !strings.Contains(htmlBody, validMarker) {
-		// Login form posts to /forum/login.php (see takeLogin) — that action
-		// attribute only appears on the login page, so its presence in a
-		// listing response means the saved cookie has expired.
-		if p.Config.NNMClub.Login.U != "" &&
-			(strings.Contains(htmlBody, `action="login.php"`) || strings.Contains(htmlBody, `action='login.php'`)) {
+
+	// Login form posts to /forum/login.php (see takeLogin) — that action
+	// attribute only appears on the login page, so its presence in a
+	// listing response means the saved cookie has expired.
+	loginForm := p.Config.NNMClub.Login.U != "" &&
+		(strings.Contains(htmlBody, `action="login.php"`) || strings.Contains(htmlBody, `action='login.php'`))
+
+	if status < 200 || status >= 300 {
+		log.Printf("nnmclub: cat=%s page=%d non-OK status=%d body=%d", cat, page, status, len(htmlBody))
+		if loginForm {
 			log.Printf("nnmclub: cat=%s page=%d returned login form (cookie expired, invalidating)", cat, page)
 			p.invalidateCookie()
 		}
 		return nil, nil
 	}
-	return parsePageHTML(strings.TrimRight(p.Config.NNMClub.Host, "/"), cat, htmlBody, time.Now().UTC()), nil
+	if !strings.Contains(htmlBody, validMarker) {
+		if loginForm {
+			log.Printf("nnmclub: cat=%s page=%d returned login form (cookie expired, invalidating)", cat, page)
+			p.invalidateCookie()
+		} else {
+			log.Printf("nnmclub: cat=%s page=%d marker missing (status=%d body=%d)", cat, page, status, len(htmlBody))
+		}
+		return nil, nil
+	}
+	items := parsePageHTML(strings.TrimRight(p.Config.NNMClub.Host, "/"), cat, htmlBody, time.Now().UTC())
+	if len(items) == 0 {
+		hasPline := strings.Contains(htmlBody, `class="pline"`)
+		hasMagnet := strings.Contains(htmlBody, `magnet:?`)
+		log.Printf("nnmclub: cat=%s page=%d zero items parsed (body=%d pline=%v magnet=%v)", cat, page, len(htmlBody), hasPline, hasMagnet)
+	}
+	return items, nil
 }
 
 func (p *Parser) fetchCategoryRoot(ctx context.Context, cat string) (string, error) {
