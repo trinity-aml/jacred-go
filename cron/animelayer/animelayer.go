@@ -61,16 +61,12 @@ type Parser struct {
 	cookieMu         sync.Mutex
 	cookie           string
 	lastLoginAttempt time.Time
-	cookieStore      *core.CookieStore
+	domain           string
 }
 
 func New(cfg app.Config, db *filedb.DB) *Parser {
-	dataDir := ""
-	if db != nil {
-		dataDir = db.DataDir
-	}
-	p := &Parser{Config: cfg, DB: db, Fetcher: core.NewFetcher(cfg), cookieStore: core.NewCookieStore(dataDir)}
-	if saved := p.cookieStore.Load(trackerName); saved != "" {
+	p := &Parser{Config: cfg, DB: db, Fetcher: core.NewFetcher(cfg), domain: core.DomainFromHost(cfg.Animelayer.Host)}
+	if saved, _ := core.DefaultSessionStore().LoadAuth(p.domain); saved != "" {
 		p.cookie = saved
 		log.Printf("animelayer: loaded saved cookie from disk")
 	}
@@ -145,6 +141,16 @@ func (p *Parser) parsePage(ctx context.Context, page int) (int, int, int, int, i
 	}
 	if body == "" || !strings.Contains(body, `id="wrapper"`) {
 		log.Printf("animelayer: page %d empty or no wrapper, url=%s bodyLen=%d", page, rawURL, len(body))
+		return 0, 0, 0, 0, 0, nil
+	}
+	// Login form posts to /auth/login/ (see takeLogin) — that action attribute
+	// only appears on the login page, so its presence in a listing response
+	// means the saved cookie has expired and animelayer rendered the login
+	// page in place of the catalog. Skip when login isn't configured.
+	if strings.TrimSpace(p.Config.Animelayer.Login.U) != "" &&
+		(strings.Contains(body, `action="/auth/login/"`) || strings.Contains(body, `action='/auth/login/'`)) {
+		log.Printf("animelayer: page=%d returned login form (cookie expired, invalidating)", page)
+		p.invalidateCookie()
 		return 0, 0, 0, 0, 0, nil
 	}
 
@@ -273,6 +279,17 @@ func (p *Parser) saveTorrents(ctx context.Context, cookie string, torrents []fil
 	return parsedCount, addedCount, updatedCount, skippedCount, failedCount, nil
 }
 
+// invalidateCookie clears the in-memory and on-disk cookie and resets the
+// login-attempt cooldown so the next ensureCookie call re-authenticates
+// immediately.
+func (p *Parser) invalidateCookie() {
+	p.cookieMu.Lock()
+	p.cookie = ""
+	p.lastLoginAttempt = time.Time{}
+	p.cookieMu.Unlock()
+	_ = core.DefaultSessionStore().DeleteAuth(p.domain)
+}
+
 func (p *Parser) ensureCookie(ctx context.Context) (string, error) {
 	if cfg := strings.TrimSpace(p.Config.Animelayer.Cookie); cfg != "" {
 		return cfg, nil
@@ -296,8 +313,8 @@ func (p *Parser) ensureCookie(ctx context.Context) (string, error) {
 	p.cookieMu.Lock()
 	p.cookie = cookie
 	p.cookieMu.Unlock()
-	if p.cookieStore != nil && cookie != "" {
-		_ = p.cookieStore.Save(trackerName, cookie)
+	if cookie != "" {
+		_ = core.DefaultSessionStore().SaveAuth(p.domain, cookie)
 	}
 	return cookie, nil
 }

@@ -93,10 +93,12 @@ func main() {
 	// Initialize shared flaresolverr-go service (one Chrome for all parsers)
 	core.InitFlareService(cfg.FlareSolverrGo)
 
-	// Rehydrate solved CF sessions from disk so parsers started immediately
-	// after this can reuse a still-valid cf_clearance instead of triggering
-	// a fresh Chrome solve. Directory is created if missing.
-	core.SetFlarePersistDir(filepath.Join("Data", "temp", "flare"))
+	// Unified per-domain session store: holds both auth cookies (set by
+	// tracker login flows) and flaresolverr/CF challenge sessions in a single
+	// JSON file per domain at Data/cookie/<domain>.json. Must be installed
+	// before any parser constructors (they read auth cookies on startup) and
+	// before NewFetcher rehydrates flare sessions.
+	core.SetSessionStoreDir(filepath.Join("Data", "cookie"))
 
 	// Load auto-detected CF domains so a restart doesn't waste a fresh
 	// standard request on each known CF-protected site before re-flagging it.

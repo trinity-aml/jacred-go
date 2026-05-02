@@ -88,7 +88,7 @@ type Parser struct {
 	cookieMu         sync.Mutex
 	cookie           string
 	lastLoginAttempt time.Time
-	cookieStore      *core.CookieStore
+	domain           string
 }
 
 type ParseResult struct {
@@ -101,9 +101,9 @@ type ParseResult struct {
 }
 
 func New(cfg app.Config, db *filedb.DB, dataDir string) *Parser {
-	p := &Parser{Config: cfg, DB: db, DataDir: dataDir, Fetcher: core.NewFetcher(cfg), cookieStore: core.NewCookieStore(dataDir)}
+	p := &Parser{Config: cfg, DB: db, DataDir: dataDir, Fetcher: core.NewFetcher(cfg), domain: core.DomainFromHost(cfg.Selezen.Host)}
 	_ = p.loadTasks()
-	if saved := p.cookieStore.Load(trackerName); saved != "" {
+	if saved, _ := core.DefaultSessionStore().LoadAuth(p.domain); saved != "" {
 		p.cookie = saved
 		log.Printf("selezen: loaded saved cookie from disk")
 	}
@@ -185,6 +185,8 @@ func (p *Parser) parsePage(ctx context.Context, page int) (int, int, int, int, i
 		return 0, 0, 0, 0, 0, nil
 	}
 	if loginUser := strings.TrimSpace(p.Config.Selezen.Login.U); loginUser != "" && !strings.Contains(body, ">"+loginUser+"<") {
+		log.Printf("selezen: page=%d missing user marker (cookie expired, invalidating)", page)
+		p.invalidateCookie()
 		return 0, 0, 0, 0, 0, nil
 	}
 	torrents := parsePageHTML(body)
@@ -331,6 +333,18 @@ func (p *Parser) saveTorrents(ctx context.Context, cookie string, torrents []fil
 	return added, updated, skipped, failed, nil
 }
 
+// invalidateCookie clears the in-memory and on-disk cookie and resets the
+// login-attempt cooldown so the next ensureCookie call re-authenticates
+// immediately. Used when a fetched page lacks the username marker — the only
+// reliable signal that the saved cookie has expired server-side.
+func (p *Parser) invalidateCookie() {
+	p.cookieMu.Lock()
+	p.cookie = ""
+	p.lastLoginAttempt = time.Time{}
+	p.cookieMu.Unlock()
+	_ = core.DefaultSessionStore().DeleteAuth(p.domain)
+}
+
 func (p *Parser) ensureCookie(ctx context.Context) (string, error) {
 	if cfg := strings.TrimSpace(p.Config.Selezen.Cookie); cfg != "" {
 		return cfg, nil
@@ -355,8 +369,8 @@ func (p *Parser) ensureCookie(ctx context.Context) (string, error) {
 	p.cookieMu.Lock()
 	p.cookie = cookie
 	p.cookieMu.Unlock()
-	if p.cookieStore != nil && cookie != "" {
-		_ = p.cookieStore.Save(trackerName, cookie)
+	if cookie != "" {
+		_ = core.DefaultSessionStore().SaveAuth(p.domain, cookie)
 	}
 	return cookie, nil
 }

@@ -98,7 +98,7 @@ type Parser struct {
 	cookieMu         sync.Mutex
 	cookie           string
 	lastLoginAttempt time.Time
-	cookieStore      *core.CookieStore
+	domain           string
 }
 
 func (t Task) UpdatedToday(loc *time.Location) bool {
@@ -226,9 +226,9 @@ func New(cfg app.Config, db *filedb.DB, dataDir string) *Parser {
 	if err != nil || loc == nil {
 		loc = time.FixedZone("+0200", 2*3600)
 	}
-	p := &Parser{Config: cfg, DB: db, DataDir: dataDir, Fetcher: core.NewFetcher(cfg), loc: loc, tasks: map[string][]Task{}, cookieStore: core.NewCookieStore(dataDir)}
+	p := &Parser{Config: cfg, DB: db, DataDir: dataDir, Fetcher: core.NewFetcher(cfg), loc: loc, tasks: map[string][]Task{}, domain: core.DomainFromHost(cfg.Toloka.Host)}
 	_ = p.loadTasks()
-	if saved := p.cookieStore.Load(trackerName); saved != "" {
+	if saved, _ := core.DefaultSessionStore().LoadAuth(p.domain); saved != "" {
 		p.cookie = saved
 		log.Printf("toloka: loaded saved cookie from disk")
 	}
@@ -711,9 +711,7 @@ func (p *Parser) ensureCookie(ctx context.Context) (string, error) {
 	p.cookie = cookie
 	p.lastLoginAttempt = time.Time{} // clear cooldown on success
 	p.cookieMu.Unlock()
-	if p.cookieStore != nil {
-		_ = p.cookieStore.Save(trackerName, cookie)
-	}
+	_ = core.DefaultSessionStore().SaveAuth(p.domain, cookie)
 	return cookie, nil
 }
 
@@ -722,9 +720,7 @@ func (p *Parser) invalidateCookie() {
 	p.cookie = ""
 	p.lastLoginAttempt = time.Time{} // allow immediate re-login
 	p.cookieMu.Unlock()
-	if p.cookieStore != nil {
-		_ = p.cookieStore.Delete(trackerName)
-	}
+	_ = core.DefaultSessionStore().DeleteAuth(p.domain)
 }
 
 func (p *Parser) takeLogin(ctx context.Context) (string, error) {

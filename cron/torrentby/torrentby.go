@@ -96,7 +96,7 @@ type Parser struct {
 	cookieMu         sync.Mutex
 	dynCookie        string
 	lastLoginAttempt time.Time
-	cookieStore      *core.CookieStore
+	domain           string
 }
 
 type ParseResult struct {
@@ -113,9 +113,9 @@ func New(cfg app.Config, db *filedb.DB, dataDir string) *Parser {
 	p := &Parser{Config: cfg, DB: db, DataDir: dataDir, Client: &http.Client{
 		Timeout:   30 * time.Second,
 		Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}},
-	}, Fetcher: core.NewFetcher(cfg), loc: loc, tasks: map[string][]Task{}, cookieStore: core.NewCookieStore(dataDir)}
+	}, Fetcher: core.NewFetcher(cfg), loc: loc, tasks: map[string][]Task{}, domain: core.DomainFromHost(cfg.TorrentBy.Host)}
 	_ = p.loadTasks()
-	if saved := p.cookieStore.Load(trackerName); saved != "" {
+	if saved, _ := core.DefaultSessionStore().LoadAuth(p.domain); saved != "" {
 		p.dynCookie = saved
 		log.Printf("torrentby: loaded saved cookie from disk")
 	}
@@ -447,6 +447,11 @@ func (p *Parser) parsePage(ctx context.Context, cat string, page int) ([]filedb.
 		return nil, nil
 	}
 	normalized := replaceBadNames(html.UnescapeString(string(body)))
+	if p.loggedOut(normalized) {
+		log.Printf("torrentby: cat=%s page=%d returned login form (cookie expired, invalidating)", cat, page)
+		p.invalidateCookie()
+		return nil, nil
+	}
 	return parsePageHTML(strings.TrimRight(p.Config.TorrentBy.Host, "/"), cat, normalized, time.Now().UTC()), nil
 }
 
@@ -733,9 +738,7 @@ func (p *Parser) takeLogin(ctx context.Context) error {
 		p.cookieMu.Lock()
 		p.dynCookie = cookieStr
 		p.cookieMu.Unlock()
-		if p.cookieStore != nil {
-			_ = p.cookieStore.Save(trackerName, cookieStr)
-		}
+		_ = core.DefaultSessionStore().SaveAuth(p.domain, cookieStr)
 		log.Printf("torrentby: login OK")
 		return nil
 	}
@@ -748,6 +751,26 @@ func (p *Parser) ensureLogin(ctx context.Context) {
 		return
 	}
 	_ = p.takeLogin(ctx)
+}
+
+// loggedOut returns true when body is the login page rather than the
+// requested content. The login form posts to /login/ (see takeLogin), so
+// `action="/login/"` only appears when torrentby served the login page in
+// place of the listing — a reliable signal that the saved cookie has
+// expired. Skips the check when login isn't configured (guest mode).
+func (p *Parser) loggedOut(body string) bool {
+	if strings.TrimSpace(p.Config.TorrentBy.Login.U) == "" {
+		return false
+	}
+	return strings.Contains(body, `action="/login/"`) || strings.Contains(body, `action='/login/'`)
+}
+
+func (p *Parser) invalidateCookie() {
+	p.cookieMu.Lock()
+	p.dynCookie = ""
+	p.lastLoginAttempt = time.Time{}
+	p.cookieMu.Unlock()
+	_ = core.DefaultSessionStore().DeleteAuth(p.domain)
 }
 
 func parseTaskTime(s string, loc *time.Location) time.Time {

@@ -77,10 +77,10 @@ type Parser struct {
 	allWork     bool
 	latestMu    sync.Mutex
 	tasks       map[string][]Task
-	cookieMu    sync.Mutex
-	cookie      string
-	cookieT     time.Time
-	cookieStore *core.CookieStore
+	cookieMu sync.Mutex
+	cookie   string
+	cookieT  time.Time
+	domain   string
 }
 
 type ParseResult struct {
@@ -94,9 +94,9 @@ func New(cfg app.Config, db *filedb.DB, dataDir string) *Parser {
 	if loc == nil {
 		loc = time.Local
 	}
-	p := &Parser{Config: cfg, DB: db, DataDir: dataDir, Client: &http.Client{Timeout: 35 * time.Second}, Fetcher: core.NewFetcher(cfg), loc: loc, tasks: map[string][]Task{}, cookieStore: core.NewCookieStore(dataDir)}
+	p := &Parser{Config: cfg, DB: db, DataDir: dataDir, Client: &http.Client{Timeout: 35 * time.Second}, Fetcher: core.NewFetcher(cfg), loc: loc, tasks: map[string][]Task{}, domain: core.DomainFromHost(cfg.Rutracker.Host)}
 	_ = p.loadTasks()
-	if saved, savedT := p.cookieStore.LoadWithTime(trackerName); saved != "" && time.Since(savedT) < 2*time.Hour {
+	if saved, savedT := core.DefaultSessionStore().LoadAuth(p.domain); saved != "" && time.Since(savedT) < 2*time.Hour {
 		p.cookie = saved
 		p.cookieT = savedT
 		log.Printf("rutracker: loaded saved cookie from disk (age=%s)", time.Since(savedT).Round(time.Second))
@@ -156,9 +156,7 @@ func (p *Parser) takeLogin(ctx context.Context) bool {
 		p.cookie = cookieStr
 		p.cookieT = time.Now()
 		p.cookieMu.Unlock()
-		if p.cookieStore != nil {
-			_ = p.cookieStore.Save(trackerName, cookieStr)
-		}
+		_ = core.DefaultSessionStore().SaveAuth(p.domain, cookieStr)
 		log.Printf("rutracker: login OK, got bb_session")
 		return true
 	}
