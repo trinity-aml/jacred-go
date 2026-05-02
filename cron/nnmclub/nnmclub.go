@@ -7,6 +7,7 @@ import (
 	"html"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -74,11 +75,15 @@ type Parser struct {
 	Fetcher *core.Fetcher
 	loc     *time.Location
 
-	mu      sync.Mutex
-	working bool
-	allWork bool
-	latest  sync.Mutex
-	tasks   map[string][]Task
+	mu               sync.Mutex
+	working          bool
+	allWork          bool
+	latest           sync.Mutex
+	tasks            map[string][]Task
+	cookieMu         sync.Mutex
+	dynCookie        string
+	lastLoginAttempt time.Time
+	domain           string
 }
 
 type ParseResult struct {
@@ -92,13 +97,103 @@ func New(cfg app.Config, db *filedb.DB, dataDir string) *Parser {
 	if err != nil {
 		loc = time.Local
 	}
-	p := &Parser{Config: cfg, DB: db, DataDir: dataDir, Client: &http.Client{Timeout: 35 * time.Second}, Fetcher: core.NewFetcher(cfg), loc: loc, tasks: map[string][]Task{}}
+	p := &Parser{Config: cfg, DB: db, DataDir: dataDir, Client: &http.Client{Timeout: 35 * time.Second}, Fetcher: core.NewFetcher(cfg), loc: loc, tasks: map[string][]Task{}, domain: core.DomainFromHost(cfg.NNMClub.Host)}
 	_ = p.loadTasks()
+	if saved, _ := core.DefaultSessionStore().LoadAuth(p.domain); saved != "" {
+		p.dynCookie = saved
+		log.Printf("nnmclub: loaded saved cookie from disk")
+	}
 	return p
 }
 
 func (p *Parser) cookie() string {
+	p.cookieMu.Lock()
+	if c := strings.TrimSpace(p.dynCookie); c != "" {
+		p.cookieMu.Unlock()
+		return c
+	}
+	p.cookieMu.Unlock()
 	return strings.TrimSpace(p.Config.NNMClub.Cookie)
+}
+
+func (p *Parser) takeLogin(ctx context.Context) error {
+	p.cookieMu.Lock()
+	if time.Since(p.lastLoginAttempt) < 2*time.Minute {
+		p.cookieMu.Unlock()
+		return nil
+	}
+	p.lastLoginAttempt = time.Now()
+	p.cookieMu.Unlock()
+
+	host := strings.TrimRight(p.Config.NNMClub.Host, "/")
+	if host == "" || strings.TrimSpace(p.Config.NNMClub.Login.U) == "" {
+		return fmt.Errorf("nnmclub: no host or login configured")
+	}
+	log.Printf("nnmclub: attempting login to %s as %s", host, p.Config.NNMClub.Login.U)
+
+	form := url.Values{}
+	form.Set("username", p.Config.NNMClub.Login.U)
+	form.Set("password", p.Config.NNMClub.Login.P)
+	form.Set("autologin", "on")
+	form.Set("redirect", "")
+	form.Set("login", "\xc2\xf5\xee\xe4") // "Вход" in CP1251 — the form is CP1251
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, host+"/forum/login.php", strings.NewReader(form.Encode()))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+
+	loginClient := &http.Client{
+		Timeout: 20 * time.Second,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	resp, err := loginClient.Do(req)
+	if err != nil {
+		log.Printf("nnmclub: login error: %v", err)
+		return err
+	}
+	defer resp.Body.Close()
+	log.Printf("nnmclub: login response status=%d", resp.StatusCode)
+
+	var parts []string
+	for _, line := range resp.Header.Values("Set-Cookie") {
+		parts = append(parts, strings.SplitN(line, ";", 2)[0])
+	}
+	cookieStr := strings.Join(parts, "; ")
+	if strings.Contains(cookieStr, "phpbb2mysql") || strings.Contains(cookieStr, "sid=") {
+		p.cookieMu.Lock()
+		p.dynCookie = cookieStr
+		p.cookieMu.Unlock()
+		_ = core.DefaultSessionStore().SaveAuth(p.domain, cookieStr)
+		log.Printf("nnmclub: login OK")
+		return nil
+	}
+	log.Printf("nnmclub: login FAILED — cookies: %s", cookieStr)
+	return fmt.Errorf("nnmclub: login failed")
+}
+
+func (p *Parser) ensureLogin(ctx context.Context) {
+	if p.cookie() != "" {
+		return
+	}
+	if strings.TrimSpace(p.Config.NNMClub.Login.U) == "" {
+		return
+	}
+	_ = p.takeLogin(ctx)
+}
+
+// invalidateCookie clears the in-memory + on-disk auth cookie and resets the
+// login-attempt cooldown so the next ensureLogin re-authenticates.
+func (p *Parser) invalidateCookie() {
+	p.cookieMu.Lock()
+	p.dynCookie = ""
+	p.lastLoginAttempt = time.Time{}
+	p.cookieMu.Unlock()
+	_ = core.DefaultSessionStore().DeleteAuth(p.domain)
 }
 
 func (p *Parser) Parse(ctx context.Context, page int) (ParseResult, error) {
@@ -114,13 +209,13 @@ func (p *Parser) Parse(ctx context.Context, page int) (ParseResult, error) {
 	if isDisabled(p.Config.DisableTrackers, trackerName) {
 		return ParseResult{Status: "disabled"}, nil
 	}
+	p.ensureLogin(ctx)
 	res := ParseResult{Status: "ok", PerCategory: map[string]int{}}
 	for _, cat := range categories {
 		items, err := p.parsePage(ctx, cat, page)
 		if err != nil {
 			return res, err
 		}
-		// If first category returns 0 and we haven't re-logged yet — cookie may be stale
 
 		res.Fetched += len(items)
 		res.PerCategory[cat] = len(items)
@@ -142,6 +237,7 @@ func (p *Parser) Parse(ctx context.Context, page int) (ParseResult, error) {
 }
 
 func (p *Parser) UpdateTasksParse(ctx context.Context) (map[string][]Task, error) {
+	p.ensureLogin(ctx)
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.tasks == nil {
@@ -189,6 +285,8 @@ func (p *Parser) ParseAllTask(ctx context.Context, force bool) (string, error) {
 	snapshot := cloneTasks(p.tasks)
 	p.mu.Unlock()
 	defer func() { p.mu.Lock(); p.allWork = false; p.mu.Unlock() }()
+
+	p.ensureLogin(ctx)
 
 	if len(snapshot) == 0 {
 		log.Printf("nnmclub: parsealltask — tasks empty, running updatetasksparse first")
@@ -276,6 +374,7 @@ func (p *Parser) ParseLatest(ctx context.Context, pages int) (string, error) {
 		return "work", nil
 	}
 	defer p.latest.Unlock()
+	p.ensureLogin(ctx)
 	if pages <= 0 {
 		pages = 5
 	}
@@ -375,6 +474,14 @@ func (p *Parser) parsePage(ctx context.Context, cat string, page int) ([]filedb.
 	}
 	htmlBody := core.DecodeCP1251(data)
 	if status < 200 || status >= 300 || !strings.Contains(htmlBody, validMarker) {
+		// Login form posts to /forum/login.php (see takeLogin) — that action
+		// attribute only appears on the login page, so its presence in a
+		// listing response means the saved cookie has expired.
+		if p.Config.NNMClub.Login.U != "" &&
+			(strings.Contains(htmlBody, `action="login.php"`) || strings.Contains(htmlBody, `action='login.php'`)) {
+			log.Printf("nnmclub: cat=%s page=%d returned login form (cookie expired, invalidating)", cat, page)
+			p.invalidateCookie()
+		}
 		return nil, nil
 	}
 	return parsePageHTML(strings.TrimRight(p.Config.NNMClub.Host, "/"), cat, htmlBody, time.Now().UTC()), nil

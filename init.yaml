@@ -113,6 +113,7 @@ Bitru:
 
 Toloka:
   host: "https://toloka.to"
+  fetchmode: flaresolverr
   useproxy: false
   reqMinute: 8
   parseDelay: 7000
@@ -144,6 +145,7 @@ Rutracker:
 
 Selezen:
   host: "https://selezen.top"
+  fetchmode: flaresolverr
   useproxy: false
   reqMinute: 8
   parseDelay: 7000

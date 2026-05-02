@@ -969,7 +969,10 @@ func extractDomain(rawURL string) string {
 	if err != nil {
 		return rawURL
 	}
-	return u.Hostname()
+	// Lowercased so it matches DomainFromHost(cfg.<X>.Host) used by parsers
+	// when keying SessionStore. Hostnames are case-insensitive per RFC, but
+	// url.Hostname() preserves whatever case was in the input.
+	return strings.ToLower(u.Hostname())
 }
 
 // originURL returns scheme://host (no path/query). Falls back to rawURL if

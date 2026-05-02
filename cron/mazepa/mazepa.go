@@ -120,6 +120,7 @@ type Parser struct {
 	tasks    map[string][]Task
 	cookie   string
 	cookieT  time.Time
+	domain   string
 }
 
 type ParseResult struct {
@@ -134,8 +135,13 @@ func New(cfg app.Config, db *filedb.DB, dataDir string) *Parser {
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			return http.ErrUseLastResponse
 		},
-	}, Fetcher: core.NewFetcher(cfg)}
+	}, Fetcher: core.NewFetcher(cfg), domain: core.DomainFromHost(cfg.Mazepa.Host)}
 	_ = p.loadTasks()
+	if saved, savedT := core.DefaultSessionStore().LoadAuth(p.domain); saved != "" && time.Since(savedT) < 2*time.Hour {
+		p.cookie = saved
+		p.cookieT = savedT
+		log.Printf("mazepa: loaded saved cookie from disk (age=%s)", time.Since(savedT).Round(time.Second))
+	}
 	return p
 }
 
@@ -182,9 +188,22 @@ func (p *Parser) takeLogin(ctx context.Context) bool {
 		p.cookie = cookieStr
 		p.cookieT = time.Now()
 		p.mu.Unlock()
+		_ = core.DefaultSessionStore().SaveAuth(p.domain, cookieStr)
+		log.Printf("mazepa: login OK, got bb_session")
 		return true
 	}
 	return false
+}
+
+// invalidateCookie clears the in-memory and on-disk cookie, forcing the
+// next Parse to re-authenticate. Used when a fetched page returns the login
+// form instead of forum content.
+func (p *Parser) invalidateCookie() {
+	p.mu.Lock()
+	p.cookie = ""
+	p.cookieT = time.Time{}
+	p.mu.Unlock()
+	_ = core.DefaultSessionStore().DeleteAuth(p.domain)
 }
 
 func (p *Parser) Parse(ctx context.Context) (ParseResult, error) {
@@ -249,6 +268,16 @@ func (p *Parser) parseForumPage(ctx context.Context, pageURL string, types []str
 		return nil, "", err
 	}
 	if body == "" {
+		return nil, "", nil
+	}
+
+	// Login form posts to /login.php (see takeLogin). If that action attribute
+	// shows up here, mazepa rendered the login page in place of the forum —
+	// saved bb_session has expired and we must re-authenticate.
+	if p.Config.Mazepa.Login.U != "" &&
+		(strings.Contains(body, `action="login.php"`) || strings.Contains(body, `action='login.php'`)) {
+		log.Printf("mazepa: %s returned login form (cookie expired, invalidating)", pageURL)
+		p.invalidateCookie()
 		return nil, "", nil
 	}
 

@@ -66,6 +66,7 @@ type Parser struct {
 	cookieMu         sync.Mutex
 	dynCookie        string
 	lastLoginAttempt time.Time
+	domain           string
 }
 
 type ParseResult struct {
@@ -74,7 +75,7 @@ type ParseResult struct {
 }
 
 func New(cfg app.Config, db *filedb.DB, dataDir string) *Parser {
-	return &Parser{
+	p := &Parser{
 		Config:  cfg,
 		DB:      db,
 		DataDir: dataDir,
@@ -86,7 +87,13 @@ func New(cfg app.Config, db *filedb.DB, dataDir string) *Parser {
 				return http.ErrUseLastResponse
 			},
 		},
+		domain: core.DomainFromHost(cfg.Anifilm.Host),
 	}
+	if saved, _ := core.DefaultSessionStore().LoadAuth(p.domain); saved != "" {
+		p.dynCookie = saved
+		log.Printf("anifilm: loaded saved cookie from disk")
+	}
+	return p
 }
 
 func (p *Parser) Parse(ctx context.Context, fullparse bool) (ParseResult, error) {
@@ -485,11 +492,22 @@ func (p *Parser) takeLogin(ctx context.Context) error {
 		p.cookieMu.Lock()
 		p.dynCookie = finalCookies
 		p.cookieMu.Unlock()
+		_ = core.DefaultSessionStore().SaveAuth(p.domain, finalCookies)
 		log.Printf("anifilm: login OK, new cookies=%d", loginCount)
 		return nil
 	}
 	log.Printf("anifilm: login FAILED — no cookies in response")
 	return fmt.Errorf("anifilm: login failed")
+}
+
+// invalidateCookie clears the in-memory + on-disk auth cookie and resets the
+// login-attempt cooldown so the next ensureLogin re-authenticates.
+func (p *Parser) invalidateCookie() {
+	p.cookieMu.Lock()
+	p.dynCookie = ""
+	p.lastLoginAttempt = time.Time{}
+	p.cookieMu.Unlock()
+	_ = core.DefaultSessionStore().DeleteAuth(p.domain)
 }
 
 func (p *Parser) ensureLogin(ctx context.Context) {
@@ -519,7 +537,18 @@ func (p *Parser) httpGet(_ context.Context, rawURL, referer string) (string, err
 		return "", err
 	}
 	if status == 403 {
+		if p.Config.Anifilm.Login.U != "" {
+			p.invalidateCookie()
+		}
 		return "", fmt.Errorf("anifilm: 403 Forbidden (cookie expired?)")
+	}
+	// 200 but body is the login page — happens when session is expired but
+	// the site responds with a redirect-rendered login form rather than 403.
+	if p.Config.Anifilm.Login.U != "" &&
+		(strings.Contains(body, `action="/account/login"`) || strings.Contains(body, `action='/account/login'`)) {
+		log.Printf("anifilm: %s returned login form (cookie expired, invalidating)", rawURL)
+		p.invalidateCookie()
+		return "", fmt.Errorf("anifilm: login form returned (cookie expired)")
 	}
 	return body, nil
 }
@@ -533,6 +562,9 @@ func (p *Parser) httpDownload(_ context.Context, rawURL, referer string) ([]byte
 		return nil, err
 	}
 	if status == 403 {
+		if p.Config.Anifilm.Login.U != "" {
+			p.invalidateCookie()
+		}
 		return nil, fmt.Errorf("anifilm: 403 Forbidden (cookie expired?)")
 	}
 	return data, nil
