@@ -84,7 +84,15 @@ type Parser struct {
 	dynCookie        string
 	lastLoginAttempt time.Time
 	domain           string
+
+	throttleMu       sync.Mutex
+	throttleRemain   int // requests still owed the extra delay
 }
+
+// rateLimitBackoff is added to parseDelay for the next throttleRemain requests
+// after a rate-limit FAQ response is observed.
+const rateLimitBackoff = 30 * time.Second
+const rateLimitBackoffCount = 4
 
 type ParseResult struct {
 	Fetched, Added, Updated, Skipped, Failed int
@@ -211,6 +219,26 @@ func (p *Parser) invalidateCookie() {
 	_ = core.DefaultSessionStore().DeleteAuth(p.domain)
 }
 
+// markRateLimited arms the throttle so the next rateLimitBackoffCount requests
+// pause an extra rateLimitBackoff before fetching.
+func (p *Parser) markRateLimited() {
+	p.throttleMu.Lock()
+	p.throttleRemain = rateLimitBackoffCount
+	p.throttleMu.Unlock()
+}
+
+// throttleExtra returns the extra delay to apply before the next request and
+// decrements the remaining count. Zero when the throttle isn't armed.
+func (p *Parser) throttleExtra() time.Duration {
+	p.throttleMu.Lock()
+	defer p.throttleMu.Unlock()
+	if p.throttleRemain <= 0 {
+		return 0
+	}
+	p.throttleRemain--
+	return rateLimitBackoff
+}
+
 func (p *Parser) Parse(ctx context.Context, page int) (ParseResult, error) {
 	p.mu.Lock()
 	if p.working {
@@ -331,11 +359,13 @@ func (p *Parser) ParseAllTask(ctx context.Context, force bool) (string, error) {
 			if !force && task.UpdatedToday(p.loc) {
 				continue
 			}
-			if p.Config.NNMClub.ParseDelay > 0 {
+			delay := time.Duration(p.Config.NNMClub.ParseDelay) * time.Millisecond
+			delay += p.throttleExtra()
+			if delay > 0 {
 				select {
 				case <-ctx.Done():
 					return "", ctx.Err()
-				case <-time.After(time.Duration(p.Config.NNMClub.ParseDelay) * time.Millisecond):
+				case <-time.After(delay):
 				}
 			}
 			items, err := p.parsePage(ctx, cat, task.Page)
@@ -420,11 +450,13 @@ func (p *Parser) ParseLatest(ctx context.Context, pages int) (string, error) {
 			list = list[:pages]
 		}
 		for _, task := range list {
-			if p.Config.NNMClub.ParseDelay > 0 {
+			delay := time.Duration(p.Config.NNMClub.ParseDelay) * time.Millisecond
+			delay += p.throttleExtra()
+			if delay > 0 {
 				select {
 				case <-ctx.Done():
 					return "", ctx.Err()
-				case <-time.After(time.Duration(p.Config.NNMClub.ParseDelay) * time.Millisecond):
+				case <-time.After(delay):
 				}
 			}
 			items, err := p.parsePage(ctx, cat, task.Page)
@@ -520,13 +552,18 @@ func (p *Parser) parsePage(ctx context.Context, cat string, page int) ([]filedb.
 		}
 		return nil, nil
 	}
-	items := parsePageHTML(strings.TrimRight(p.Config.NNMClub.Host, "/"), cat, htmlBody, time.Now().UTC())
-	if len(items) == 0 {
-		hasPline := strings.Contains(htmlBody, `class="pline"`)
-		hasMagnet := strings.Contains(htmlBody, `magnet:?`)
-		log.Printf("nnmclub: cat=%s page=%d zero items parsed (body=%d pline=%v magnet=%v)", cat, page, len(htmlBody), hasPline, hasMagnet)
+	// nnmclub soft rate-limit: after some number of portal.php hits in a
+	// sliding window, the server serves the "Почему на Портале мне доступно
+	// только 500 страниц" FAQ topic (t=1626984) instead of the listing. The
+	// FAQ also ends with `:: NNM-Club</title>` so validMarker passes. Detect
+	// the canonical link to that topic and treat it as a transient error so
+	// the task is NOT marked today and gets retried next run. Arm the throttle
+	// so the next few requests pause longer to let the server's window drain.
+	if strings.Contains(htmlBody, "viewtopic.php?t=1626984") {
+		p.markRateLimited()
+		return nil, fmt.Errorf("nnmclub: rate-limited (server returned 500-page FAQ for cat=%s page=%d)", cat, page)
 	}
-	return items, nil
+	return parsePageHTML(strings.TrimRight(p.Config.NNMClub.Host, "/"), cat, htmlBody, time.Now().UTC()), nil
 }
 
 func (p *Parser) fetchCategoryRoot(ctx context.Context, cat string) (string, error) {
