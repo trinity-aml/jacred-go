@@ -308,14 +308,17 @@
         <!-- Tracks -->
         <details class="section">
           <summary>
-            <span>Tracks (анализ через TorrServer + ffprobe)</span>
+            <span>Tracks (нативный анализ через ffprobe)</span>
             <svg class="chevron w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
           </summary>
           <div class="body space-y-4">
             <p class="text-sm text-gray-500 dark:text-gray-400">
-              Подсистема скачивает метаданные раздач через TorrServer (ffprobe-анализ потоков),
-              чтобы у торрентов появлялись поля <code>ffprobe</code>, <code>languages</code>
-              и студии озвучки из <code>stream.tags.title</code>.
+              Подсистема качает только head/tail крупнейшего видеофайла раздачи в RAM
+              через встроенный BitTorrent-клиент (anacrolix/torrent) и анализирует
+              его локальным <code>ffprobe</code>, чтобы у торрентов появлялись поля
+              <code>ffprobe</code>, <code>languages</code> и студии озвучки из
+              <code>stream.tags.title</code>. Внешний TorrServer не нужен —
+              требуется только бинарь <code>ffprobe</code> в <code>PATH</code>.
               Категории <code>sport</code>, <code>tvshow</code>, <code>docuserial</code> пропускаются.
             </p>
             <div class="grid-fields">
@@ -332,7 +335,7 @@
                 <input type="number" class="field-input" data-path="tracksmod" min="0" max="1"/>
               </div>
               <div>
-                <label class="field-label" title="Пауза между добавлением торрента в TorrServer и запросом /ffp/&lt;hash&gt;/1">tracksdelay (мс, по умолчанию 20000)</label>
+                <label class="field-label" title="Зарезервировано (раньше — пауза между add и ffp/&lt;hash&gt; в TorrServer; нативный анализатор не использует)">tracksdelay (мс, не используется)</label>
                 <input type="number" class="field-input" data-path="tracksdelay" min="0"/>
               </div>
               <div>
@@ -340,7 +343,7 @@
                 <input type="number" class="field-input" data-path="tracksatempt" min="1"/>
               </div>
               <div>
-                <label class="field-label" title="Категория, под которой торрент добавляется в TorrServer">trackscategory — категория в TorrServer</label>
+                <label class="field-label" title="Deprecated: использовалось для категории в TorrServer; нативный анализатор не использует, поле сохранено для обратной совместимости init.yaml">trackscategory <span class="text-amber-600 dark:text-amber-400">(deprecated)</span></label>
                 <input class="field-input" data-path="trackscategory" placeholder="jacred"/>
               </div>
               <div>
@@ -353,7 +356,7 @@
               </div>
             </div>
             <div>
-              <label class="field-label" title="Список TorrServer-серверов; запросы балансируются по числу торрентов">tsuri — TorrServer URLs (по одному на строку)</label>
+              <label class="field-label" title="Deprecated: список TorrServer-серверов; нативный анализатор не использует, поле сохранено для обратной совместимости init.yaml">tsuri — TorrServer URLs <span class="text-amber-600 dark:text-amber-400">(deprecated)</span></label>
               <textarea class="field-textarea" data-path="tsuri" data-type="lines" rows="3" placeholder="http://127.0.0.1:8090"></textarea>
             </div>
           </div>

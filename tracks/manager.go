@@ -1,15 +1,10 @@
 package tracks
 
 import (
-	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"io"
 	"math/rand"
-	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -21,17 +16,6 @@ import (
 	"jacred/filedb"
 )
 
-type RemoteTorrentInfo struct {
-	Title      string `json:"title"`
-	Category   string `json:"category"`
-	Poster     string `json:"poster"`
-	Timestamp  int64  `json:"timestamp"`
-	Name       string `json:"name"`
-	Hash       string `json:"hash"`
-	Stat       int    `json:"stat"`
-	StatString string `json:"stat_string"`
-}
-
 type Candidate struct {
 	Key     string
 	Torrent filedb.TorrentDetails
@@ -42,21 +26,19 @@ type Manager struct {
 	FileDB   *filedb.DB
 	TracksDB *DB
 	DataDir  string
-	Client   *http.Client
+	Analyzer *NativeAnalyzer
 	rndMu    sync.Mutex
 	rnd      *rand.Rand
 }
 
-func NewManager(cfg app.Config, fdb *filedb.DB, tracksDB *DB, dataDir string) *Manager {
+func NewManager(cfg app.Config, fdb *filedb.DB, tracksDB *DB, dataDir string, analyzer *NativeAnalyzer) *Manager {
 	return &Manager{
 		Config:   cfg,
 		FileDB:   fdb,
 		TracksDB: tracksDB,
 		DataDir:  dataDir,
-		// No client-level Timeout: per-call context timeouts control each request
-		// to match C# original (10s list, 30s add/cleanup, 2min analyze).
-		Client: &http.Client{},
-		rnd:    rand.New(rand.NewSource(time.Now().UnixNano())),
+		Analyzer: analyzer,
+		rnd:      rand.New(rand.NewSource(time.Now().UnixNano())),
 	}
 }
 
@@ -114,226 +96,6 @@ func Languages(existing []string, streams []FFStream) []string {
 	return out
 }
 
-func baseURL(raw string) string {
-	u, err := url.Parse(strings.TrimSpace(raw))
-	if err != nil {
-		return strings.TrimRight(strings.TrimSpace(raw), "/")
-	}
-	u.User = nil
-	return strings.TrimRight(u.String(), "/")
-}
-
-func addBasicAuthHeader(req *http.Request, raw string) {
-	u, err := url.Parse(strings.TrimSpace(raw))
-	if err != nil || u.User == nil {
-		return
-	}
-	username := u.User.Username()
-	password, _ := u.User.Password()
-	if username == "" && password == "" {
-		return
-	}
-	token := base64.StdEncoding.EncodeToString([]byte(username + ":" + password))
-	req.Header.Set("Authorization", "Basic "+token)
-	req.Header.Set("Accept", "application/json")
-}
-
-func (m *Manager) doJSON(ctx context.Context, method, rawURL string, payload any) (*http.Response, []byte, error) {
-	var body io.Reader
-	if payload != nil {
-		b, err := json.Marshal(payload)
-		if err != nil {
-			return nil, nil, err
-		}
-		body = bytes.NewReader(b)
-	}
-	req, err := http.NewRequestWithContext(ctx, method, rawURL, body)
-	if err != nil {
-		return nil, nil, err
-	}
-	if payload != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-	addBasicAuthHeader(req, rawURL)
-	resp, err := m.Client.Do(req)
-	if err != nil {
-		return nil, nil, err
-	}
-	data, readErr := io.ReadAll(io.LimitReader(resp.Body, 5<<20))
-	_ = resp.Body.Close()
-	return resp, data, readErr
-}
-
-func (m *Manager) CheckTorrentExistsWithCategory(ctx context.Context, tsuri, infohash string) (bool, string, bool) {
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-	resp, body, err := m.doJSON(ctx, http.MethodPost, baseURL(tsuri)+"/torrents", map[string]any{"action": "list"})
-	if err != nil {
-		return false, "", true
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return false, "", true
-	}
-	var torrents []RemoteTorrentInfo
-	if err := json.Unmarshal(body, &torrents); err != nil {
-		return false, "", false
-	}
-	if strings.TrimSpace(infohash) == "" {
-		return false, "", false
-	}
-	infohash = strings.ToLower(strings.TrimSpace(infohash))
-	for _, t := range torrents {
-		if strings.EqualFold(strings.TrimSpace(t.Hash), infohash) || strings.HasSuffix(strings.ToLower(strings.TrimSpace(t.Name)), infohash) {
-			return true, t.Category, false
-		}
-	}
-	return false, "", false
-}
-
-func (m *Manager) GetTorrentCountByCategory(ctx context.Context, tsuri, category string) (int, bool) {
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-	resp, body, err := m.doJSON(ctx, http.MethodPost, baseURL(tsuri)+"/torrents", map[string]any{"action": "list"})
-	if err != nil {
-		return 0, false
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return 0, false
-	}
-	var torrents []RemoteTorrentInfo
-	if err := json.Unmarshal(body, &torrents); err != nil {
-		return 0, false
-	}
-	count := 0
-	for _, t := range torrents {
-		if strings.EqualFold(strings.TrimSpace(t.Category), strings.TrimSpace(category)) {
-			count++
-		}
-	}
-	return count, true
-}
-
-func (m *Manager) SelectBestServer(ctx context.Context) string {
-	if len(m.Config.TSURI) == 0 || strings.TrimSpace(m.Config.TracksCategory) == "" {
-		return ""
-	}
-	type result struct {
-		server string
-		count  int
-		ok     bool
-	}
-	results := make([]result, 0, len(m.Config.TSURI))
-	for _, srv := range m.Config.TSURI {
-		if _, _, serverError := m.CheckTorrentExistsWithCategory(ctx, srv, ""); serverError {
-			continue
-		}
-		count, ok := m.GetTorrentCountByCategory(ctx, srv, m.Config.TracksCategory)
-		if !ok {
-			continue
-		}
-		results = append(results, result{server: srv, count: count, ok: true})
-	}
-	sort.Slice(results, func(i, j int) bool {
-		if results[i].count == results[j].count {
-			return results[i].server < results[j].server
-		}
-		return results[i].count < results[j].count
-	})
-	if len(results) == 0 {
-		return ""
-	}
-	return results[0].server
-}
-
-func (m *Manager) AddTorrentToServer(ctx context.Context, tsuri, magnet, infohash string, typetask int) (bool, bool, bool) {
-	exists, actualCategory, serverError := m.CheckTorrentExistsWithCategory(ctx, tsuri, infohash)
-	if serverError {
-		return false, false, true
-	}
-	if exists {
-		isCorrect := strings.EqualFold(strings.TrimSpace(actualCategory), strings.TrimSpace(m.Config.TracksCategory))
-		if isCorrect {
-			return false, true, false
-		}
-		return false, false, false
-	}
-	addCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-	resp, _, err := m.doJSON(addCtx, http.MethodPost, baseURL(tsuri)+"/torrents", map[string]any{
-		"action":     "add",
-		"link":       magnet,
-		"save_to_db": false,
-		"category":   m.Config.TracksCategory,
-	})
-	if err != nil {
-		m.Log("Ошибка при добавлении торрента на сервере: "+err.Error(), &typetask)
-		return false, false, true
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		m.Log(fmt.Sprintf("Ошибка при добавлении торрента (%d)", resp.StatusCode), &typetask)
-		return false, false, false
-	}
-	return true, false, false
-}
-
-func (m *Manager) AnalyzeWithExternalAPI(ctx context.Context, tsuri, infohash string) (*FFProbeModel, int, error) {
-	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
-	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL(tsuri)+"/ffp/"+strings.ToUpper(infohash)+"/1", nil)
-	if err != nil {
-		return nil, 0, err
-	}
-	addBasicAuthHeader(req, tsuri)
-	resp, err := m.Client.Do(req)
-	if err != nil {
-		return nil, 0, err
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 5<<20))
-	if err != nil {
-		return nil, resp.StatusCode, err
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, resp.StatusCode, nil
-	}
-	var res FFProbeModel
-	if err := json.Unmarshal(body, &res); err != nil {
-		return nil, resp.StatusCode, err
-	}
-	if len(res.Streams) == 0 {
-		return nil, resp.StatusCode, nil
-	}
-	return &res, resp.StatusCode, nil
-}
-
-func (m *Manager) CleanupTorrent(ctx context.Context, tsuri, infohash string, typetask int) {
-	exists, actualCategory, serverError := m.CheckTorrentExistsWithCategory(ctx, tsuri, infohash)
-	if serverError {
-		m.Log("Сервер вернул ошибку при запросе списка торрентов. Удаление отменено.", &typetask)
-		return
-	}
-	if !exists {
-		m.Log("Торрент "+infohash+" не найден на сервере. Удаление не требуется.", &typetask)
-		return
-	}
-	if !strings.EqualFold(strings.TrimSpace(actualCategory), strings.TrimSpace(m.Config.TracksCategory)) {
-		m.Log("Торрент "+infohash+" не в категории '"+m.Config.TracksCategory+"' (категория: '"+actualCategory+"'). Удаление отменено.", &typetask)
-		return
-	}
-	remCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-	resp, _, err := m.doJSON(remCtx, http.MethodPost, baseURL(tsuri)+"/torrents", map[string]any{"action": "rem", "hash": infohash})
-	if err != nil {
-		m.Log("Ошибка при очистке торрента "+infohash+" на сервере: "+err.Error(), &typetask)
-		return
-	}
-	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		m.Log("Торрент "+infohash+" успешно удален с сервера", &typetask)
-	} else {
-		m.Log(fmt.Sprintf("Ошибка при удалении торрента (%d)", resp.StatusCode), &typetask)
-	}
-}
-
 func (m *Manager) SaveTrackResults(result *FFProbeModel, infohash string, typetask int) error {
 	if result == nil || len(result.Streams) == 0 {
 		return nil
@@ -364,12 +126,8 @@ func (m *Manager) Add(ctx context.Context, magnet string, currentAttempt int, ty
 		m.Log("Пропуск добавления треков: недопустимый тип контента ["+strings.Join(types, ", ")+"]", &typetask)
 		return nil
 	}
-	if len(m.Config.TSURI) == 0 {
-		m.Log("Ошибка: не настроены tsuri серверы", &typetask)
-		return nil
-	}
-	if strings.TrimSpace(m.Config.TracksCategory) == "" {
-		m.Log("Ошибка: не настроена trackscategory", &typetask)
+	if m.Analyzer == nil {
+		m.Log("Ошибка: native analyzer не инициализирован", &typetask)
 		return nil
 	}
 	infohash, err := InfoHashFromMagnet(magnet)
@@ -379,79 +137,30 @@ func (m *Manager) Add(ctx context.Context, magnet string, currentAttempt int, ty
 	}
 	m.Log("Начало анализа треков для "+infohash+".", &typetask)
 
-	selectCtx, cancelSelect := context.WithTimeout(ctx, time.Minute)
-	tsuri := m.SelectBestServer(selectCtx)
-	cancelSelect()
-	if tsuri == "" {
-		m.Log("Все серверы недоступны. Пауза 1 минута...", &typetask)
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(time.Minute):
-		}
-		m.Log("Пауза завершена. Выход.", &typetask)
-		return nil
-	}
-
-	analyzeCtx, cancelAnalyze := context.WithTimeout(ctx, 3*time.Minute)
+	analyzeCtx, cancelAnalyze := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancelAnalyze()
-	added, existsInCorrectCategory, serverError := m.AddTorrentToServer(analyzeCtx, tsuri, magnet, infohash, typetask)
-	if serverError {
-		m.Log("Сервер вернул ошибку при получении списка торрентов. Пауза 1 минута...", &typetask)
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(time.Minute):
-		}
-		m.Log("Пауза завершена. Выход.", &typetask)
-		return nil
-	}
-	shouldAnalyze := added || existsInCorrectCategory
-	if !shouldAnalyze {
-		m.Log(fmt.Sprintf("Торрент не в категории '%s'. Анализ отменен.", m.Config.TracksCategory), &typetask)
-		return nil
-	}
-	// From here on, torrent either was added by us or already exists in our category.
-	// Guarantee cleanup via defer so we don't leave orphans on ctx cancellation.
-	defer m.CleanupTorrent(context.Background(), tsuri, infohash, typetask)
-
-	if existsInCorrectCategory {
-		m.Log(fmt.Sprintf("Торрент %s уже существует на сервере в категории '%s'. Начинаем анализ...", infohash, m.Config.TracksCategory), &typetask)
-	} else if added {
-		m.Log(fmt.Sprintf("Торрент %s успешно добавлен в категорию '%s'. Начинаем анализ...", infohash, m.Config.TracksCategory), &typetask)
-	}
-	if added {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(3 * time.Second):
-		}
-	}
-	res, apiStatusCode, err := m.AnalyzeWithExternalAPI(analyzeCtx, tsuri, infohash)
-	if err != nil {
-		m.Log("Критическая ошибка при анализе треков: "+err.Error(), &typetask)
-	}
+	res, err := m.Analyzer.Analyze(analyzeCtx, magnet)
 	if torrentKey == "" {
 		torrentKey = m.FileDB.FindTorrentKeyByMagnet(magnet)
 	}
-	if res != nil && len(res.Streams) > 0 {
+	if err == nil && res != nil && len(res.Streams) > 0 {
 		if err := m.SaveTrackResults(res, infohash, typetask); err != nil {
 			return err
 		}
 		m.Log("Анализ треков для "+infohash+" успешно завершен!", &typetask)
 		return nil
 	}
+	if err != nil {
+		m.Log("Анализ треков завершился с ошибкой: "+err.Error(), &typetask)
+	}
 	newAttempt := currentAttempt
 	if typetask != 1 {
 		newAttempt = currentAttempt + 1
-		if apiStatusCode == 400 {
-			newAttempt = m.Config.TracksAttempt
-		}
 		if torrentKey != "" && newAttempt != currentAttempt {
 			_ = m.FileDB.UpdateTorrentFfprobeInfo(torrentKey, magnet, newAttempt, nil, nil)
 		}
 	}
-	m.Log(fmt.Sprintf("Анализ треков для %s без результата. Код ответа API: %d. Осталось %d попыток.", infohash, apiStatusCode, m.Config.TracksAttempt-newAttempt), &typetask)
+	m.Log(fmt.Sprintf("Анализ треков для %s без результата. Осталось %d попыток.", infohash, m.Config.TracksAttempt-newAttempt), &typetask)
 	return nil
 }
 

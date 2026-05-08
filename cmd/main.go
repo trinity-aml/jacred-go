@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"runtime/debug"
@@ -141,10 +142,21 @@ func main() {
 		return out
 	})
 
+	var nativeAnalyzer *tracks.NativeAnalyzer
 	if cfg.Tracks {
-		manager := tracks.NewManager(cfg, db, tracksDB, "Data")
-		for i := 1; i <= 5; i++ {
-			go manager.RunLoop(ctx, i)
+		if _, err := exec.LookPath("ffprobe"); err != nil {
+			log.Printf("tracks: ffprobe not found in PATH, tracks analysis disabled: %v", err)
+		} else {
+			analyzer, err := tracks.NewNativeAnalyzer()
+			if err != nil {
+				log.Printf("tracks: failed to start native analyzer, tracks disabled: %v", err)
+			} else {
+				nativeAnalyzer = analyzer
+				manager := tracks.NewManager(cfg, db, tracksDB, "Data", analyzer)
+				for i := 1; i <= 5; i++ {
+					go manager.RunLoop(ctx, i)
+				}
+			}
 		}
 	}
 
@@ -206,6 +218,11 @@ func main() {
 
 	// Shutdown flaresolverr-go (close Chrome)
 	core.CloseFlareService()
+
+	// Shutdown native tracks analyzer (close torrent client)
+	if nativeAnalyzer != nil {
+		nativeAnalyzer.Close()
+	}
 
 	// Flush dirty buckets and save masterDb
 	log.Println("saving database...")

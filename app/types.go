@@ -82,9 +82,9 @@ type Config struct {
 	TracksDelay        int                  `json:"tracksdelay"`
 	TracksLog          bool                 `json:"trackslog"`
 	TracksAttempt      int                  `json:"tracksatempt"`
-	TracksCategory     string               `json:"trackscategory"`
+	TracksCategory     string               `json:"trackscategory"` // Deprecated: TorrServer category, unused by native analyzer (kept for init.yaml back-compat)
 	TracksInterval     TracksIntervalConfig `json:"tracksinterval"`
-	TSURI              []string             `json:"tsuri"`
+	TSURI              []string             `json:"tsuri"` // Deprecated: TorrServer URLs, unused since native analyzer (kept for init.yaml back-compat)
 	FlareSolverr       string               `json:"flaresolverr,omitempty"`   // Legacy: FlareSolverr URL (ignored, kept for config compat)
 	FlareSolverrGo     FlareSolverrGoConfig `json:"flaresolverr_go"`          // Embedded flaresolverr-go settings
 	Rutor              TrackerSettings      `json:"Rutor"`
