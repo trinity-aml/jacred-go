@@ -489,7 +489,7 @@ func (f *Fetcher) GetExt(rawURL string, tracker app.TrackerSettings, extraCookie
 
 	switch mode {
 	case "flaresolverr":
-		return f.fetchViaFlare(rawURL, cookie, proxy)
+		return f.fetchViaFlare(rawURL, cookie, nil, proxy)
 	default:
 		ua := userAgent
 		if strings.TrimSpace(ua) == "" {
@@ -505,7 +505,7 @@ func (f *Fetcher) GetExt(rawURL string, tracker app.TrackerSettings, extraCookie
 		// roundtrip via the isDomainCFAuto check above.
 		if isCloudflareChallenge(res.Body) {
 			markDomainCF(domain)
-			return f.fetchViaFlare(rawURL, cookie, proxy)
+			return f.fetchViaFlare(rawURL, cookie, nil, proxy)
 		}
 		return res, nil
 	}
@@ -554,7 +554,9 @@ type FetchOptions struct {
 //
 //   - GET in flare mode delegates to the browser-rendered fast path
 //     (cached cf_clearance → standard HTTP, fallback to full browser fetch).
-//     ExtraHeaders are not honored in this case (flaresolverr controls headers).
+//     ExtraHeaders are honored on the cached-cookies HTTP roundtrip (the
+//     fast path), but NOT during the browser solve itself — the headless
+//     browser controls its own headers when it actually navigates.
 //   - POST in flare mode obtains cf_clearance via cached or freshly-solved
 //     browser session, then sends the actual POST via standard HTTP with
 //     those cookies + the browser's User-Agent. The body itself never goes
@@ -600,7 +602,7 @@ func (f *Fetcher) Do(rawURL string, tracker app.TrackerSettings, opts FetchOptio
 	// re-solve on stale cookies or fall back to a browser-rendered body.
 	// Non-GET can't use that path because the browser only navigates.
 	if mode == "flaresolverr" && method == http.MethodGet {
-		return f.fetchViaFlare(rawURL, cookie, proxy)
+		return f.fetchViaFlare(rawURL, cookie, opts.ExtraHeaders, proxy)
 	}
 
 	ua := opts.UserAgent
@@ -632,7 +634,7 @@ func (f *Fetcher) Do(rawURL string, tracker app.TrackerSettings, opts FetchOptio
 	if mode != "flaresolverr" && isCloudflareChallenge(res.Body) {
 		markDomainCF(domain)
 		if method == http.MethodGet {
-			return f.fetchViaFlare(rawURL, cookie, proxy)
+			return f.fetchViaFlare(rawURL, cookie, opts.ExtraHeaders, proxy)
 		}
 		flareCookie, flareUA := f.GetFlareCookies(rawURL)
 		if flareCookie != "" {
@@ -700,12 +702,12 @@ func (f *Fetcher) doHTTP(method, rawURL, cookie, userAgent, contentType string, 
 //      managed challenge on deep URLs that automation can't pass)
 //   3. Use the resulting cookies to fetch the actual deep URL
 //   4. Cache cookies for subsequent requests
-func (f *Fetcher) fetchViaFlare(rawURL, cookie string, transport *http.Transport) (*FetchResult, error) {
+func (f *Fetcher) fetchViaFlare(rawURL, cookie string, extraHeaders map[string]string, transport *http.Transport) (*FetchResult, error) {
 	domain := extractDomain(rawURL)
 	httpCookiesFailed := false
 
 	if sess := f.getFlareSession(domain); sess != nil {
-		res, err := f.fetchWithCookies(rawURL, cookie, sess, transport)
+		res, err := f.fetchWithCookies(rawURL, cookie, sess, extraHeaders, transport)
 		// CF re-challenge returns 200 with challenge HTML — status-only check is
 		// not enough, inspect the body too.
 		if err == nil && res.StatusCode != 403 && !isCloudflareChallenge(res.Body) {
@@ -742,7 +744,7 @@ func (f *Fetcher) fetchViaFlare(rawURL, cookie string, transport *http.Transport
 	// Retry via cookies. If that still returns challenge, fall back to the
 	// browser-rendered body (even if direct == nil above, because e.g. the
 	// binary-download redirect stripped it).
-	res, err := f.fetchWithCookies(rawURL, cookie, sess, transport)
+	res, err := f.fetchWithCookies(rawURL, cookie, sess, extraHeaders, transport)
 	if err == nil && res.StatusCode != 403 && !isCloudflareChallenge(res.Body) {
 		return res, nil
 	}
@@ -778,7 +780,7 @@ func isCloudflareChallenge(body []byte) bool {
 // fetchWithCookies fetches via standard HTTP with the browser's UA and solved cookies.
 // Pass the UA that was used by the browser during solve so CF sees a consistent
 // (cookie, UA) pair. Mismatch invalidates cf_clearance and triggers a re-challenge.
-func (f *Fetcher) fetchWithCookies(rawURL, cookie string, sess *flareSession, transport *http.Transport) (*FetchResult, error) {
+func (f *Fetcher) fetchWithCookies(rawURL, cookie string, sess *flareSession, extraHeaders map[string]string, transport *http.Transport) (*FetchResult, error) {
 	// Caller's cookie carries the login PHPSESSID and must win over the
 	// browser's guest session captured during solve. Unique flare cookies
 	// (cf_clearance) still get added — only same-name conflicts flip.
@@ -787,7 +789,7 @@ func (f *Fetcher) fetchWithCookies(rawURL, cookie string, sess *flareSession, tr
 	if ua == "" {
 		ua = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36"
 	}
-	return f.doHTTP(http.MethodGet, rawURL, merged, ua, "", nil, nil, transport)
+	return f.doHTTP(http.MethodGet, rawURL, merged, ua, "", nil, extraHeaders, transport)
 }
 
 func (f *Fetcher) getFlareSession(domain string) *flareSession {

@@ -5,10 +5,12 @@ import (
 	"fmt"
 	"html"
 	"log"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"path/filepath"
@@ -19,7 +21,28 @@ import (
 )
 
 const trackerName = "megapeer"
+
+// Marker of a valid browse page. The site is sometimes fronted by an alias /
+// worker which returns 200 with an error/captcha body — the marker check
+// distinguishes a real listing from those.
 const browsePageValidMarker = `id="logo"`
+
+// Progressive delay cycle before each browse request. Values rotate to keep
+// us under megapeer's per-IP rate limit (429). One process-wide counter,
+// so Parse / UpdateTasksParse / ParseAllTask sharing a single Parser all
+// take their turn. Mirrors the C# original.
+var (
+	parseDelayCycle = []time.Duration{30 * time.Second, 60 * time.Second, 90 * time.Second}
+	parseDelayIndex int32
+)
+
+func nextParseDelay() time.Duration {
+	i := atomic.AddInt32(&parseDelayIndex, 1) - 1
+	if i < 0 {
+		i = -i
+	}
+	return parseDelayCycle[int(i)%len(parseDelayCycle)]
+}
 
 var (
 	rowSplitRe     = regexp.MustCompile(`class="table_fon"`)
@@ -89,39 +112,35 @@ func (p *Parser) Parse(ctx context.Context, maxpage int) (ParseResult, error) {
 		maxpage = 1
 	}
 	res := ParseResult{Status: "ok", PerCategory: map[string]int{}}
-	delay := time.Duration(p.Config.Megapeer.ParseDelay) * time.Millisecond
-	for ci, cat := range categories {
-		if ci > 0 && delay > 0 {
-			select {
-			case <-ctx.Done():
-				return res, ctx.Err()
-			case <-time.After(delay):
-			}
-		}
-		catFetched := p.parseCategory(ctx, cat, maxpage, delay, &res)
-		if catFetched == 0 && delay > 0 {
-			// Cooldown and retry once
-			log.Printf("megapeer: cat=%s returned 0 items, cooldown %v and retry", cat, delay*2)
-			select {
-			case <-ctx.Done():
-				return res, ctx.Err()
-			case <-time.After(delay * 2):
-			}
+	// No between-category sleep here — getBrowsePage paces every request with
+	// the 30/60/90 cycle, which already covers inter-category spacing.
+	for _, cat := range categories {
+		catFetched, hadValidResponse := p.parseCategory(ctx, cat, maxpage, &res)
+		if catFetched == 0 && !hadValidResponse {
+			// We never saw a valid 200+marker page after maxRetries — server
+			// likely blocked us or session expired. Drop the flare session so
+			// the next pass solves a fresh challenge.
+			log.Printf("megapeer: cat=%s no valid response after retries, invalidating flare session", cat)
 			p.Fetcher.InvalidateSession(strings.TrimRight(p.Config.Megapeer.Host, "/"))
-			p.parseCategory(ctx, cat, maxpage, delay, &res)
+		} else if catFetched == 0 && hadValidResponse {
+			log.Printf("megapeer: cat=%s returned 0 items but page is valid — parser found no rows (see Data/temp dump)", cat)
 		}
 	}
 	log.Printf("megapeer: done fetched=%d added=%d skipped=%d failed=%d", res.Fetched, res.Added, res.Skipped, res.Failed)
 	return res, nil
 }
 
-func (p *Parser) parseCategory(ctx context.Context, cat string, maxpage int, delay time.Duration, res *ParseResult) int {
+func (p *Parser) parseCategory(ctx context.Context, cat string, maxpage int, res *ParseResult) (int, bool) {
 	catFetched := 0
+	hadValidResponse := false
 	for page := 0; page < maxpage; page++ {
-		items, err := p.fetchPage(ctx, cat, page)
+		items, validBody, err := p.fetchPage(ctx, cat, page)
 		if err != nil {
 			log.Printf("megapeer: cat=%s page=%d error: %v", cat, page+1, err)
 			break
+		}
+		if validBody {
+			hadValidResponse = true
 		}
 		res.Fetched += len(items)
 		res.PerCategory[cat] += len(items)
@@ -139,57 +158,100 @@ func (p *Parser) parseCategory(ctx context.Context, cat string, maxpage int, del
 		res.Skipped += skipped
 		res.Failed += failed
 		log.Printf("megapeer: cat=%s page %d/%d fetched=%d added=%d skipped=%d failed=%d", cat, page+1, maxpage, len(items), added, skipped, failed)
-
-		if page < maxpage-1 && delay > 0 {
-			select {
-			case <-ctx.Done():
-				return catFetched
-			case <-time.After(delay):
-			}
-		}
 	}
-	return catFetched
+	return catFetched, hadValidResponse
 }
 
-func (p *Parser) fetchPage(ctx context.Context, cat string, page int) ([]filedb.TorrentDetails, error) {
+func (p *Parser) fetchPage(ctx context.Context, cat string, page int) ([]filedb.TorrentDetails, bool, error) {
 	browseURL := strings.TrimRight(requestHost(p.Config.Megapeer), "/") + "/browse.php?cat=" + cat + "&page=" + strconv.Itoa(page)
 	body, err := p.getBrowsePage(ctx, browseURL, cat)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	if !strings.Contains(body, browsePageValidMarker) {
-		return nil, nil
+		return nil, false, nil
 	}
-	return parsePageHTML(strings.TrimRight(p.Config.Megapeer.Host, "/"), cat, body), nil
+	items := parsePageHTML(strings.TrimRight(p.Config.Megapeer.Host, "/"), cat, body)
+	if len(items) == 0 {
+		dumpEmptyBody(cat, page, body)
+	}
+	return items, true, nil
 }
 
+// dumpEmptyBody saves the HTML of a 200+marker page that yielded zero rows so
+// we can inspect what the server actually returns for "empty" categories.
+// Only one dump per cat per process to avoid filling disk on repeated runs.
+var dumpedEmpty sync.Map
+
+func dumpEmptyBody(cat string, page int, body string) {
+	key := fmt.Sprintf("%s/%d", cat, page)
+	if _, loaded := dumpedEmpty.LoadOrStore(key, true); loaded {
+		return
+	}
+	dir := filepath.Join("Data", "temp")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return
+	}
+	fp := filepath.Join(dir, fmt.Sprintf("megapeer-empty-cat-%s-page-%d.html", cat, page))
+	if err := os.WriteFile(fp, []byte(body), 0o644); err != nil {
+		return
+	}
+	log.Printf("megapeer: dumped empty page body to %s (bodyLen=%d)", fp, len(body))
+}
+
+// getBrowsePage fetches a browse listing with browser-like headers. It
+// serializes all browse requests process-wide via p.browse and waits one of
+// {30s,60s,90s} from the rotating cycle BEFORE each attempt to stay under
+// the 429 rate limit. Up to 3 attempts on invalid pages.
 func (p *Parser) getBrowsePage(ctx context.Context, rawURL, cat string) (string, error) {
 	p.browse.Lock()
 	defer p.browse.Unlock()
 
-	for attempt := 0; attempt < 2; attempt++ {
-		data, status, err := p.Fetcher.Download(rawURL, p.Config.Megapeer)
+	host := strings.TrimRight(requestHost(p.Config.Megapeer), "/")
+	headers := map[string]string{
+		"dnt":                       "1",
+		"pragma":                    "no-cache",
+		"referer":                   host + "/cat/" + cat,
+		"sec-fetch-dest":            "document",
+		"sec-fetch-mode":            "navigate",
+		"sec-fetch-site":            "same-origin",
+		"sec-fetch-user":            "?1",
+		"upgrade-insecure-requests": "1",
+	}
+
+	const maxRetries = 3
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		delay := nextParseDelay()
+		log.Printf("megapeer: cat=%s attempt %d/%d sleeping %s before request", cat, attempt, maxRetries, delay)
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-time.After(delay):
+		}
+
+		result, err := p.Fetcher.Do(rawURL, p.Config.Megapeer, core.FetchOptions{
+			Method:       "GET",
+			ExtraHeaders: headers,
+		})
 		if err != nil {
-			log.Printf("megapeer: fetch error url=%s err=%v", rawURL, err)
+			log.Printf("megapeer: cat=%s fetch error url=%s err=%v", cat, rawURL, err)
+			if attempt < maxRetries {
+				continue
+			}
 			return "", nil
 		}
-		body := core.DecodeCP1251(data)
+		body := core.DecodeCP1251(result.Body)
+		status := result.StatusCode
 		if status >= 200 && status < 300 && strings.Contains(body, browsePageValidMarker) {
 			return body, nil
 		}
-		// flaresolverr unavailable (cooldown/shutdown) — cookies aren't the
-		// problem, retrying would hit the same 503. Fail fast instead.
+		// flaresolverr unavailable — the next attempt will hit the same 503.
 		if status == 503 {
-			log.Printf("megapeer: flaresolverr unavailable status=503 url=%s", rawURL)
+			log.Printf("megapeer: cat=%s flaresolverr unavailable status=503 url=%s", cat, rawURL)
 			return "", nil
 		}
-		// CF block (403 or challenge page without marker) — invalidate and retry once
-		if attempt == 0 {
-			log.Printf("megapeer: invalid response status=%d hasMarker=%v bodyLen=%d url=%s — invalidating session, retry", status, strings.Contains(body, browsePageValidMarker), len(body), rawURL)
-			p.Fetcher.InvalidateSession(rawURL)
-			continue
-		}
-		log.Printf("megapeer: retry failed status=%d hasMarker=%v bodyLen=%d url=%s", status, strings.Contains(body, browsePageValidMarker), len(body), rawURL)
+		log.Printf("megapeer: cat=%s invalid page status=%d hasMarker=%v bodyLen=%d, retry %d/%d after next cycle delay",
+			cat, status, strings.Contains(body, browsePageValidMarker), len(body), attempt, maxRetries)
 	}
 	return "", nil
 }
@@ -443,9 +505,14 @@ func requestHost(t app.TrackerSettings) string {
 }
 
 func parseCreateTime(line, layout string) time.Time {
+	// Russian month abbreviations / forms used by megapeer in browse listings:
+	// "Янв", "Фев", "Мар", "Апр", "Мая" (genitive!), "Июн", "Июл", "Авг",
+	// "Сен"/"Сент", "Окт", "Ноя", "Дек". The genitive "мая" is special — the
+	// short nominative "май" is only 3 letters, but the displayed form on
+	// listings is the genitive "мая" ("8 Мая 26" = "8th of May, 2026").
 	repl := strings.NewReplacer(
-		" янв ", ".01.", " фев ", ".02.", " мар ", ".03.", " апр ", ".04.", " май ", ".05.", " июн ", ".06.", " июл ", ".07.", " авг ", ".08.", " сен ", ".09.", " сент ", ".09.", " окт ", ".10.", " ноя ", ".11.", " дек ", ".12.",
-		"янв", ".01.", "фев", ".02.", "мар", ".03.", "апр", ".04.", "май", ".05.", "июн", ".06.", "июл", ".07.", "авг", ".08.", "сен", ".09.", "сент", ".09.", "окт", ".10.", "ноя", ".11.", "дек", ".12.",
+		" янв ", ".01.", " фев ", ".02.", " мар ", ".03.", " апр ", ".04.", " мая ", ".05.", " май ", ".05.", " июн ", ".06.", " июл ", ".07.", " авг ", ".08.", " сен ", ".09.", " сент ", ".09.", " окт ", ".10.", " ноя ", ".11.", " дек ", ".12.",
+		"янв", ".01.", "фев", ".02.", "мар", ".03.", "апр", ".04.", "мая", ".05.", "май", ".05.", "июн", ".06.", "июл", ".07.", "авг", ".08.", "сен", ".09.", "сент", ".09.", "окт", ".10.", "ноя", ".11.", "дек", ".12.",
 	)
 	line = strings.ToLower(strings.TrimSpace(line))
 	line = repl.Replace(" " + line + " ")
