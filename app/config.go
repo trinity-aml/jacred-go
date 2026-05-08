@@ -2,15 +2,29 @@ package app
 
 import (
 	"encoding/json"
+	"fmt"
+	"log"
 	"os"
 	"strconv"
 	"strings"
 )
 
+// LoadConfig reads init.yaml and merges it onto DefaultConfig. When the file
+// is missing, a default config is written to that path and returned — first
+// run shouldn't crash the binary, the user can edit init.yaml afterwards.
+// Other I/O or parse errors are surfaced as-is.
 func LoadConfig(path string) (Config, error) {
 	cfg := DefaultConfig()
 	b, err := os.ReadFile(path)
 	if err != nil {
+		if os.IsNotExist(err) {
+			text := MarshalYAML(cfg)
+			if werr := os.WriteFile(path, []byte(text), 0o644); werr != nil {
+				return cfg, fmt.Errorf("create default %s: %w", path, werr)
+			}
+			log.Printf("config: %s not found — wrote default config", path)
+			return cfg, nil
+		}
 		return cfg, err
 	}
 	parseYAMLIntoConfig(string(b), &cfg)
