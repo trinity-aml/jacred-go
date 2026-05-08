@@ -46,17 +46,18 @@ func UpdateFullDetails(t TorrentDetails) {
 	if title == "" {
 		return
 	}
+	// size is cheap and may need to be recomputed even on already-processed
+	// rows (e.g. after fixing a parser bug that produced size=0 with non-empty
+	// sizeName). Run before the skip-check below.
+	if sz := computeSize(asString(t["sizeName"])); sz > 0 {
+		t["size"] = sz
+	}
 	// Already processed: quality is set and search name is populated.
 	if t["quality"] != nil && asString(t["_sn"]) != "" {
 		return
 	}
 	titleLower := strings.ToLower(title)
 	trackerName := asString(t["trackerName"])
-
-	// size
-	if sz := computeSize(asString(t["sizeName"])); sz > 0 {
-		t["size"] = sz
-	}
 
 	// quality
 	quality := 480
@@ -160,6 +161,12 @@ func computeSize(sizeName string) int64 {
 	if strings.TrimSpace(sizeName) == "" {
 		return 0
 	}
+	// Some trackers (notably rutracker) emit the size cell with `&nbsp;` between
+	// the number and the unit ("15.62&nbsp;GB"). After html.UnescapeString that
+	// becomes a Unicode NBSP (U+00A0), and reSizeInfo's literal " " (ASCII
+	// 0x20) won't match it — the regex returns no groups and we silently
+	// produce size=0. Normalize NBSP to a regular space before matching.
+	sizeName = strings.ReplaceAll(sizeName, " ", " ")
 	m := reSizeInfo.FindStringSubmatch(sizeName)
 	if len(m) < 3 || m[2] == "" {
 		return 0
