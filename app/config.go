@@ -252,6 +252,8 @@ func trackerByName(cfg *Config, name string) *TrackerSettings {
 		return &cfg.Leproduction
 	case "Baibako":
 		return &cfg.Baibako
+	case "Korsars":
+		return &cfg.Korsars
 	default:
 		return nil
 	}

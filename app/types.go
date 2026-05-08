@@ -106,6 +106,7 @@ type Config struct {
 	Anifilm            TrackerSettings      `json:"Anifilm"`
 	Leproduction       TrackerSettings      `json:"Leproduction"`
 	Baibako            TrackerSettings      `json:"Baibako"`
+	Korsars            TrackerSettings      `json:"Korsars"`
 	GlobalProxy        []ProxySettings      `json:"globalproxy"`
 }
 
@@ -155,6 +156,7 @@ func DefaultConfig() Config {
 		Anifilm:            TrackerSettings{Host: "https://anifilm.pro", ReqMinute: 8, ParseDelay: 7000},
 		Leproduction:       TrackerSettings{Host: "https://www.le-production.tv", ReqMinute: 8, ParseDelay: 7000},
 		Baibako:            TrackerSettings{Host: "http://baibako.tv", ReqMinute: 8, ParseDelay: 7000},
+		Korsars:            TrackerSettings{Host: "https://korsars.pro", ReqMinute: 8, ParseDelay: 7000},
 		GlobalProxy:        []ProxySettings{{Pattern: `\.onion`, List: []string{"socks5://127.0.0.1:9050"}}},
 	}
 }

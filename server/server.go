@@ -32,6 +32,7 @@ import (
 	"jacred/cron/megapeer"
 	"jacred/cron/nnmclub"
 	"jacred/cron/rutor"
+	"jacred/cron/korsars"
 	"jacred/cron/rutracker"
 	"jacred/cron/selezen"
 	"jacred/cron/toloka"
@@ -75,6 +76,7 @@ type Server struct {
 	SelezenParser      *selezen.Parser
 	LeproductionParser *leproduction.Parser
 	MazepaParser       *mazepa.Parser
+	KorsarsParser      *korsars.Parser
 	TracksDB           *tracks.DB
 	cache              *searchCache // search result cache (5 min TTL)
 }
@@ -84,7 +86,7 @@ func New(cfg app.Config, db *filedb.DB, tracksDB *tracks.DB, wwwroot string) *Se
 		tracksDB = tracks.New("Data")
 		_ = tracksDB.Load()
 	}
-	return &Server{Config: cfg, DB: db, WWWRoot: wwwroot, Version: VersionInfo{Version: "dev", GitSha: "unknown", GitBranch: "unknown", BuildDate: time.Now().UTC().Format("2006-01-02 15:04:05 UTC")}, KnabenParser: knaben.New(cfg, db), AnidubParser: anidub.New(cfg, db), AnilibertyParser: aniliberty.New(cfg, db), AnimelayerParser: animelayer.New(cfg, db), AnistarParser: anistar.New(cfg, db, "Data"), AnifilmParser: anifilm.New(cfg, db, "Data"), BaibakoParser: baibako.New(cfg, db, "Data"), BitruParser: bitru.New(cfg, db, "Data"), BitruAPIParser: bitruapi.New(cfg, db, "Data"), RutorParser: rutor.New(cfg, db, "Data"), MegapeerParser: megapeer.New(cfg, db), TorrentByParser: torrentby.New(cfg, db, "Data"), NNMClubParser: nnmclub.New(cfg, db, "Data"), LostfilmParser: lostfilm.New(cfg, db), RutrackerParser: rutracker.New(cfg, db, "Data"), KinozalParser: kinozal.New(cfg, db, "Data"), TolokaParser: toloka.New(cfg, db, "Data"), SelezenParser: selezen.New(cfg, db, "Data"), LeproductionParser: leproduction.New(cfg, db, "Data"), MazepaParser: mazepa.New(cfg, db, "Data"), TracksDB: tracksDB, cache: newSearchCache(5*time.Minute, 10000)}
+	return &Server{Config: cfg, DB: db, WWWRoot: wwwroot, Version: VersionInfo{Version: "dev", GitSha: "unknown", GitBranch: "unknown", BuildDate: time.Now().UTC().Format("2006-01-02 15:04:05 UTC")}, KnabenParser: knaben.New(cfg, db), AnidubParser: anidub.New(cfg, db), AnilibertyParser: aniliberty.New(cfg, db), AnimelayerParser: animelayer.New(cfg, db), AnistarParser: anistar.New(cfg, db, "Data"), AnifilmParser: anifilm.New(cfg, db, "Data"), BaibakoParser: baibako.New(cfg, db, "Data"), BitruParser: bitru.New(cfg, db, "Data"), BitruAPIParser: bitruapi.New(cfg, db, "Data"), RutorParser: rutor.New(cfg, db, "Data"), MegapeerParser: megapeer.New(cfg, db), TorrentByParser: torrentby.New(cfg, db, "Data"), NNMClubParser: nnmclub.New(cfg, db, "Data"), LostfilmParser: lostfilm.New(cfg, db), RutrackerParser: rutracker.New(cfg, db, "Data"), KinozalParser: kinozal.New(cfg, db, "Data"), TolokaParser: toloka.New(cfg, db, "Data"), SelezenParser: selezen.New(cfg, db, "Data"), LeproductionParser: leproduction.New(cfg, db, "Data"), MazepaParser: mazepa.New(cfg, db, "Data"), KorsarsParser: korsars.New(cfg, db, "Data"), TracksDB: tracksDB, cache: newSearchCache(5*time.Minute, 10000)}
 }
 
 // GetConfig returns a thread-safe copy of the current config.
@@ -143,9 +145,11 @@ func (s *Server) UpdateConfig(cfg app.Config) {
 	s.LeproductionParser.Fetcher.UpdateConfig(cfg)
 	s.MazepaParser.Config = cfg
 	s.MazepaParser.Fetcher.UpdateConfig(cfg)
+	s.KorsarsParser.UpdateConfig(cfg)
+	s.KorsarsParser.Fetcher.UpdateConfig(cfg)
 
 	s.cache.Invalidate()
-	log.Printf("config: updated server, db and all 20 parsers")
+	log.Printf("config: updated server, db and all 21 parsers")
 }
 
 func (s *Server) Handler() http.Handler {
@@ -218,6 +222,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/cron/rutracker/updatetasksparse", s.handleCronRutrackerUpdateTasksParse)
 	mux.HandleFunc("/cron/rutracker/parsealltask", s.handleCronRutrackerParseAllTask)
 	mux.HandleFunc("/cron/rutracker/parselatest", s.handleCronRutrackerParseLatest)
+	mux.HandleFunc("/cron/korsars/parse", s.handleCronKorsarsParse)
+	mux.HandleFunc("/cron/korsars/updatetasksparse", s.handleCronKorsarsUpdateTasksParse)
+	mux.HandleFunc("/cron/korsars/parsealltask", s.handleCronKorsarsParseAllTask)
+	mux.HandleFunc("/cron/korsars/parselatest", s.handleCronKorsarsParseLatest)
 	mux.HandleFunc("/cron/lostfilm/parse", s.handleCronLostfilmParse)
 	mux.HandleFunc("/cron/lostfilm/parsepages", s.handleCronLostfilmParsePages)
 	mux.HandleFunc("/cron/lostfilm/parseseasonpacks", s.handleCronLostfilmParseSeasonPacks)
@@ -750,6 +758,58 @@ func (s *Server) handleCronRutrackerParseLatest(w http.ResponseWriter, r *http.R
 		return
 	}
 	textRes, err := s.RutrackerParser.ParseLatest(context.Background(), parseOptionalInt(r.URL.Query(), "pages", 5))
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "text": textRes})
+}
+
+func (s *Server) handleCronKorsarsParse(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	res, err := s.KorsarsParser.Parse(context.Background(), parseOptionalInt(r.URL.Query(), "page", 0))
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": res.Status})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": res.Status, "fetched": res.Fetched, "added": res.Added, "updated": res.Updated, "skipped": res.Skipped, "duplicates": res.Duplicates, "failed": res.Failed, "by_category": res.PerCategory, "text": fmt.Sprintf("fetched=%d +%d ~%d =%d dup=%d failed=%d", res.Fetched, res.Added, res.Updated, res.Skipped, res.Duplicates, res.Failed)})
+}
+
+func (s *Server) handleCronKorsarsUpdateTasksParse(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	res, err := s.KorsarsParser.UpdateTasksParse(context.Background())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "tasks": res})
+}
+
+func (s *Server) handleCronKorsarsParseAllTask(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	textRes, err := s.KorsarsParser.ParseAllTask(context.Background(), parseBool(r.URL.Query().Get("force")))
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "text": textRes})
+}
+
+func (s *Server) handleCronKorsarsParseLatest(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	textRes, err := s.KorsarsParser.ParseLatest(context.Background(), parseOptionalInt(r.URL.Query(), "pages", 5))
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
