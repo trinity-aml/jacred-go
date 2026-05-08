@@ -24,14 +24,17 @@ import (
 // torrent into RAM via anacrolix/torrent and feeds it to a local ffprobe over
 // a 127.0.0.1 HTTP bridge. No bytes touch disk.
 type NativeAnalyzer struct {
-	cl       *torrent.Client
-	storage  *memStorage
-	infoWait time.Duration
+	cl           *torrent.Client
+	storage      *memStorage
+	infoWait     time.Duration
+	ffprobePath  string // absolute path to ffprobe; empty falls back to PATH lookup
 }
 
 // NewNativeAnalyzer creates a single shared torrent.Client backed by an
-// in-memory piece store. Returns an error if the client can't bind sockets.
-func NewNativeAnalyzer() (*NativeAnalyzer, error) {
+// in-memory piece store. ffprobePath is the absolute path to the ffprobe
+// binary; passing "" makes the analyzer rely on $PATH at exec time.
+// Returns an error if the client can't bind sockets.
+func NewNativeAnalyzer(ffprobePath string) (*NativeAnalyzer, error) {
 	mem := newMemStorage()
 	cfg := torrent.NewDefaultClientConfig()
 	cfg.DefaultStorage = mem
@@ -45,7 +48,7 @@ func NewNativeAnalyzer() (*NativeAnalyzer, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &NativeAnalyzer{cl: cl, storage: mem, infoWait: 2 * time.Minute}, nil
+	return &NativeAnalyzer{cl: cl, storage: mem, infoWait: 2 * time.Minute, ffprobePath: ffprobePath}, nil
 }
 
 func (n *NativeAnalyzer) Close() {
@@ -148,7 +151,11 @@ func (n *NativeAnalyzer) Analyze(ctx context.Context, magnet string) (*FFProbeMo
 	probeCtx, cancelProbe := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancelProbe()
 
-	cmd := exec.CommandContext(probeCtx, "ffprobe",
+	bin := n.ffprobePath
+	if bin == "" {
+		bin = "ffprobe"
+	}
+	cmd := exec.CommandContext(probeCtx, bin,
 		"-v", "error",
 		"-print_format", "json",
 		"-show_streams",

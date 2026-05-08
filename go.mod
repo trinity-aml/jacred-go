@@ -3,8 +3,10 @@ module jacred
 go 1.26
 
 require (
+	github.com/ProtonMail/go-crypto v1.4.1
 	github.com/anacrolix/torrent v1.61.0
 	github.com/trinity-aml/flaresolverr-go v0.0.0-20260422152048-db4b9c71c458
+	github.com/ulikunitz/xz v0.5.15
 )
 
 require (
@@ -36,6 +38,7 @@ require (
 	github.com/chromedp/cdproto v0.0.0-20260405000525-47a8ff65b46a // indirect
 	github.com/chromedp/chromedp v0.15.1 // indirect
 	github.com/chromedp/sysutil v1.1.0 // indirect
+	github.com/cloudflare/circl v1.6.2 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/dustin/go-humanize v1.0.0 // indirect
 	github.com/edsrzf/mmap-go v1.1.0 // indirect

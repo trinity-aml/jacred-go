@@ -7,7 +7,6 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"runtime/debug"
@@ -144,10 +143,11 @@ func main() {
 
 	var nativeAnalyzer *tracks.NativeAnalyzer
 	if cfg.Tracks {
-		if _, err := exec.LookPath("ffprobe"); err != nil {
-			log.Printf("tracks: ffprobe not found in PATH, tracks analysis disabled: %v", err)
+		ffprobePath, err := tracks.EnsureFFprobe("Data")
+		if err != nil {
+			log.Printf("tracks: %v — tracks analysis disabled", err)
 		} else {
-			analyzer, err := tracks.NewNativeAnalyzer()
+			analyzer, err := tracks.NewNativeAnalyzer(ffprobePath)
 			if err != nil {
 				log.Printf("tracks: failed to start native analyzer, tracks disabled: %v", err)
 			} else {
