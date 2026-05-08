@@ -233,6 +233,7 @@ Kinozal:
 | Anifilm | `https://anifilm.pro` |
 | Leproduction | `https://www.le-production.tv` |
 | Baibako | `http://baibako.tv` |
+| Korsars | `https://korsars.pro` |
 
 ### Прокси
 
@@ -269,15 +270,15 @@ globalproxy:
 
 ### Стратегии парсинга
 
-Есть пять различных стратегий парсинга среди 20 парсеров:
+Есть пять различных стратегий парсинга среди 21 парсера:
 
 #### 1. Одна страница (`page=N`)
 
 Парсит ровно одну страницу. По умолчанию — страница 0 (самая свежая) для большинства трекеров; Bitru по умолчанию страница 1.
 
-**Трекеры:** Rutor, Selezen, Bitru, Kinozal, NNMClub, RuTracker, TorrentBy, Toloka
+**Трекеры:** Rutor, Selezen, Bitru, Kinozal, NNMClub, RuTracker, TorrentBy, Toloka, Korsars
 
-> Примечание: Rutor, Bitru, Kinozal, NNMClub, RuTracker, TorrentBy, Toloka также поддерживают task-based парсинг (см. §4 ниже). Эндпоинт `parse?page=N` доступен как альтернатива для одной страницы.
+> Примечание: Rutor, Bitru, Kinozal, NNMClub, RuTracker, TorrentBy, Toloka, Korsars также поддерживают task-based парсинг (см. §4 ниже). Эндпоинт `parse?page=N` доступен как альтернатива для одной страницы.
 
 ```bash
 # Парсить последнюю страницу (по умолчанию)
@@ -333,7 +334,7 @@ curl "http://127.0.0.1:9117/cron/aniliberty/parse?parseFrom=1&parseTo=3"
 2. **Парсинг всех** обнаруженных задач (можно прервать и возобновить)
 3. **Парсинг последних** — ярлык для парсинга только N последних страниц
 
-**Трекеры:** Rutor, Selezen, Bitru, Kinozal, NNMClub, RuTracker, TorrentBy, Toloka
+**Трекеры:** Rutor, Selezen, Bitru, Kinozal, NNMClub, RuTracker, TorrentBy, Toloka, Korsars
 
 ```bash
 # Шаг 1: Обнаружить все страницы и построить список задач (запустить однократно или периодически)
@@ -525,6 +526,18 @@ GET /cron/rutracker/parsealltask
 GET /cron/rutracker/parselatest
   pages=N   (по умолч. 5)
 ```
+
+#### Korsars
+```
+GET /cron/korsars/parse
+  page=N   (по умолч. 0)
+
+GET /cron/korsars/updatetasksparse
+GET /cron/korsars/parsealltask
+GET /cron/korsars/parselatest
+  pages=N   (по умолч. 5)
+```
+phpBB-mod трекер (фильмы / сериалы / мультфильмы), 24 раздела захардкожены. Требуется логин (`Korsars.login.u/p`); магнеты встроены прямо в листинг — без дополнительного `dl.php`-запроса на каждую раздачу.
 
 #### Selezen
 ```
@@ -1059,7 +1072,7 @@ curl "http://127.0.0.1:9117/dev/removeBucket?key=матрица:the+matrix&migra
 | `/stats` | `stats.html` — дашборд статистики по трекерам (новые/обновлённые/проверенные записи, время последнего запуска) |
 | `/settings` | `settings.html` — редактор всех настроек `init.yaml` (сервер, логирование, синхронизация, трекеры, прокси) |
 
-Страница настроек работает через `/admin/config` (GET — загрузка, POST — сохранение) и доступна только с локальных адресов (`127.0.0.1` / RFC1918 / link-local / ULA). При сохранении сервер атомарно пишет `init.yaml` (через temp-файл + `rename`), перечитывает его тем же парсером что на старте, и вызывает `UpdateConfig` — новые значения применяются ко всему серверу, БД и всем 20 парсерам без перезапуска.
+Страница настроек работает через `/admin/config` (GET — загрузка, POST — сохранение) и доступна только с локальных адресов (`127.0.0.1` / RFC1918 / link-local / ULA). При сохранении сервер атомарно пишет `init.yaml` (через temp-файл + `rename`), перечитывает его тем же парсером что на старте, и вызывает `UpdateConfig` — новые значения применяются ко всему серверу, БД и всем 21 парсерам без перезапуска.
 
 ### `GET /admin/config`
 

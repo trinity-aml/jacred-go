@@ -247,6 +247,16 @@ Baibako:
     u: ""
     p: ""
 
+Korsars:
+  host: "https://korsars.pro"
+  useproxy: false
+  reqMinute: 8
+  parseDelay: 7000
+  log: false
+  login:
+    u: ""
+    p: ""
+
 globalproxy:
   - pattern: \\.onion
     useAuth: false

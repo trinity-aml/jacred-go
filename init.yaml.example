@@ -344,6 +344,21 @@ Baibako:
     u: ""   # your baibako.tv username
     p: ""   # your baibako.tv password
 
+# ── Korsars ───────────────────────────────────────────────────────────────────
+# Client: standard HTTP  |  Auth: LOGIN REQUIRED
+# phpBB-mod tracker (films/series/cartoons), magnets inline in listings.
+# Without credentials the site won't show torrent metadata.
+# 24 categories: 6 films + 12 series + 6 cartoons (forum IDs hardcoded).
+# Supports: parse?page=N, updatetasksparse, parsealltask, parselatest?pages=N
+
+Korsars:
+  host: "https://korsars.pro"
+  parseDelay: 5000
+  reqMinute: 8
+  login:
+    u: ""   # your korsars.pro username
+    p: ""   # your korsars.pro password
+
 # ── Proxy ─────────────────────────────────────────────────────────────────────
 # Route specific tracker requests through a proxy.
 # Set useproxy: true on the tracker section to activate.

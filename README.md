@@ -234,6 +234,7 @@ Kinozal:
 | Anifilm | `https://anifilm.pro` |
 | Leproduction | `https://www.le-production.tv` |
 | Baibako | `http://baibako.tv` |
+| Korsars | `https://korsars.pro` |
 
 ### Proxy
 
@@ -270,13 +271,13 @@ Multi-category parsers also include `"by_category": [...]`.
 
 ### Parsing Strategies
 
-There are five distinct parsing strategies across the 20 trackers:
+There are five distinct parsing strategies across the 21 trackers:
 
 #### 1. Single-page (`page=N`)
 
 Parse exactly one page. Default is page 0 (most recent) for most trackers; Bitru defaults to page 1.
 
-**Trackers:** Rutor, Selezen, Bitru, Kinozal, NNMClub, RuTracker, TorrentBy, Toloka
+**Trackers:** Rutor, Selezen, Bitru, Kinozal, NNMClub, RuTracker, TorrentBy, Toloka, Korsars
 
 > Note: Rutor, Bitru, Kinozal, NNMClub, RuTracker, TorrentBy, Toloka also support task-based parsing (see §4 below). The `parse?page=N` endpoint is available as a single-page fallback.
 
@@ -334,7 +335,7 @@ For large trackers with hundreds of category pages. Works in three steps:
 2. **Parse all** discovered tasks (can be interrupted and resumed)
 3. **Parse latest** — shortcut to parse only the most recent N pages
 
-**Trackers:** Rutor, Selezen, Bitru, Kinozal, NNMClub, RuTracker, TorrentBy, Toloka
+**Trackers:** Rutor, Selezen, Bitru, Kinozal, NNMClub, RuTracker, TorrentBy, Toloka, Korsars
 
 ```bash
 # Step 1: Discover all pages and build task list (run once or periodically)
@@ -526,6 +527,18 @@ GET /cron/rutracker/parsealltask
 GET /cron/rutracker/parselatest
   pages=N   (default 5)
 ```
+
+#### Korsars
+```
+GET /cron/korsars/parse
+  page=N   (default 0)
+
+GET /cron/korsars/updatetasksparse
+GET /cron/korsars/parsealltask
+GET /cron/korsars/parselatest
+  pages=N   (default 5)
+```
+phpBB-mod tracker (films / series / cartoons), 24 forum IDs hardcoded. Login required (`Korsars.login.u/p`); magnets are inline in the listing so no extra `dl.php` round-trip per torrent.
 
 #### Selezen
 ```
@@ -1060,7 +1073,7 @@ When `web: true`, three pages are served. The UI assets (HTML, icons, manifest) 
 | `/stats` | `stats.html` — per-tracker statistics dashboard (new/updated/checked counts, last run time) |
 | `/settings` | `settings.html` — editor for the full `init.yaml` config (server, logging, sync, trackers, proxies) |
 
-The Settings page talks to `/admin/config` (GET to load, POST to save) and is local-only (`127.0.0.1` / RFC1918 / link-local / ULA). On save the server writes `init.yaml` atomically, re-parses it with the same loader used on startup, and calls `UpdateConfig` to apply new values to the running server, DB, and all 20 parsers — no restart needed.
+The Settings page talks to `/admin/config` (GET to load, POST to save) and is local-only (`127.0.0.1` / RFC1918 / link-local / ULA). On save the server writes `init.yaml` atomically, re-parses it with the same loader used on startup, and calls `UpdateConfig` to apply new values to the running server, DB, and all 21 parsers — no restart needed.
 
 ### `GET /admin/config`
 
