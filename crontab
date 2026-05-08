@@ -1,4 +1,4 @@
-*/15 *   *   *   *    curl -s "http://127.0.0.1:9117/jsondb/save"
+*/5 *   *   *   *    curl -s "http://127.0.0.1:9117/jsondb/save"
 */20 *   *   *   *    curl -s "http://127.0.0.1:9117/stats/refresh"
 
 */15 *   *   *   *    curl -s "http://127.0.0.1:9117/cron/torrentby/parse"
@@ -8,6 +8,10 @@
 */15 *   *   *   *    curl -s "http://127.0.0.1:9117/cron/rutracker/parse"
 10   */4 *   *   *    curl -s "http://127.0.0.1:9117/cron/rutracker/UpdateTasksParse"
 */5  *   *   *   *    curl -s "http://127.0.0.1:9117/cron/rutracker/ParseAllTask"
+
+*/15 *   *   *   *    curl -s "http://127.0.0.1:9117/cron/korsars/parse"
+50   */4 *   *   *    curl -s "http://127.0.0.1:9117/cron/korsars/UpdateTasksParse"
+*/5  *   *   *   *    curl -s "http://127.0.0.1:9117/cron/korsars/ParseAllTask"
 
 */15 *   *   *   *    curl -s "http://127.0.0.1:9117/cron/rutor/parse"
 15   */4 *   *   *    curl -s "http://127.0.0.1:9117/cron/rutor/UpdateTasksParse"
@@ -26,6 +30,8 @@
 
 */20 *   *   *   *    curl -s "http://127.0.0.1:9117/cron/bitruapi/parse"
 
+*/20 *   *   *   *    curl -s "http://127.0.0.1:9117/cron/knaben/parse"
+
 */15 *   *   *   *    curl -s "http://127.0.0.1:9117/cron/bitru/parse"
 30   */4 *   *   *    curl -s "http://127.0.0.1:9117/cron/bitru/UpdateTasksParse"
 */5  *   *   *   *    curl -s "http://127.0.0.1:9117/cron/bitru/ParseAllTask"
@@ -42,27 +48,26 @@
 45   */4 *   *   *    curl -s "http://127.0.0.1:9117/cron/mazepa/UpdateTasksParse"
 */5  *   *   *   *    curl -s "http://127.0.0.1:9117/cron/mazepa/ParseAllTask"
 
-50   */4 *   *   *    curl -s "http://127.0.0.1:9117/cron/aniliberty/parse?parseFrom=1&parseTo=60"
+50   */5 *   *   *    curl -s "http://127.0.0.1:9117/cron/aniliberty/parse?parseFrom=1&parseTo=60"
 */5  *   *   *   *    curl -s "http://127.0.0.1:9117/cron/aniliberty/parse"
 
-50   */6 *   *   *    curl -s "http://127.0.0.1:9117/cron/anidub/parse?parseFrom=1&parseTo=100"
+50   */5 *   *   *    curl -s "http://127.0.0.1:9117/cron/anidub/parse?parseFrom=1&parseTo=100"
 */15 *   *   *   *    curl -s "http://127.0.0.1:9117/cron/anidub/parse"
 
-55   */6 *   *   *    curl -s "http://127.0.0.1:9117/cron/anistar/parse?limit_page=20"
+55   */5 *   *   *    curl -s "http://127.0.0.1:9117/cron/anistar/parse?limit_page=20"
 */15 *   *   *   *    curl -s "http://127.0.0.1:9117/cron/anistar/parse?limit_page=2"
 
 45   */6 *   *   *    curl -s "http://127.0.0.1:9117/cron/leproduction/parse"
 */15 *   *   *   *    curl -s "http://127.0.0.1:9117/cron/leproduction/parse?limit_page=1"
 
 */15 *   *   *   *    curl -s "http://127.0.0.1:9117/cron/animelayer/parse"
-5    */8 *   *   *    curl -s "http://127.0.0.1:9117/cron/animelayer/parse?maxpage=90"
+5    */5 *   *   *    curl -s "http://127.0.0.1:9117/cron/animelayer/parse?maxpage=90"
 
 */40 *   *   *   *    curl -s "http://127.0.0.1:9117/cron/anifilm/parse"
-10   */8 *   *   *    curl -s "http://127.0.0.1:9117/cron/anifilm/parse?fullparse=true"
+10   */5 *   *   *    curl -s "http://127.0.0.1:9117/cron/anifilm/parse?fullparse=true"
 
 */15 *   *   *   *    curl -s "http://127.0.0.1:9117/cron/baibako/parse"
-15   */8 *   *   *    curl -s "http://127.0.0.1:9117/cron/baibako/parse?maxpage=418"
+15   */6 *   *   *    curl -s "http://127.0.0.1:9117/cron/baibako/parse?maxpage=418"
 
 */40 *   *   *   *    curl -s "http://127.0.0.1:9117/cron/lostfilm/parsepages"
-20   */8 *   *   *    curl -s "http://127.0.0.1:9117/cron/lostfilm/parse"
-
+20   */6 *   *   *    curl -s "http://127.0.0.1:9117/cron/lostfilm/parsepages?pageTo=100"
