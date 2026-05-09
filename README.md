@@ -235,6 +235,7 @@ Kinozal:
 | Leproduction | `https://www.le-production.tv` |
 | Baibako | `http://baibako.tv` |
 | Korsars | `https://korsars.pro` |
+| Ultradox | `https://ultradox.top` |
 
 ### Proxy
 
@@ -277,7 +278,7 @@ There are five distinct parsing strategies across the 21 trackers:
 
 Parse exactly one page. Default is page 0 (most recent) for most trackers; Bitru defaults to page 1.
 
-**Trackers:** Rutor, Selezen, Bitru, Kinozal, NNMClub, RuTracker, TorrentBy, Toloka, Korsars
+**Trackers:** Rutor, Selezen, Bitru, Kinozal, NNMClub, RuTracker, TorrentBy, Toloka, Korsars, Ultradox
 
 > Note: Rutor, Bitru, Kinozal, NNMClub, RuTracker, TorrentBy, Toloka also support task-based parsing (see §4 below). The `parse?page=N` endpoint is available as a single-page fallback.
 
@@ -335,7 +336,7 @@ For large trackers with hundreds of category pages. Works in three steps:
 2. **Parse all** discovered tasks (can be interrupted and resumed)
 3. **Parse latest** — shortcut to parse only the most recent N pages
 
-**Trackers:** Rutor, Selezen, Bitru, Kinozal, NNMClub, RuTracker, TorrentBy, Toloka, Korsars
+**Trackers:** Rutor, Selezen, Bitru, Kinozal, NNMClub, RuTracker, TorrentBy, Toloka, Korsars, Ultradox
 
 ```bash
 # Step 1: Discover all pages and build task list (run once or periodically)
@@ -539,6 +540,18 @@ GET /cron/korsars/parselatest
   pages=N   (default 5)
 ```
 phpBB-mod tracker (films / series / cartoons), 24 forum IDs hardcoded. Login required (`Korsars.login.u/p`); magnets are inline in the listing so no extra `dl.php` round-trip per torrent.
+
+#### Ultradox
+```
+GET /cron/ultradox/parse
+  page=N   (default 0)
+
+GET /cron/ultradox/updatetasksparse
+GET /cron/ultradox/parsealltask
+GET /cron/ultradox/parselatest
+  pages=N   (default 5)
+```
+Listing-then-detail tracker, no login. Six sections: `serial-hd`, `hd`, `rufilm`, `camrip`, `webrips`, `anime`. Listing rows expose placeholder magnets with empty btih, so the parser follows each title link to the detail page where every quality variant has a full info-hash. One torrent record is stored per quality variant. Sid/pir are placeholder values (1) — the site doesn't expose peer counts. Upstream's TLS certificate is expired, so the default config carries `insecureSkipVerify: true`.
 
 #### Selezen
 ```

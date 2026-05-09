@@ -234,6 +234,7 @@ Kinozal:
 | Leproduction | `https://www.le-production.tv` |
 | Baibako | `http://baibako.tv` |
 | Korsars | `https://korsars.pro` |
+| Ultradox | `https://ultradox.top` |
 
 ### Прокси
 
@@ -276,7 +277,7 @@ globalproxy:
 
 Парсит ровно одну страницу. По умолчанию — страница 0 (самая свежая) для большинства трекеров; Bitru по умолчанию страница 1.
 
-**Трекеры:** Rutor, Selezen, Bitru, Kinozal, NNMClub, RuTracker, TorrentBy, Toloka, Korsars
+**Трекеры:** Rutor, Selezen, Bitru, Kinozal, NNMClub, RuTracker, TorrentBy, Toloka, Korsars, Ultradox
 
 > Примечание: Rutor, Bitru, Kinozal, NNMClub, RuTracker, TorrentBy, Toloka, Korsars также поддерживают task-based парсинг (см. §4 ниже). Эндпоинт `parse?page=N` доступен как альтернатива для одной страницы.
 
@@ -334,7 +335,7 @@ curl "http://127.0.0.1:9117/cron/aniliberty/parse?parseFrom=1&parseTo=3"
 2. **Парсинг всех** обнаруженных задач (можно прервать и возобновить)
 3. **Парсинг последних** — ярлык для парсинга только N последних страниц
 
-**Трекеры:** Rutor, Selezen, Bitru, Kinozal, NNMClub, RuTracker, TorrentBy, Toloka, Korsars
+**Трекеры:** Rutor, Selezen, Bitru, Kinozal, NNMClub, RuTracker, TorrentBy, Toloka, Korsars, Ultradox
 
 ```bash
 # Шаг 1: Обнаружить все страницы и построить список задач (запустить однократно или периодически)
@@ -538,6 +539,18 @@ GET /cron/korsars/parselatest
   pages=N   (по умолч. 5)
 ```
 phpBB-mod трекер (фильмы / сериалы / мультфильмы), 24 раздела захардкожены. Требуется логин (`Korsars.login.u/p`); магнеты встроены прямо в листинг — без дополнительного `dl.php`-запроса на каждую раздачу.
+
+#### Ultradox
+```
+GET /cron/ultradox/parse
+  page=N   (по умолч. 0)
+
+GET /cron/ultradox/updatetasksparse
+GET /cron/ultradox/parsealltask
+GET /cron/ultradox/parselatest
+  pages=N   (по умолч. 5)
+```
+Listing-then-detail трекер, без авторизации. Шесть разделов: `serial-hd`, `hd`, `rufilm`, `camrip`, `webrips`, `anime`. На листинге у магнетов пустой btih — поэтому парсер по каждой раздаче ходит на детальную страницу, где для каждого варианта качества лежит магнет с настоящим info-hash. Каждый вариант сохраняется как отдельная запись. Sid/pir выставлены в 1 (сайт не отдаёт пиры). У сайта просрочен TLS-сертификат, поэтому в дефолтном конфиге `insecureSkipVerify: true`.
 
 #### Selezen
 ```

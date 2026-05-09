@@ -359,6 +359,21 @@ Korsars:
     u: ""   # your korsars.pro username
     p: ""   # your korsars.pro password
 
+# ── Ultradox ──────────────────────────────────────────────────────────────────
+# Client: standard HTTP  |  Auth: not required
+# Listing → detail magnet pull. Each detail page exposes 1–3 quality variants;
+# the parser stores one record per variant (sid=1, pir=1 placeholders).
+# 6 sections: serial-hd, hd, rufilm, camrip, webrips, anime.
+# TLS certificate is currently expired upstream — keep insecureSkipVerify: true
+# until they renew.
+# Supports: parse?page=N, updatetasksparse, parsealltask, parselatest?pages=N
+
+Ultradox:
+  host: "https://ultradox.top"
+  insecureSkipVerify: true
+  parseDelay: 5000
+  reqMinute: 8
+
 # ── Proxy ─────────────────────────────────────────────────────────────────────
 # Route specific tracker requests through a proxy.
 # Set useproxy: true on the tracker section to activate.

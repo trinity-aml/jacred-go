@@ -254,6 +254,8 @@ func trackerByName(cfg *Config, name string) *TrackerSettings {
 		return &cfg.Baibako
 	case "Korsars":
 		return &cfg.Korsars
+	case "Ultradox":
+		return &cfg.Ultradox
 	default:
 		return nil
 	}
