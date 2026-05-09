@@ -318,7 +318,10 @@ func (db *DB) LastUpdateDB() string {
 	if max.IsZero() {
 		return "01.01.2000 01:01"
 	}
-	return max.In(time.FixedZone("+0200", 2*3600)).Format("02.01.2006 15:04")
+	// UTC: stats.html parseUTCDate interprets this as UTC and toLocaleString
+	// renders it in the browser's actual local timezone. Sending a fixed
+	// +0200 here produced a 2-hour skew for users outside that zone.
+	return max.UTC().Format("02.01.2006 15:04")
 }
 func (db *DB) Search(query, title, titleOriginal string, year, isSerial int) ([]TorrentDetails, error) {
 	fastdb := db.FastDB()

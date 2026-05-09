@@ -653,9 +653,13 @@ func writeJSONArrayString(w http.ResponseWriter, code int, v string) {
 
 func formatLocalDateTime(t time.Time) string {
 	if t.IsZero() {
-		return "0001-01-01 00:00:00"
+		return "0001-01-01T00:00:00Z"
 	}
-	return t.In(time.FixedZone("+0200", 2*3600)).Format("2006-01-02 15:04:05")
+	// Send UTC in ISO 8601 with the explicit "Z" designator so the browser
+	// parses it as UTC and renders in the user's actual local timezone.
+	// The previous .In(time.FixedZone("+0200", …)) hard-coded a +2h shift
+	// which produced a 2-hour skew for any user not in that zone.
+	return t.UTC().Format("2006-01-02T15:04:05Z")
 }
 
 func todayLocalMidnightUTC() time.Time {
