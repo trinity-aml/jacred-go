@@ -391,7 +391,10 @@ func (p *Parser) saveTorrents(ctx context.Context, torrents []filedb.TorrentDeta
 	return added, updated, skipped, failed, nil
 }
 
-var magnetRe = regexp.MustCompile(`(?i)href="(magnet:\?[^"]+)"`)
+var (
+	magnetRe         = regexp.MustCompile(`(?i)href="(magnet:\?[^"]+)"`)
+	dateLeadingDigit = regexp.MustCompile(`^[0-9]\.[0-9]{2}\.[0-9]{2}$`)
+)
 
 func (p *Parser) downloadMagnet(ctx context.Context, torrentURL string) (string, error) {
 	if strings.TrimSpace(torrentURL) == "" {
@@ -434,7 +437,11 @@ func parseTitle(cat, title string) (string, string, int) {
 			`^([^/]+) / ([^/\[]+) \[[^\]]+\] +\(([0-9]{4})(\)|-)`,
 		}
 		for _, pat := range patterns {
-			if m := regexp.MustCompile(pat).FindStringSubmatch(title); len(m) >= 4 {
+			re := core.CachedRegex(pat)
+			if re == nil {
+				continue
+			}
+			if m := re.FindStringSubmatch(title); len(m) >= 4 {
 				return strings.TrimSpace(m[1]), strings.TrimSpace(m[2]), atoi(m[3])
 			}
 		}
@@ -517,7 +524,7 @@ func parseCreateTime(line, layout string) time.Time {
 	line = strings.ToLower(strings.TrimSpace(line))
 	line = repl.Replace(" " + line + " ")
 	line = strings.TrimSpace(strings.ReplaceAll(line, " ", ""))
-	if matched, _ := regexp.MatchString(`^[0-9]\.[0-9]{2}\.[0-9]{2}$`, line); matched {
+	if dateLeadingDigit.MatchString(line) {
 		line = "0" + line
 	}
 	tm, _ := time.ParseInLocation(layout, line, time.Local)

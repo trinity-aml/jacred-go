@@ -35,6 +35,9 @@ var (
 	mp4Re = regexp.MustCompile(`(?is)title="Раздающих">&nbsp;([0-9]+)</span>`)
 	mp5Re = regexp.MustCompile(`(?is)title="Качают">&nbsp;([0-9]+)</span>`)
 	mp6Re = regexp.MustCompile(`(?is)<span class="pcomm bold">([^<]+)</span>`)
+	// Trims the page HTML to the rows section. Hoisted out of parsePageHTML
+	// because it was being recompiled on every page fetch.
+	pageBodyTrimRe = regexp.MustCompile(`(?is)<td valign="top" width="[0-9]+%">(.*)<div class="paginport nav">`)
 )
 
 const trackerName = "nnmclub"
@@ -587,7 +590,7 @@ func parsePageHTML(host, cat, htmlBody string, now time.Time) []filedb.TorrentDe
 	htmlBody = strings.ReplaceAll(htmlBody, "\n", "")
 	htmlBody = strings.ReplaceAll(htmlBody, "\r", "")
 	htmlBody = strings.ReplaceAll(htmlBody, "\t", "")
-	if m := regexp.MustCompile(`(?is)<td valign="top" width="[0-9]+%">(.*)<div class="paginport nav">`).FindStringSubmatch(htmlBody); len(m) > 1 {
+	if m := pageBodyTrimRe.FindStringSubmatch(htmlBody); len(m) > 1 {
 		htmlBody = m[1]
 	}
 	rows := strings.Split(replaceBadNames(htmlBody), `<table width="100%" class="pline">`)
@@ -768,7 +771,11 @@ func parseTitle(cat, title, row string) (string, string, int) {
 	var name, original string
 	relased := 0
 	try := func(pattern string, nameIdx, originalIdx, yearIdx int) bool {
-		m := regexp.MustCompile(pattern).FindStringSubmatch(title)
+		re := core.CachedRegex(pattern)
+		if re == nil {
+			return false
+		}
+		m := re.FindStringSubmatch(title)
 		if len(m) == 0 || len(m) <= yearIdx || nameIdx < 0 || len(m) <= nameIdx || strings.TrimSpace(m[nameIdx]) == "" || strings.TrimSpace(m[yearIdx]) == "" {
 			return false
 		}

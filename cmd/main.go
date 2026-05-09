@@ -177,7 +177,7 @@ func main() {
 	})
 	go reloader.Run(ctx)
 
-	go srv.RunStatsLoop(ctx)
+	srv.Background(func() { srv.RunStatsLoop(ctx) })
 	go background.RunSyncCron(ctx, cfg, db)
 	go background.RunSyncSpidr(ctx, cfg, db)
 	go background.RunEvercacheCron(ctx, db)
@@ -216,8 +216,20 @@ func main() {
 		log.Printf("http server shutdown error: %v", err)
 	}
 
+	// Wait for tracked Server-owned goroutines (stats refresh, RunStatsLoop)
+	// to finish so we don't kill an in-flight stats.json write.
+	srv.Wait()
+
 	// Shutdown flaresolverr-go (close Chrome)
 	core.CloseFlareService()
+
+	// Persist pending session/CF-auto state (writes are debounced during runtime).
+	core.FlushSessionStore()
+	core.FlushCFAuto()
+
+	// Drain buffered parser/fdb logs so the last few entries hit disk before exit.
+	core.CloseParserLogs()
+	db.CloseFdbLog()
 
 	// Shutdown native tracks analyzer (close torrent client)
 	if nativeAnalyzer != nil {

@@ -5,6 +5,7 @@ go 1.26
 require (
 	github.com/ProtonMail/go-crypto v1.4.1
 	github.com/anacrolix/torrent v1.61.0
+	github.com/fsnotify/fsnotify v1.10.1
 	github.com/trinity-aml/flaresolverr-go v0.0.0-20260422152048-db4b9c71c458
 	github.com/ulikunitz/xz v0.5.15
 )

@@ -3,7 +3,6 @@ package core
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
 	"fmt"
 	"io"
 	"log"
@@ -41,9 +40,11 @@ var (
 
 	// flareDomainLocks serializes solves per domain: concurrent callers for the
 	// same domain wait for the first solve and then reuse the cached cookies
-	// instead of each spawning Chrome.
-	flareDomainMu    sync.Mutex
-	flareDomainLocks = make(map[string]*sync.Mutex)
+	// instead of each spawning Chrome. lastUsed tracks recency; entries idle
+	// longer than flareDomainLockTTL are swept opportunistically.
+	flareDomainMu       sync.Mutex
+	flareDomainLocks    = make(map[string]*domainLockEntry)
+	flareDomainSweepCnt int
 
 	// flareSolveWG tracks in-flight solves so CloseFlareService can wait for them.
 	flareSolveWG  sync.WaitGroup
@@ -211,16 +212,51 @@ func CloseFlareService() {
 	cleanupStaleProfiles()
 }
 
-// getDomainLock returns the mutex that serializes solves for a given domain.
+// domainLockEntry pairs the per-domain mutex with a lastUsed timestamp so
+// the registry can shed long-idle domains. Without this, the map grows
+// monotonically with every distinct domain ever encountered and never
+// shrinks for the lifetime of the process.
+type domainLockEntry struct {
+	mu       *sync.Mutex
+	lastUsed time.Time
+}
+
+// flareDomainLockTTL is how long an idle domain entry is kept around. Set
+// generously past flareSessionTTL so a sweeper running between solves never
+// evicts a domain whose cached session is still alive.
+const flareDomainLockTTL = 2 * flareSessionTTL
+
+// getDomainLock returns the mutex that serializes solves for a given
+// domain. The just-touched entry's lastUsed bump happens before the
+// opportunistic sweep, so a fresh-acquired entry can never be evicted by
+// the same call — preventing the "caller A holds pointer, sweep evicts,
+// caller C creates new pointer, mutual exclusion lost" race.
 func getDomainLock(domain string) *sync.Mutex {
 	flareDomainMu.Lock()
 	defer flareDomainMu.Unlock()
-	m, ok := flareDomainLocks[domain]
+	e, ok := flareDomainLocks[domain]
 	if !ok {
-		m = &sync.Mutex{}
-		flareDomainLocks[domain] = m
+		e = &domainLockEntry{mu: &sync.Mutex{}}
+		flareDomainLocks[domain] = e
 	}
-	return m
+	e.lastUsed = time.Now()
+
+	flareDomainSweepCnt++
+	if flareDomainSweepCnt%64 == 0 {
+		cutoff := time.Now().Add(-flareDomainLockTTL)
+		for k, ent := range flareDomainLocks {
+			if k == domain || ent.lastUsed.After(cutoff) {
+				continue
+			}
+			// Defensive: never evict an entry whose mutex is currently
+			// held — TryLock failing means a goroutine is mid-solve.
+			if ent.mu.TryLock() {
+				ent.mu.Unlock()
+				delete(flareDomainLocks, k)
+			}
+		}
+	}
+	return e.mu
 }
 
 // flareCooldownRemaining reports whether a recent solve for this domain failed
@@ -372,6 +408,13 @@ type Fetcher struct {
 	// Cookie cache: domain -> cached session
 	flareMu    sync.RWMutex
 	flareCache map[string]*flareSession
+
+	// Reusable http.Client cache keyed by *http.Transport. Transports are
+	// produced by core.TransportForURL which caches them by (proxy, insecure)
+	// shape — so the pool here ends up with one client per distinct
+	// transport, sharing keep-alive connections across all requests.
+	clientMu   sync.RWMutex
+	clientPool map[*http.Transport]*http.Client
 }
 
 // flareSession holds cookies obtained from flaresolverr for a domain.
@@ -398,7 +441,33 @@ func NewFetcher(cfg app.Config) *Fetcher {
 		cfg:        cfg,
 		stdClient:  &http.Client{Timeout: 30 * time.Second},
 		flareCache: loadFlareSessions(flareSessionTTL),
+		clientPool: make(map[*http.Transport]*http.Client),
 	}
+}
+
+// clientForTransport returns a reusable *http.Client wrapping the supplied
+// transport. The default (transport==nil) uses the shared stdClient which
+// rides http.DefaultTransport's pool. Custom transports get their own cached
+// client so each (proxy, tls) combination keeps its keep-alive connections
+// across requests instead of throwing them away per-call.
+func (f *Fetcher) clientForTransport(t *http.Transport) *http.Client {
+	if t == nil {
+		return f.stdClient
+	}
+	f.clientMu.RLock()
+	c, ok := f.clientPool[t]
+	f.clientMu.RUnlock()
+	if ok {
+		return c
+	}
+	f.clientMu.Lock()
+	defer f.clientMu.Unlock()
+	if c, ok := f.clientPool[t]; ok {
+		return c
+	}
+	c = &http.Client{Timeout: 30 * time.Second, Transport: t}
+	f.clientPool[t] = c
+	return c
 }
 
 // UpdateConfig updates the fetcher's config (for hot-reload).
@@ -474,28 +543,17 @@ func (f *Fetcher) GetExt(rawURL string, tracker app.TrackerSettings, extraCookie
 	}
 
 	cookie := strings.TrimSpace(tracker.Cookie)
-	proxy := ProxyForURL(rawURL, tracker.UseProxy, f.cfg)
-
-	if tracker.InsecureSkipVerify {
-		if proxy != nil {
-			if proxy.TLSClientConfig == nil {
-				proxy.TLSClientConfig = &tls.Config{}
-			}
-			proxy.TLSClientConfig.InsecureSkipVerify = true
-		} else {
-			proxy = &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}
-		}
-	}
+	transport := TransportForURL(rawURL, tracker.UseProxy, tracker.InsecureSkipVerify, f.cfg)
 
 	switch mode {
 	case "flaresolverr":
-		return f.fetchViaFlare(rawURL, cookie, nil, proxy)
+		return f.fetchViaFlare(rawURL, cookie, nil, transport)
 	default:
 		ua := userAgent
 		if strings.TrimSpace(ua) == "" {
 			ua = "Mozilla/5.0"
 		}
-		res, err := f.doHTTP(http.MethodGet, rawURL, cookie, ua, "", nil, nil, proxy)
+		res, err := f.doHTTP(http.MethodGet, rawURL, cookie, ua, "", nil, nil, transport)
 		if err != nil {
 			return res, err
 		}
@@ -505,7 +563,7 @@ func (f *Fetcher) GetExt(rawURL string, tracker app.TrackerSettings, extraCookie
 		// roundtrip via the isDomainCFAuto check above.
 		if isCloudflareChallenge(res.Body) {
 			markDomainCF(domain)
-			return f.fetchViaFlare(rawURL, cookie, nil, proxy)
+			return f.fetchViaFlare(rawURL, cookie, nil, transport)
 		}
 		return res, nil
 	}
@@ -586,23 +644,13 @@ func (f *Fetcher) Do(rawURL string, tracker app.TrackerSettings, opts FetchOptio
 	}
 
 	cookie := strings.TrimSpace(tracker.Cookie)
-	proxy := ProxyForURL(rawURL, tracker.UseProxy, f.cfg)
-	if tracker.InsecureSkipVerify {
-		if proxy != nil {
-			if proxy.TLSClientConfig == nil {
-				proxy.TLSClientConfig = &tls.Config{}
-			}
-			proxy.TLSClientConfig.InsecureSkipVerify = true
-		} else {
-			proxy = &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}
-		}
-	}
+	transport := TransportForURL(rawURL, tracker.UseProxy, tracker.InsecureSkipVerify, f.cfg)
 
 	// GET in flare mode goes through the full browser-aware path so it can
 	// re-solve on stale cookies or fall back to a browser-rendered body.
 	// Non-GET can't use that path because the browser only navigates.
 	if mode == "flaresolverr" && method == http.MethodGet {
-		return f.fetchViaFlare(rawURL, cookie, opts.ExtraHeaders, proxy)
+		return f.fetchViaFlare(rawURL, cookie, opts.ExtraHeaders, transport)
 	}
 
 	ua := opts.UserAgent
@@ -623,7 +671,7 @@ func (f *Fetcher) Do(rawURL string, tracker app.TrackerSettings, opts FetchOptio
 		ua = "Mozilla/5.0"
 	}
 
-	res, err := f.doHTTP(method, rawURL, cookie, ua, opts.ContentType, opts.Body, opts.ExtraHeaders, proxy)
+	res, err := f.doHTTP(method, rawURL, cookie, ua, opts.ContentType, opts.Body, opts.ExtraHeaders, transport)
 	if err != nil {
 		return res, err
 	}
@@ -634,7 +682,7 @@ func (f *Fetcher) Do(rawURL string, tracker app.TrackerSettings, opts FetchOptio
 	if mode != "flaresolverr" && isCloudflareChallenge(res.Body) {
 		markDomainCF(domain)
 		if method == http.MethodGet {
-			return f.fetchViaFlare(rawURL, cookie, opts.ExtraHeaders, proxy)
+			return f.fetchViaFlare(rawURL, cookie, opts.ExtraHeaders, transport)
 		}
 		flareCookie, flareUA := f.GetFlareCookies(rawURL)
 		if flareCookie != "" {
@@ -647,7 +695,7 @@ func (f *Fetcher) Do(rawURL string, tracker app.TrackerSettings, opts FetchOptio
 		if strings.TrimSpace(retryUA) == "" {
 			retryUA = "Mozilla/5.0"
 		}
-		return f.doHTTP(method, rawURL, cookie, retryUA, opts.ContentType, opts.Body, opts.ExtraHeaders, proxy)
+		return f.doHTTP(method, rawURL, cookie, retryUA, opts.ContentType, opts.Body, opts.ExtraHeaders, transport)
 	}
 	return res, nil
 }
@@ -658,10 +706,7 @@ func (f *Fetcher) doHTTP(method, rawURL, cookie, userAgent, contentType string, 
 	if strings.TrimSpace(method) == "" {
 		method = http.MethodGet
 	}
-	client := f.stdClient
-	if transport != nil {
-		client = &http.Client{Timeout: 30 * time.Second, Transport: transport}
-	}
+	client := f.clientForTransport(transport)
 	var bodyReader io.Reader
 	if len(body) > 0 {
 		bodyReader = bytes.NewReader(body)

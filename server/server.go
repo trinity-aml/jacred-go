@@ -79,6 +79,28 @@ type Server struct {
 	KorsarsParser      *korsars.Parser
 	TracksDB           *tracks.DB
 	cache              *searchCache // search result cache (5 min TTL)
+
+	// bgWG tracks Server-owned background goroutines (RunStatsLoop and
+	// ad-hoc /stats/refresh fires). On shutdown, main.go calls Wait() to
+	// give in-flight stats generation a chance to finish writing
+	// stats.json before the binary exits.
+	bgWG sync.WaitGroup
+}
+
+// Background spawns fn as a tracked background goroutine. Server.Wait
+// blocks until every Background-spawned goroutine has returned.
+func (s *Server) Background(fn func()) {
+	s.bgWG.Add(1)
+	go func() {
+		defer s.bgWG.Done()
+		fn()
+	}()
+}
+
+// Wait blocks until all Background-spawned goroutines return. Use during
+// graceful shutdown after http.Server.Shutdown so stats writes complete.
+func (s *Server) Wait() {
+	s.bgWG.Wait()
 }
 
 func New(cfg app.Config, db *filedb.DB, tracksDB *tracks.DB, wwwroot string) *Server {
@@ -312,7 +334,7 @@ func (s *Server) handleJackett(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	cacheKey := "jackett:" + r.URL.RawQuery
+	cacheKey := cacheKeyFor("jackett", r.URL.RawQuery)
 	if cached, ok := s.cache.Get(cacheKey); ok {
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		w.Header().Set("X-Cache", "HIT")
@@ -343,7 +365,7 @@ func (s *Server) handleJackett(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleTorrents(w http.ResponseWriter, r *http.Request) {
-	cacheKey := "torrents:" + r.URL.RawQuery
+	cacheKey := cacheKeyFor("torrents", r.URL.RawQuery)
 	if cached, ok := s.cache.Get(cacheKey); ok {
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		w.Header().Set("X-Cache", "HIT")

@@ -20,8 +20,11 @@ import (
 //
 // The on-disk format is intentionally simple JSON and tolerant of partial
 // presence: a domain may have only an auth cookie, only a flare session, or
-// both. Empty fields are omitted via omitempty so files stay small. Writes
-// are atomic (temp + rename) and serialized by a per-store mutex.
+// both. Empty fields are omitted via omitempty so files stay small.
+//
+// Writes are batched: changes go to an in-memory cache and a debounce timer
+// flushes dirty domains to disk. This avoids the read-merge-write per save
+// pattern that dominated CPU during CF-solve bursts.
 
 type domainSession struct {
 	Domain         string `json:"domain"`
@@ -33,9 +36,16 @@ type domainSession struct {
 }
 
 type SessionStore struct {
-	dir string
-	mu  sync.Mutex
+	dir        string
+	mu         sync.Mutex
+	cache      map[string]*domainSession // nil entry = no session (file should not exist)
+	loaded     map[string]bool           // tracks whether disk was consulted
+	dirty      map[string]struct{}
+	flushTimer *time.Timer
+	flushDelay time.Duration
 }
+
+const sessionFlushDelay = 5 * time.Second
 
 var (
 	defaultSessionStoreMu sync.Mutex
@@ -55,7 +65,13 @@ func SetSessionStoreDir(dir string) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		log.Printf("session-store: mkdir %s: %v", dir, err)
 	}
-	defaultSessionStore = &SessionStore{dir: dir}
+	defaultSessionStore = &SessionStore{
+		dir:        dir,
+		cache:      make(map[string]*domainSession),
+		loaded:     make(map[string]bool),
+		dirty:      make(map[string]struct{}),
+		flushDelay: sessionFlushDelay,
+	}
 }
 
 // DefaultSessionStore returns the package singleton or nil if unset.
@@ -63,6 +79,12 @@ func DefaultSessionStore() *SessionStore {
 	defaultSessionStoreMu.Lock()
 	defer defaultSessionStoreMu.Unlock()
 	return defaultSessionStore
+}
+
+// FlushSessionStore forces pending session writes to disk immediately. Call on
+// shutdown to ensure no auth/flare cookies are lost.
+func FlushSessionStore() {
+	DefaultSessionStore().Flush()
 }
 
 // DomainFromHost strips scheme, path, and port from a host config value. For
@@ -87,49 +109,118 @@ func (s *SessionStore) path(domain string) string {
 	return filepath.Join(s.dir, safe+".json")
 }
 
-// loadDomainLocked reads the JSON file for the given domain. Caller must
-// hold s.mu. Returns nil with no error when the file does not exist.
+// loadDomainLocked returns the cached session for domain, populating the
+// cache from disk on first access. Caller must hold s.mu. The returned
+// pointer is the same one stored in the cache — callers may mutate it and
+// then call saveDomainLocked to persist.
 func (s *SessionStore) loadDomainLocked(domain string) (*domainSession, error) {
+	if s.loaded[domain] {
+		return s.cache[domain], nil
+	}
 	b, err := os.ReadFile(s.path(domain))
 	if err != nil {
 		if os.IsNotExist(err) {
+			s.loaded[domain] = true
+			s.cache[domain] = nil
 			return nil, nil
 		}
 		return nil, err
 	}
 	var d domainSession
 	if err := json.Unmarshal(b, &d); err != nil {
+		// Mark as loaded with empty cache to avoid re-parsing the broken
+		// file on every call; first save will overwrite it.
+		s.loaded[domain] = true
+		s.cache[domain] = nil
 		return nil, err
 	}
 	if d.Domain == "" {
 		d.Domain = domain
 	}
+	s.loaded[domain] = true
+	s.cache[domain] = &d
 	return &d, nil
 }
 
-// saveDomainLocked writes (or removes if empty) the JSON file. Caller holds s.mu.
+// saveDomainLocked records the change in the in-memory cache and schedules a
+// debounced flush. Caller holds s.mu. When both halves of d are empty the
+// entry is queued for removal from disk.
 func (s *SessionStore) saveDomainLocked(d *domainSession) error {
 	if d.AuthCookie == "" && d.FlareCookie == "" {
-		_ = os.Remove(s.path(d.Domain))
-		return nil
+		s.cache[d.Domain] = nil
+	} else {
+		s.cache[d.Domain] = d
+	}
+	s.loaded[d.Domain] = true
+	s.dirty[d.Domain] = struct{}{}
+	s.scheduleFlushLocked()
+	return nil
+}
+
+func (s *SessionStore) scheduleFlushLocked() {
+	if s.flushTimer != nil {
+		return
+	}
+	s.flushTimer = time.AfterFunc(s.flushDelay, func() {
+		s.mu.Lock()
+		s.flushLocked()
+		s.mu.Unlock()
+	})
+}
+
+// flushLocked writes all dirty entries to disk. Caller holds s.mu. Errors
+// are logged but do not stop the loop (one bad domain shouldn't strand
+// others). The dirty set is cleared in full even on partial failure to
+// prevent retry storms — next change re-queues the same domain.
+func (s *SessionStore) flushLocked() {
+	if s.flushTimer != nil {
+		s.flushTimer.Stop()
+		s.flushTimer = nil
+	}
+	if len(s.dirty) == 0 {
+		return
 	}
 	if err := os.MkdirAll(s.dir, 0o755); err != nil {
-		return err
+		log.Printf("session-store: mkdir %s: %v", s.dir, err)
+		return
 	}
-	data, err := json.MarshalIndent(d, "", "  ")
+	for domain := range s.dirty {
+		s.writeDomainLocked(domain)
+	}
+	s.dirty = make(map[string]struct{})
+}
+
+func (s *SessionStore) writeDomainLocked(domain string) {
+	d := s.cache[domain]
+	p := s.path(domain)
+	if d == nil {
+		_ = os.Remove(p)
+		return
+	}
+	b, err := json.Marshal(d)
 	if err != nil {
-		return err
+		log.Printf("session-store: marshal %s: %v", domain, err)
+		return
 	}
-	dst := s.path(d.Domain)
-	tmp := dst + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o600); err != nil {
-		return err
+	tmp := p + ".tmp"
+	if err := os.WriteFile(tmp, b, 0o600); err != nil {
+		log.Printf("session-store: write %s: %v", p, err)
+		return
 	}
-	if err := os.Rename(tmp, dst); err != nil {
+	if err := os.Rename(tmp, p); err != nil {
+		log.Printf("session-store: rename %s: %v", p, err)
 		_ = os.Remove(tmp)
-		return err
 	}
-	return nil
+}
+
+// Flush persists pending changes immediately. Call on shutdown.
+func (s *SessionStore) Flush() {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.flushLocked()
+	s.mu.Unlock()
 }
 
 // LoadAuth returns the previously saved auth cookie for the domain and the
@@ -233,7 +324,8 @@ func (s *SessionStore) deleteFlare(domain string) {
 
 // listFlareSessions scans all domain files and returns the still-valid flare
 // sessions. Expired entries have only their flare half cleared (auth cookie
-// is preserved); fully-empty files are removed.
+// is preserved); fully-empty files are removed. The disk scan also seeds the
+// in-memory cache so subsequent loads avoid re-reading files.
 func (s *SessionStore) listFlareSessions(ttl time.Duration) map[string]*flareSession {
 	out := make(map[string]*flareSession)
 	if s == nil {

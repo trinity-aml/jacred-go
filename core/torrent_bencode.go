@@ -96,7 +96,12 @@ func parseTorrentMeta(data []byte) ([]byte, string, []string, error) {
 			if err := p.skipValue(); err != nil {
 				return nil, "", nil, err
 			}
-			infoRaw = append([]byte(nil), p.b[start:p.i]...)
+			// Slice directly into the input — caller owns the byte buffer
+			// for the duration of the call, and downstream consumers
+			// (sha1.Sum, torrentNameFromInfo) only read. Skipping the
+			// previous append([]byte(nil), …) saves one alloc per torrent
+			// equal to the size of the info dict (often hundreds of KiB).
+			infoRaw = p.b[start:p.i]
 		default:
 			if err := p.skipValue(); err != nil {
 				return nil, "", nil, err

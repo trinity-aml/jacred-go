@@ -39,15 +39,35 @@ func (db *DB) OpenReadOrEmptyLocked(key string) (map[string]TorrentDetails, func
 
 // SaveBucketUnlocked writes the bucket without acquiring the per-key lock.
 // Use only when the caller already holds the lock via OpenReadOrEmptyLocked.
+// UpdateFullDetails runs here too (under whatever lock the caller holds);
+// admin/dev callers are infrequent enough that this is acceptable.
 func (db *DB) SaveBucketUnlocked(key string, bucket map[string]TorrentDetails, updatedAt time.Time) error {
+	prepareBucketDetails(bucket)
 	return db.saveBucketInternal(key, bucket, updatedAt)
 }
 
+// SaveBucket prepares the bucket (regex-heavy UpdateFullDetails) BEFORE
+// acquiring the per-key lock, then commits under lock. The split keeps the
+// critical section short on hot paths — parsers building a 100-row bucket
+// used to hold the lock for the entire regex run, blocking concurrent saves
+// to the same key.
 func (db *DB) SaveBucket(key string, bucket map[string]TorrentDetails, updatedAt time.Time) error {
+	prepareBucketDetails(bucket)
 	mu := db.lockKey(key)
 	mu.Lock()
 	defer mu.Unlock()
 	return db.saveBucketInternal(key, bucket, updatedAt)
+}
+
+// prepareBucketDetails runs UpdateFullDetails over every entry in bucket.
+// Idempotent: each torrent's record carries an "already processed" sentinel
+// (quality + _sn) so re-runs are cheap. Safe to call without holding any
+// lock as long as the bucket map isn't mutated concurrently — and for the
+// SaveBucket path each call gets its own per-call map.
+func prepareBucketDetails(bucket map[string]TorrentDetails) {
+	for _, t := range bucket {
+		UpdateFullDetails(t)
+	}
 }
 
 func (db *DB) saveBucketInternal(key string, bucket map[string]TorrentDetails, updatedAt time.Time) error {
@@ -56,9 +76,6 @@ func (db *DB) saveBucketInternal(key string, bucket map[string]TorrentDetails, u
 	}
 	if updatedAt.IsZero() {
 		updatedAt = time.Now().UTC()
-	}
-	for _, t := range bucket {
-		UpdateFullDetails(t)
 	}
 	// FDB audit log: compare old bucket with new before writing
 	if db.fdbLog != nil {

@@ -4,6 +4,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 // allVoicesLower holds precomputed lowercase versions of allVoices to avoid
@@ -196,7 +197,50 @@ func isSerialType(types []string) bool {
 	return false
 }
 
+// computeSeasons runs up to a dozen regex passes per title, so identical
+// titles processed across re-parse cycles share a result via seasonCache.
+// The cache is bounded; ~10% of entries get evicted (in random map-iteration
+// order) when the size cap is hit. Returned slices are shared read-only —
+// callers must not mutate them.
+const (
+	seasonCacheMax  = 50000
+	seasonCacheDrop = 5000
+)
+
+var (
+	seasonCacheMu sync.RWMutex
+	seasonCache   = make(map[string][]int, seasonCacheMax)
+)
+
 func computeSeasons(title string) []int {
+	seasonCacheMu.RLock()
+	if v, ok := seasonCache[title]; ok {
+		seasonCacheMu.RUnlock()
+		return v
+	}
+	seasonCacheMu.RUnlock()
+
+	out := computeSeasonsUncached(title)
+
+	seasonCacheMu.Lock()
+	if _, exists := seasonCache[title]; !exists {
+		if len(seasonCache) >= seasonCacheMax {
+			i := 0
+			for k := range seasonCache {
+				delete(seasonCache, k)
+				i++
+				if i >= seasonCacheDrop {
+					break
+				}
+			}
+		}
+		seasonCache[title] = out
+	}
+	seasonCacheMu.Unlock()
+	return out
+}
+
+func computeSeasonsUncached(title string) []int {
 	seasons := map[int]struct{}{}
 	ti := title // original case for regex matching (C# uses IgnoreCase)
 

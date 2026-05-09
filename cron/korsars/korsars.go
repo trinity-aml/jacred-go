@@ -65,8 +65,7 @@ var (
 	titleMovie2Re  = regexp.MustCompile(`^([^/\(]+) / ([^/\(]+) \(`)
 	titleMovie1Re  = regexp.MustCompile(`^([^/\(]+) \(`)
 
-	firstNamePart  = regexp.MustCompile(`(\[|/|\(|\|)`)
-	spaceCleanupRe = regexp.MustCompile(`[\n\r\t\x{00A0} ]+`)
+	firstNamePart = regexp.MustCompile(`(\[|/|\(|\|)`)
 )
 
 type Task struct {
@@ -497,7 +496,7 @@ func (p *Parser) parsePage(ctx context.Context, cat string, page int) ([]filedb.
 		// Re-prefix so `rowTopicIDRe` (which expects the full marker) matches.
 		row = `<a id="tt-` + row
 		id := match1(rowTopicIDRe, row)
-		title := strings.TrimSpace(spaceCleanupRe.ReplaceAllString(html.UnescapeString(stripTags(match1(rowTitleRe, row))), " "))
+		title := core.StripTagsAndCollapseSpaces(html.UnescapeString(match1(rowTitleRe, row)))
 		if id == "" || title == "" {
 			continue
 		}
@@ -708,20 +707,6 @@ func match1(re *regexp.Regexp, s string) string {
 		return strings.TrimSpace(m[1])
 	}
 	return ""
-}
-
-func stripTags(s string) string {
-	for {
-		start := strings.IndexByte(s, '<')
-		if start < 0 {
-			return s
-		}
-		end := strings.IndexByte(s[start:], '>')
-		if end < 0 {
-			return s[:start]
-		}
-		s = s[:start] + s[start+end+1:]
-	}
 }
 
 func firstTokenTitle(title string) string {

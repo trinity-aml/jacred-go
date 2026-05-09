@@ -3,11 +3,101 @@ package core
 import (
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
+	"unicode/utf8"
 )
+
+// StripTagsAndCollapseSpaces removes <…> tag spans and collapses runs of
+// whitespace (including U+00A0 NBSP) to single ASCII spaces in one pass.
+// Trims leading/trailing space implicitly. Combines what was previously a
+// stripTags + ReplaceAll(spaceCleanupRe) + TrimSpace chain into one
+// allocation per call. Pair with html.UnescapeString when input may carry
+// HTML entities (UnescapeString stays separate because an entity may
+// itself contain `<` after decoding, which a tag-stripper would
+// misinterpret).
+func StripTagsAndCollapseSpaces(s string) string {
+	if s == "" {
+		return s
+	}
+	var b strings.Builder
+	b.Grow(len(s))
+	inTag := false
+	// Start as if a space already preceded the buffer so leading whitespace
+	// gets absorbed; flip to false on the first real character.
+	prevSpace := true
+	for i := 0; i < len(s); {
+		r, size := utf8.DecodeRuneInString(s[i:])
+		i += size
+		if inTag {
+			if r == '>' {
+				inTag = false
+			}
+			continue
+		}
+		if r == '<' {
+			inTag = true
+			continue
+		}
+		if r == ' ' || r == '\t' || r == '\n' || r == '\r' || r == ' ' {
+			if !prevSpace {
+				b.WriteByte(' ')
+				prevSpace = true
+			}
+			continue
+		}
+		prevSpace = false
+		b.WriteRune(r)
+	}
+	out := b.String()
+	if n := len(out); n > 0 && out[n-1] == ' ' {
+		out = out[:n-1]
+	}
+	return out
+}
+
+// --- Compiled regex cache ---
+//
+// Some parsers iterate over a slice of literal pattern strings and call
+// regexp.MustCompile per row. Each compile is ~10–50 µs and accumulates to
+// thousands of redundant ops per page on hot paths like parseTitle. Use
+// CachedRegex when patterns are static literals known at runtime — the first
+// call compiles, subsequent calls return the same *regexp.Regexp under
+// RWMutex. A nil result is cached for malformed patterns so we don't retry.
+
+var (
+	regexCacheMu sync.RWMutex
+	regexCache   = map[string]*regexp.Regexp{}
+)
+
+// CachedRegex returns a compiled *regexp.Regexp for pattern, caching it
+// across the process. Returns nil when pattern is invalid. Patterns must be
+// static literals — callers passing dynamically constructed strings risk
+// unbounded cache growth.
+func CachedRegex(pattern string) *regexp.Regexp {
+	regexCacheMu.RLock()
+	if re, ok := regexCache[pattern]; ok {
+		regexCacheMu.RUnlock()
+		return re
+	}
+	regexCacheMu.RUnlock()
+	regexCacheMu.Lock()
+	defer regexCacheMu.Unlock()
+	if re, ok := regexCache[pattern]; ok {
+		return re
+	}
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		regexCache[pattern] = nil
+		return nil
+	}
+	regexCache[pattern] = re
+	return re
+}
 
 // --- String/int/float conversion helpers ---
 

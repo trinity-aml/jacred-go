@@ -51,7 +51,36 @@ var (
 
 	inlineReC4d16cRe = regexp.MustCompile(`uid=([0-9]+)`)
 	inlineReF31405Re = regexp.MustCompile(`pass=([^;]+)(;|$)`)
+
+	fallbackSplitRe = regexp.MustCompile(`(\[|/|\(|\|)`)
+	dateLeadingZero = regexp.MustCompile(`^[0-9]\.`)
 )
+
+// monthSubsts is the precompiled set of month-name normalizers used by
+// parseCreateTime. Replacing 36+ MustCompile calls per invocation with a
+// single shared slice cuts the per-row regex cost on kinozal listings.
+type monthSubst struct {
+	re *regexp.Regexp
+	to string
+}
+
+var monthSubsts = func() []monthSubst {
+	raw := []struct{ pat, to string }{
+		{` янв\.? `, `.01.`}, {` февр?\.? `, `.02.`}, {` март?\.? `, `.03.`}, {` апр\.? `, `.04.`},
+		{` май `, `.05.`}, {` июнь?\.? `, `.06.`}, {` июль?\.? `, `.07.`}, {` авг\.? `, `.08.`},
+		{` сент?\.? `, `.09.`}, {` окт\.? `, `.10.`}, {` нояб?\.? `, `.11.`}, {` дек\.? `, `.12.`},
+		{` январ(ь|я)?\.? `, `.01.`}, {` феврал(ь|я)?\.? `, `.02.`}, {` марта?\.? `, `.03.`}, {` апрел(ь|я)?\.? `, `.04.`},
+		{` май?я?\.? `, `.05.`}, {` июн(ь|я)?\.? `, `.06.`}, {` июл(ь|я)?\.? `, `.07.`}, {` августа?\.? `, `.08.`},
+		{` сентябр(ь|я)?\.? `, `.09.`}, {` октябр(ь|я)?\.? `, `.10.`}, {` ноябр(ь|я)?\.? `, `.11.`}, {` декабр(ь|я)?\.? `, `.12.`},
+		{` jan `, `.01.`}, {` feb `, `.02.`}, {` mar `, `.03.`}, {` apr `, `.04.`}, {` may `, `.05.`}, {` jun `, `.06.`},
+		{` jul `, `.07.`}, {` aug `, `.08.`}, {` sep `, `.09.`}, {` oct `, `.10.`}, {` nov `, `.11.`}, {` dec `, `.12.`},
+	}
+	out := make([]monthSubst, len(raw))
+	for i, r := range raw {
+		out[i] = monthSubst{re: regexp.MustCompile(r.pat), to: r.to}
+	}
+	return out
+}()
 
 type Task struct {
 	UpdateTime string `json:"updateTime"`
@@ -875,7 +904,7 @@ func categoryTypes(cat string) []string {
 	}
 }
 func fallbackName(title string) string {
-	parts := regexp.MustCompile(`(\[|/|\(|\|)`).Split(title, -1)
+	parts := fallbackSplitRe.Split(title, -1)
 	if len(parts) == 0 {
 		return strings.TrimSpace(title)
 	}
@@ -892,20 +921,10 @@ func replaceBadNames(s string) string {
 }
 func parseCreateTime(line, format string) time.Time {
 	line = strings.ToLower(strings.TrimSpace(line))
-	patterns := []struct{ re, to string }{
-		{` янв\.? `, `.01.`}, {` февр?\.? `, `.02.`}, {` март?\.? `, `.03.`}, {` апр\.? `, `.04.`},
-		{` май `, `.05.`}, {` июнь?\.? `, `.06.`}, {` июль?\.? `, `.07.`}, {` авг\.? `, `.08.`},
-		{` сент?\.? `, `.09.`}, {` окт\.? `, `.10.`}, {` нояб?\.? `, `.11.`}, {` дек\.? `, `.12.`},
-		{` январ(ь|я)?\.? `, `.01.`}, {` феврал(ь|я)?\.? `, `.02.`}, {` марта?\.? `, `.03.`}, {` апрел(ь|я)?\.? `, `.04.`},
-		{` май?я?\.? `, `.05.`}, {` июн(ь|я)?\.? `, `.06.`}, {` июл(ь|я)?\.? `, `.07.`}, {` августа?\.? `, `.08.`},
-		{` сентябр(ь|я)?\.? `, `.09.`}, {` октябр(ь|я)?\.? `, `.10.`}, {` ноябр(ь|я)?\.? `, `.11.`}, {` декабр(ь|я)?\.? `, `.12.`},
-		{` jan `, `.01.`}, {` feb `, `.02.`}, {` mar `, `.03.`}, {` apr `, `.04.`}, {` may `, `.05.`}, {` jun `, `.06.`},
-		{` jul `, `.07.`}, {` aug `, `.08.`}, {` sep `, `.09.`}, {` oct `, `.10.`}, {` nov `, `.11.`}, {` dec `, `.12.`},
+	for _, p := range monthSubsts {
+		line = p.re.ReplaceAllString(line, p.to)
 	}
-	for _, p := range patterns {
-		line = regexp.MustCompile(p.re).ReplaceAllString(line, p.to)
-	}
-	if regexp.MustCompile(`^[0-9]\.`).MatchString(line) {
+	if dateLeadingZero.MatchString(line) {
 		line = "0" + line
 	}
 	layouts := []string{format, "02.01.2006 15:04:05", "02.01.2006 15:04", "02.01.2006"}

@@ -12,7 +12,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -1656,7 +1655,9 @@ func (s *Server) handleStatsRefresh(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	go s.generateStatsFile()
+	// Track via Server.bgWG so graceful shutdown waits for the refresh to
+	// finish writing stats.json instead of orphaning a half-written file.
+	s.Background(s.generateStatsFile)
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok"})
 }
 
@@ -1809,8 +1810,11 @@ func (s *Server) generateStatsFile() {
 		return
 	}
 	log.Printf("stats: generated in %dms, trackers=%d", time.Since(start).Milliseconds(), len(trackers))
-	// Release memory held by all the bucket maps we just scanned.
-	runtime.GC()
+	// Manual runtime.GC() used to live here on the assumption that the
+	// bucket maps just scanned needed prompt collection. In practice the
+	// GC pacer reclaims them on its own within seconds, and forcing a
+	// stop-the-world pause from a request handler hurts request latency
+	// more than the early reclaim helps memory pressure.
 }
 
 // handleDevTestFetch performs a diagnostic fetch of a tracker page and reports results.

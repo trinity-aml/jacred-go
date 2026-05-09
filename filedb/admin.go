@@ -292,6 +292,17 @@ func (db *DB) DirtyCount() int {
 	return n
 }
 
+// FlushFdbLog drains the buffered fdb-audit log to disk. Safe to call when
+// no logger is configured. Use on shutdown.
+func (db *DB) FlushFdbLog() {
+	db.fdbLog.Flush()
+}
+
+// CloseFdbLog flushes and closes the audit log file handle.
+func (db *DB) CloseFdbLog() {
+	db.fdbLog.Close()
+}
+
 // RunBackgroundJobs starts periodic tasks:
 //   - Flush dirty buckets to disk every 30 seconds
 //   - Rebuild sorted masterDb cache every 10 minutes

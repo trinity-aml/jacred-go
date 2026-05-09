@@ -19,8 +19,20 @@ import (
 	"jacred/core"
 )
 
-// pathCache caches key → bucket file path to avoid repeated MD5 on every call.
-var pathCache sync.Map
+// pathCache memoizes key → bucket file path so we don't recompute MD5 on
+// every PathDb call. Bounded to pathCacheMax entries; once full, ~10% of
+// entries are evicted in random map-iteration order. With 50k entries the
+// cache holds a ~10 MiB working set covering most active keys; rarer keys
+// get re-MD5'd on next access (cheap, ~1 µs).
+const (
+	pathCacheMax  = 50000
+	pathCacheDrop = 5000
+)
+
+var (
+	pathCacheMu sync.RWMutex
+	pathCache   = make(map[string]string, 1024)
+)
 
 type TorrentDetails map[string]any
 
@@ -99,9 +111,13 @@ func (db *DB) lockKey(key string) *sync.Mutex {
 
 func (db *DB) KeyDb(name, original string) string { return core.NameToHash(name, original) }
 func (db *DB) PathDb(key string) string {
-	if v, ok := pathCache.Load(key); ok {
-		return v.(string)
+	pathCacheMu.RLock()
+	if v, ok := pathCache[key]; ok {
+		pathCacheMu.RUnlock()
+		return v
 	}
+	pathCacheMu.RUnlock()
+
 	md5key := core.MD5(key)
 	var path string
 	if db.GetConfig().FDBPathLevels == 2 || db.GetConfig().FDBPathLevels == 0 {
@@ -109,7 +125,22 @@ func (db *DB) PathDb(key string) string {
 	} else {
 		path = filepath.Join(db.DataDir, "fdb", md5key[:1], md5key)
 	}
-	pathCache.Store(key, path)
+
+	pathCacheMu.Lock()
+	if _, exists := pathCache[key]; !exists {
+		if len(pathCache) >= pathCacheMax {
+			i := 0
+			for k := range pathCache {
+				delete(pathCache, k)
+				i++
+				if i >= pathCacheDrop {
+					break
+				}
+			}
+		}
+		pathCache[key] = path
+	}
+	pathCacheMu.Unlock()
 	return path
 }
 func (db *DB) OpenRead(key string) (map[string]TorrentDetails, error) {

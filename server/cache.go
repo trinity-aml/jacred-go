@@ -1,9 +1,23 @@
 package server
 
 import (
+	"fmt"
+	"hash/fnv"
 	"sync"
 	"time"
 )
+
+// cacheKeyFor returns a fixed-size cache key from a prefix and the raw HTTP
+// query string. Hashing the query (FNV-64) is enough — collisions degrade
+// to a cache miss, never to wrong-data — and it caps key memory regardless
+// of how long the attacker makes their query string. With raw concatenation
+// an attacker can mint arbitrarily many distinct long keys to inflate the
+// cache map; with a fixed-width hash the bound is just maxSize × ~32 bytes.
+func cacheKeyFor(prefix, rawQuery string) string {
+	h := fnv.New64a()
+	_, _ = h.Write([]byte(rawQuery))
+	return fmt.Sprintf("%s:%016x", prefix, h.Sum64())
+}
 
 // searchCache is a simple TTL cache for search responses.
 type searchCache struct {
@@ -44,17 +58,33 @@ func (c *searchCache) Get(key string) ([]byte, bool) {
 
 func (c *searchCache) Set(key string, data []byte) {
 	c.mu.Lock()
-	// Evict expired entries if over limit
+	defer c.mu.Unlock()
 	if len(c.entries) >= c.maxSize {
 		now := time.Now()
+		// First pass: drop expired entries.
 		for k, e := range c.entries {
 			if now.Sub(e.created) > c.ttl {
 				delete(c.entries, k)
 			}
 		}
+		// Hard cap fallback: if everything is fresh and we're still at
+		// the limit, evict ~10% in random map-iteration order so the cap
+		// is actually enforced. Without this, a flood of unique queries
+		// hitting the cache within TTL grows the map without bound.
+		if len(c.entries) >= c.maxSize {
+			target := c.maxSize - c.maxSize/10
+			if target < 1 {
+				target = 0
+			}
+			for k := range c.entries {
+				if len(c.entries) <= target {
+					break
+				}
+				delete(c.entries, k)
+			}
+		}
 	}
 	c.entries[key] = &cacheEntry{data: data, created: time.Now()}
-	c.mu.Unlock()
 }
 
 func (c *searchCache) Invalidate() {

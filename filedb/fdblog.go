@@ -1,6 +1,7 @@
 package filedb
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -12,16 +13,32 @@ import (
 )
 
 // FdbLogger writes audit log entries for bucket changes in JSON Lines format.
-// Each line is [incoming, existing] per changed torrent.
-// Files: Data/log/fdb.YYYY-MM-dd.log
-// Retention: by days, max total size, max files.
+// Each line is a JSON object with {ts, bucket, url, existing?, incoming?}.
+// Files: Data/log/fdb.YYYY-MM-dd.log (rolled daily on first write past midnight).
+// Retention: by days, max total size, max files (see CleanupLogs).
+//
+// The current day's file is held open with a buffered writer; entries land in
+// the buffer and a debounce timer flushes after fdbLogFlushDelay. This trades
+// the previous open/write/close-per-entry pattern (one fsync-shaped syscall
+// per torrent change) for batched writes that keep up with the bucket save
+// rate. Call Flush on shutdown to drain the buffer.
 type FdbLogger struct {
 	logDir        string
 	retentionDays int
 	maxSizeMb     int
 	maxFiles      int
 	mu            sync.Mutex
+
+	f       *os.File
+	bw      *bufio.Writer
+	curDate string
+	timer   *time.Timer
 }
+
+const (
+	fdbLogFlushDelay = 2 * time.Second
+	fdbLogBufSize    = 64 * 1024
+)
 
 func NewFdbLogger(logDir string, retentionDays, maxSizeMb, maxFiles int) *FdbLogger {
 	return &FdbLogger{
@@ -72,16 +89,93 @@ func (l *FdbLogger) writeEntry(bucketKey, urlv string, existing, incoming Torren
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	_ = os.MkdirAll(l.logDir, 0o755)
-	name := fmt.Sprintf("fdb.%s.log", time.Now().Format("2006-01-02"))
+	if err := l.ensureOpenLocked(); err != nil {
+		return
+	}
+	_, _ = l.bw.Write(b)
+	_, _ = l.bw.WriteString("\n")
+	l.scheduleFlushLocked()
+}
+
+// ensureOpenLocked opens (or rotates to) today's file. Caller holds l.mu.
+func (l *FdbLogger) ensureOpenLocked() error {
+	today := time.Now().Format("2006-01-02")
+	if l.bw != nil && l.curDate == today {
+		return nil
+	}
+	// Date rollover or first-time open.
+	l.closeFileLocked()
+	if err := os.MkdirAll(l.logDir, 0o755); err != nil {
+		return err
+	}
+	name := fmt.Sprintf("fdb.%s.log", today)
 	fp := filepath.Join(l.logDir, name)
 	f, err := os.OpenFile(fp, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
+		return err
+	}
+	l.f = f
+	l.bw = bufio.NewWriterSize(f, fdbLogBufSize)
+	l.curDate = today
+	return nil
+}
+
+func (l *FdbLogger) closeFileLocked() {
+	if l.timer != nil {
+		l.timer.Stop()
+		l.timer = nil
+	}
+	if l.bw != nil {
+		_ = l.bw.Flush()
+		l.bw = nil
+	}
+	if l.f != nil {
+		_ = l.f.Close()
+		l.f = nil
+	}
+}
+
+func (l *FdbLogger) scheduleFlushLocked() {
+	if l.timer != nil {
 		return
 	}
-	_, _ = f.Write(b)
-	_, _ = f.WriteString("\n")
-	f.Close()
+	l.timer = time.AfterFunc(fdbLogFlushDelay, func() {
+		l.mu.Lock()
+		l.flushLocked()
+		l.mu.Unlock()
+	})
+}
+
+func (l *FdbLogger) flushLocked() {
+	if l.timer != nil {
+		l.timer.Stop()
+		l.timer = nil
+	}
+	if l.bw != nil {
+		_ = l.bw.Flush()
+	}
+}
+
+// Flush forces pending writes to disk without releasing the file handle.
+func (l *FdbLogger) Flush() {
+	if l == nil {
+		return
+	}
+	l.mu.Lock()
+	l.flushLocked()
+	l.mu.Unlock()
+}
+
+// Close flushes and closes the underlying file. Subsequent writes will
+// lazily reopen the day's file via ensureOpenLocked.
+func (l *FdbLogger) Close() {
+	if l == nil {
+		return
+	}
+	l.mu.Lock()
+	l.closeFileLocked()
+	l.curDate = ""
+	l.mu.Unlock()
 }
 
 // CleanupLogs removes old fdb log files based on retention settings.
@@ -91,6 +185,15 @@ func (l *FdbLogger) CleanupLogs() {
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
+
+	// Drain the buffer first; if cleanup deletes our current file the
+	// in-flight bytes still land on disk before we drop the handle.
+	l.flushLocked()
+	prevDate := l.curDate
+	currentName := ""
+	if prevDate != "" {
+		currentName = fmt.Sprintf("fdb.%s.log", prevDate)
+	}
 
 	entries, err := os.ReadDir(l.logDir)
 	if err != nil {
@@ -106,6 +209,14 @@ func (l *FdbLogger) CleanupLogs() {
 		return fdbFiles[i].Name() < fdbFiles[j].Name()
 	})
 
+	currentDeleted := false
+	deleteFile := func(name string) {
+		_ = os.Remove(filepath.Join(l.logDir, name))
+		if name == currentName {
+			currentDeleted = true
+		}
+	}
+
 	// By days
 	if l.retentionDays > 0 {
 		cutoff := time.Now().AddDate(0, 0, -l.retentionDays)
@@ -115,7 +226,7 @@ func (l *FdbLogger) CleanupLogs() {
 				continue
 			}
 			if info.ModTime().Before(cutoff) {
-				_ = os.Remove(filepath.Join(l.logDir, e.Name()))
+				deleteFile(e.Name())
 			}
 		}
 	}
@@ -123,6 +234,10 @@ func (l *FdbLogger) CleanupLogs() {
 	// Re-read after deletions
 	entries, err = os.ReadDir(l.logDir)
 	if err != nil {
+		if currentDeleted {
+			l.closeFileLocked()
+			l.curDate = ""
+		}
 		return
 	}
 	fdbFiles = fdbFiles[:0]
@@ -138,7 +253,7 @@ func (l *FdbLogger) CleanupLogs() {
 	// By max files (remove oldest first)
 	if l.maxFiles > 0 && len(fdbFiles) > l.maxFiles {
 		for _, e := range fdbFiles[:len(fdbFiles)-l.maxFiles] {
-			_ = os.Remove(filepath.Join(l.logDir, e.Name()))
+			deleteFile(e.Name())
 		}
 		fdbFiles = fdbFiles[len(fdbFiles)-l.maxFiles:]
 	}
@@ -159,9 +274,17 @@ func (l *FdbLogger) CleanupLogs() {
 			if err == nil {
 				totalSize -= info.Size()
 			}
-			_ = os.Remove(filepath.Join(l.logDir, fdbFiles[0].Name()))
+			deleteFile(fdbFiles[0].Name())
 			fdbFiles = fdbFiles[1:]
 		}
+	}
+
+	// If retention nuked our currently-open file, drop the stale handle so
+	// the next write reopens against the newly-created path. Without this
+	// we'd keep appending to an unlinked inode and lose the data.
+	if currentDeleted {
+		l.closeFileLocked()
+		l.curDate = ""
 	}
 }
 

@@ -37,7 +37,6 @@ var (
 	topicTimeRe    = regexp.MustCompile(`<a class="p-link small" href="viewtopic\.php\?t=[^"]+">([^<]+)</a>`)
 	topicMagnetRe  = regexp.MustCompile(`href="(magnet:[^"]+)" class="(?:med )?magnet-link"`)
 	forumPagesRe   = regexp.MustCompile(`Страница <b>1</b> из <b>([0-9]+)</b>`)
-	spaceCleanupRe = regexp.MustCompile(`[\n\r\t\x{00A0} ]+`)
 	serialWordsRe  = regexp.MustCompile(`(?i)(Сезон|Серии)`)
 	firstNamePart  = regexp.MustCompile(`(\[|/|\(|\|)`)
 )
@@ -465,7 +464,7 @@ func (p *Parser) parsePage(ctx context.Context, cat string, page int) ([]filedb.
 			continue
 		}
 		id := match1(rowTopicIDRe, row)
-		title := spaceCleanupRe.ReplaceAllString(stripTags(html.UnescapeString(match1(rowTitleRe, row))), " ")
+		title := core.StripTagsAndCollapseSpaces(html.UnescapeString(match1(rowTitleRe, row)))
 		sid, _ := strconv.Atoi(match1(rowSidRe, row))
 		pir, _ := strconv.Atoi(match1(rowPirRe, row))
 		sizeName := strings.TrimSpace(strings.ReplaceAll(html.UnescapeString(match1(rowSizeRe, row)), "&nbsp;", " "))
@@ -661,19 +660,6 @@ func match1(re *regexp.Regexp, s string) string {
 		return strings.TrimSpace(m[1])
 	}
 	return ""
-}
-func stripTags(s string) string {
-	for {
-		start := strings.IndexByte(s, '<')
-		if start < 0 {
-			return s
-		}
-		end := strings.IndexByte(s[start:], '>')
-		if end < 0 {
-			return s[:start]
-		}
-		s = s[:start] + s[start+end+1:]
-	}
 }
 func firstTokenTitle(title string) string {
 	return strings.TrimSpace(strings.ReplaceAll(firstNamePart.Split(title, 2)[0], "в 3Д", ""))

@@ -17,16 +17,61 @@ import (
 // so a site that's been silent for cfAutoTTL ages out and starts accepting
 // standard requests again.
 
-const cfAutoTTL = 30 * 24 * time.Hour
+const (
+	cfAutoTTL        = 30 * 24 * time.Hour
+	cfAutoFlushDelay = 5 * time.Second
+)
 
 var (
-	cfAutoMu   sync.RWMutex
-	cfAutoMap  map[string]time.Time
-	cfAutoPath string
+	cfAutoMu       sync.RWMutex
+	cfAutoMap      map[string]time.Time
+	cfAutoPath     string
+	cfAutoDirty    bool
+	cfAutoFlushTmr *time.Timer
 )
 
 func init() {
 	cfAutoMap = make(map[string]time.Time)
+}
+
+// markCFAutoDirtyLocked sets the dirty flag and arms a debounce timer. Caller
+// holds cfAutoMu. The timer fires once; subsequent dirty marks within the
+// window piggyback on the pending flush. saveCFAutoLocked rewrites the entire
+// JSON file, so coalescing 100 markDomainCF calls during a parser run into a
+// single write avoids a hot rewrite cycle.
+func markCFAutoDirtyLocked() {
+	if cfAutoPath == "" {
+		return
+	}
+	cfAutoDirty = true
+	if cfAutoFlushTmr != nil {
+		return
+	}
+	cfAutoFlushTmr = time.AfterFunc(cfAutoFlushDelay, func() {
+		cfAutoMu.Lock()
+		defer cfAutoMu.Unlock()
+		cfAutoFlushTmr = nil
+		if !cfAutoDirty {
+			return
+		}
+		cfAutoDirty = false
+		saveCFAutoLocked()
+	})
+}
+
+// FlushCFAuto persists pending CF-auto changes immediately. Call on shutdown.
+func FlushCFAuto() {
+	cfAutoMu.Lock()
+	defer cfAutoMu.Unlock()
+	if cfAutoFlushTmr != nil {
+		cfAutoFlushTmr.Stop()
+		cfAutoFlushTmr = nil
+	}
+	if !cfAutoDirty {
+		return
+	}
+	cfAutoDirty = false
+	saveCFAutoLocked()
 }
 
 // SetCFAutoPersistFile enables on-disk persistence of the auto-CF registry.
@@ -101,7 +146,7 @@ func markDomainCF(domain string) {
 	cfAutoMu.Lock()
 	_, existed := cfAutoMap[domain]
 	cfAutoMap[domain] = time.Now()
-	saveCFAutoLocked()
+	markCFAutoDirtyLocked()
 	cfAutoMu.Unlock()
 	if !existed {
 		log.Printf("cf-auto: detected CloudFlare on %s — future requests will use flaresolverr", domain)
@@ -143,13 +188,13 @@ func ClearCFAuto(domain string) int {
 	if domain == "" {
 		n := len(cfAutoMap)
 		cfAutoMap = make(map[string]time.Time)
-		saveCFAutoLocked()
+		markCFAutoDirtyLocked()
 		return n
 	}
 	if _, ok := cfAutoMap[domain]; !ok {
 		return 0
 	}
 	delete(cfAutoMap, domain)
-	saveCFAutoLocked()
+	markCFAutoDirtyLocked()
 	return 1
 }

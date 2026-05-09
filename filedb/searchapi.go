@@ -84,6 +84,10 @@ func (db *DB) JackettSearch(p SearchParams) (JackettResult, error) {
 	}
 	isSerial = mapCategory(isSerial, p.CategoryRaw)
 
+	// `t` arrives owned: OpenRead returns a deep-copy bucket per call (see
+	// filedb/evercache.go:ecGet), so each torrent map is unique to this
+	// search. Storing it directly avoids cloning every result — saves ~50
+	// allocations per torrent × thousands of search hits.
 	add := func(t TorrentDetails) {
 		if !db.trackerAllowed(asString(t["trackerName"])) {
 			return
@@ -94,11 +98,11 @@ func (db *DB) JackettSearch(p SearchParams) (JackettResult, error) {
 		}
 		if prev, ok := torrents[urlv]; ok {
 			if torrentTime(t, "updateTime").After(torrentTime(prev, "updateTime")) {
-				torrents[urlv] = cloneTorrent(t)
+				torrents[urlv] = t
 			}
 			return
 		}
-		torrents[urlv] = cloneTorrent(t)
+		torrents[urlv] = t
 	}
 
 	if strings.TrimSpace(title) != "" || strings.TrimSpace(titleOriginal) != "" {
@@ -244,6 +248,7 @@ func (db *DB) TorrentsSearch(p TorrentsParams) ([]TorrentDetails, error) {
 	}
 	mdb := db.MasterEntries()
 	torrents := map[string]TorrentDetails{}
+	// See add() in JackettSearch for why cloneTorrent is unnecessary here.
 	add := func(t TorrentDetails) {
 		if !db.trackerAllowed(asString(t["trackerName"])) {
 			return
@@ -254,11 +259,11 @@ func (db *DB) TorrentsSearch(p TorrentsParams) ([]TorrentDetails, error) {
 		}
 		if prev, ok := torrents[urlv]; ok {
 			if torrentTime(t, "updateTime").After(torrentTime(prev, "updateTime")) {
-				torrents[urlv] = cloneTorrent(t)
+				torrents[urlv] = t
 			}
 			return
 		}
-		torrents[urlv] = cloneTorrent(t)
+		torrents[urlv] = t
 	}
 	_s := core.SearchName(search)
 	_alt := core.SearchName(p.AltName)
