@@ -80,9 +80,10 @@ func UpdateFullDetails(t TorrentDetails) {
 
 	// voices
 	voices := map[string]struct{}{}
-	if trackerName == "lostfilm" {
+	switch trackerName {
+	case "lostfilm":
 		voices["LostFilm"] = struct{}{}
-	} else if trackerName == "hdrezka" {
+	case "hdrezka":
 		voices["HDRezka"] = struct{}{}
 	}
 	if reDub.MatchString(titleLower) {
@@ -332,29 +333,29 @@ func setToSlice(m map[string]struct{}) []string {
 // ---- regexps ----
 
 var (
-	reQ4K   = regexp.MustCompile(`(4k|uhd)( |\]|,|$)`)
-	reHDR   = regexp.MustCompile(`(\[|,| )hdr(10| |\]|,|$)`)
+	reQ4K    = regexp.MustCompile(`(4k|uhd)( |\]|,|$)`)
+	reHDR    = regexp.MustCompile(`(\[|,| )hdr(10| |\]|,|$)`)
 	reHDRBit = regexp.MustCompile(`(10-bit|10 bit|10-бит|10 бит|hdr10)`)
-	reSDR   = regexp.MustCompile(`(\[|,| )sdr( |\]|,|$)`)
-	reDub   = regexp.MustCompile(`( |x)(d|dub|дб|дуб|дубляж)(,| )`)
+	reSDR    = regexp.MustCompile(`(\[|,| )sdr( |\]|,|$)`)
+	reDub    = regexp.MustCompile(`( |x)(d|dub|дб|дуб|дубляж)(,| )`)
 
 	reSizeInfo = regexp.MustCompile(`(?i)([0-9.,]+) (Mb|МБ|GB|ГБ|TB|ТБ)`)
 
-	reSeasonCheck  = regexp.MustCompile(`(?i)([0-9]+(\-[0-9]+)?x[0-9]+|сезон|s[0-9]+)`)
-	reMultiSeason  = regexp.MustCompile(`(?i)([0-9]+\-[0-9]+x[0-9]+|[0-9]+\-[0-9]+ сезон|s[0-9]+\-s?[0-9]+)`)
-	reNxN          = regexp.MustCompile(`(?i)[0-9]+x[0-9]+`)
-	reSezonWord    = regexp.MustCompile(`(?i)[0-9]+ сезон`)
-	reSNum         = regexp.MustCompile(`(?i)s[0-9]+`)
-	reMultiNxN     = regexp.MustCompile(`(?i)([0-9]+)\-([0-9]+)x`)
-	reMultiSezon   = regexp.MustCompile(`(?i)([0-9]+)\-([0-9]+) сезон`)
-	reMultiSNum    = regexp.MustCompile(`(?i)s([0-9]+)\-s?([0-9]+)`)
-	reOneSezon     = regexp.MustCompile(`(?i)([0-9]+) сезон`)
-	reSezonColon      = regexp.MustCompile(`(?i)сезон(ы|и)?:? [0-9]+`)
-	reSezonColonRange = regexp.MustCompile(`(?i)сезон(ы|и)?:? [0-9]+\-[0-9]+`)
+	reSeasonCheck      = regexp.MustCompile(`(?i)([0-9]+(\-[0-9]+)?x[0-9]+|сезон|s[0-9]+)`)
+	reMultiSeason      = regexp.MustCompile(`(?i)([0-9]+\-[0-9]+x[0-9]+|[0-9]+\-[0-9]+ сезон|s[0-9]+\-s?[0-9]+)`)
+	reNxN              = regexp.MustCompile(`(?i)[0-9]+x[0-9]+`)
+	reSezonWord        = regexp.MustCompile(`(?i)[0-9]+ сезон`)
+	reSNum             = regexp.MustCompile(`(?i)s[0-9]+`)
+	reMultiNxN         = regexp.MustCompile(`(?i)([0-9]+)\-([0-9]+)x`)
+	reMultiSezon       = regexp.MustCompile(`(?i)([0-9]+)\-([0-9]+) сезон`)
+	reMultiSNum        = regexp.MustCompile(`(?i)s([0-9]+)\-s?([0-9]+)`)
+	reOneSezon         = regexp.MustCompile(`(?i)([0-9]+) сезон`)
+	reSezonColon       = regexp.MustCompile(`(?i)сезон(ы|и)?:? [0-9]+`)
+	reSezonColonRange  = regexp.MustCompile(`(?i)сезон(ы|и)?:? [0-9]+\-[0-9]+`)
 	reSezonColonRangeG = regexp.MustCompile(`(?i)сезон(ы|и)?:? ([0-9]+)\-([0-9]+)`)
-	reSezonColonOne = regexp.MustCompile(`(?i)сезон(ы|и)?:? ([0-9]+)`)
-	reOneNxN       = regexp.MustCompile(`(?i)([0-9]+)x`)
-	reOneSNum      = regexp.MustCompile(`(?i)s([0-9]+)`)
+	reSezonColonOne    = regexp.MustCompile(`(?i)сезон(ы|и)?:? ([0-9]+)`)
+	reOneNxN           = regexp.MustCompile(`(?i)([0-9]+)x`)
+	reOneSNum          = regexp.MustCompile(`(?i)s([0-9]+)`)
 )
 
 // ---- voice lists (ported from C# FileDB.cs) ----
