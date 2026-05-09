@@ -374,9 +374,22 @@ func (s *Server) handleTorrents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	q := r.URL.Query()
+	search := firstQueryURL(q, "search", "q")
+	altname := firstQueryURL(q, "altname", "altName")
+	// Resolve raw "tt12345" / "kp326" inputs to a real title before the
+	// search hits the local DB. Mirrors the C# original
+	// (jacred ApiController.cs:683-711). On API failure we drop the search
+	// to empty so the handler returns no results — same behavior as upstream
+	// when the metadata service can't translate the id.
+	if resolvedSearch, resolvedAlt, ok := resolveKPImdb(r.Context(), search); ok {
+		search = resolvedSearch
+		if resolvedAlt != "" {
+			altname = resolvedAlt
+		}
+	}
 	items, err := s.DB.TorrentsSearch(filedb.TorrentsParams{
-		Search:    firstQueryURL(q, "search", "q"),
-		AltName:   firstQueryURL(q, "altname", "altName"),
+		Search:    search,
+		AltName:   altname,
 		Exact:     parseBool(firstQueryURL(q, "exact")),
 		Type:      firstQueryURL(q, "type"),
 		Sort:      firstQueryURL(q, "sort"),
