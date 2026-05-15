@@ -1024,7 +1024,11 @@ func (f *Fetcher) solveFlare(rawURL, domain string, forceRender bool) (*flareSes
 		Cmd:               "request.get",
 		URL:               solveURL,
 		MaxTimeout:        90000,
-		WaitInSeconds:     2,
+		// 8s wait covers slow custom anti-bot JS challenges (e.g. nnmclub's
+		// eb927f21fc_* cookies set a ~2s delay + verification). At 2s the
+		// browser snapshot caught only Yandex.Metrica cookies, missing both
+		// the anti-bot tokens and phpBB anonymous session.
+		WaitInSeconds:     8,
 		Session:           browserID,
 		SessionTTLMinutes: int(flareSessionTTL / time.Minute),
 	})
