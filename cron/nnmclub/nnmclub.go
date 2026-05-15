@@ -179,41 +179,39 @@ func (p *Parser) takeLogin(ctx context.Context) error {
 		},
 	}
 
-	// Step A: GET /forum/login.php to obtain anonymous phpbb2mysql_data /
-	// phpbb2mysql_sid cookies and to parse hidden CSRF fields (creation_time,
-	// form_token) that recent phpBB releases require. Submitting credentials
-	// without these makes phpBB silently drop the POST and return the index
-	// page instead of either a login form (with error) or a redirect (on
-	// success), which is exactly the symptom we're seeing.
-	getReq, err := http.NewRequestWithContext(ctx, http.MethodGet, loginURL, nil)
-	if err != nil {
-		return err
-	}
-	getReq.Header.Set("User-Agent", flareUA)
-	if strings.TrimSpace(cfCookies) != "" {
-		getReq.Header.Set("Cookie", cfCookies)
-	}
-	getResp, err := loginClient.Do(getReq)
+	// Step A: GET /forum/login.php through flaresolverr — same path as the
+	// listing fetches that we know work. Plain http.Client requests come back
+	// as the site's main page (anti-bot proxy upstream of phpBB never even
+	// forwards the request when the client isn't a real browser), so we never
+	// see the form HTML or anonymous phpbb2mysql cookies needed for login.
+	// Going through Camoufox loads the page like a real visitor, which lets
+	// us parse hidden CSRF fields and gather the anonymous session.
+	tsGet := p.Config.NNMClub
+	tsGet.Cookie = "" // start clean so phpBB initializes a fresh anon session
+	getResult, err := p.Fetcher.Get(loginURL, tsGet)
 	if err != nil {
 		log.Printf("nnmclub: login form fetch error: %v", err)
 		return err
 	}
-	getBytes, _ := io.ReadAll(io.LimitReader(getResp.Body, 64<<10))
-	getResp.Body.Close()
-	formHTML := core.DecodeCP1251(getBytes)
-
-	// Collect anonymous phpBB cookies from the GET response and merge with cf.
-	anonParts := []string{}
-	for _, line := range getResp.Header.Values("Set-Cookie") {
-		anonParts = append(anonParts, strings.SplitN(line, ";", 2)[0])
+	formHTML := core.DecodeCP1251(getResult.Body)
+	// flaresolverr persists the browser jar (cf + phpBB session) under the
+	// domain key — pull it back as the cookie set we'll send with the POST.
+	flareSessionCookies, flareSessionUA, hasFlareSession := p.Fetcher.PeekFlareCookies(loginURL)
+	if hasFlareSession && strings.TrimSpace(flareSessionUA) != "" {
+		flareUA = flareSessionUA
 	}
-	anonCookies := strings.Join(anonParts, "; ")
-	postCookie := core.MergeCookieStrings(cfCookies, anonCookies)
-	log.Printf("nnmclub: login form GET status=%d set-cookie-count=%d", getResp.StatusCode, len(anonParts))
+	postCookie := core.MergeCookieStrings(cfCookies, flareSessionCookies)
+	log.Printf("nnmclub: login form GET status=%d body=%d flare-cookies=%d",
+		getResult.StatusCode, len(getResult.Body), strings.Count(flareSessionCookies, "=")+boolToInt(flareSessionCookies != "" && !strings.Contains(flareSessionCookies, "=")))
 
 	hidden := extractHiddenInputs(formHTML)
 	if _, ok := hidden["creation_time"]; ok {
 		log.Printf("nnmclub: form CSRF tokens present (creation_time + form_token)")
+	}
+	if !strings.Contains(formHTML, `name="username"`) && !strings.Contains(formHTML, `name='username'`) {
+		// flaresolverr returned the fallback main page rather than the login
+		// form — typical when the anti-bot upstream serves a soft block.
+		log.Printf("nnmclub: login form HTML does not contain username field — anti-bot soft-block? body-peek: %.300s", strings.ReplaceAll(formHTML, "\n", " "))
 	}
 
 	// Step B: POST with anonymous phpBB cookies + cf_clearance + CSRF fields.
@@ -1013,6 +1011,13 @@ func asString(v any) string {
 		return fmt.Sprint(v)
 	}
 }
+func boolToInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}
+
 var hiddenInputRe = regexp.MustCompile(`(?is)<input\b[^>]*\btype\s*=\s*["']hidden["'][^>]*>`)
 var hiddenAttrRe = regexp.MustCompile(`(?is)\b(name|value)\s*=\s*["']([^"']*)["']`)
 
