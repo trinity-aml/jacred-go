@@ -17,9 +17,16 @@ import (
 	"jacred/filedb"
 )
 
+// Candidate holds only the fields ProcessOnce actually reads.
+// Previously this carried the entire filedb.TorrentDetails map (~30 fields
+// per torrent), kept alive for the full ProcessOnce loop (up to 30 days for
+// typetask 3-5). Across 5 parallel typetask goroutines that pinned a huge
+// chunk of the DB in RAM for weeks.
 type Candidate struct {
 	Key     string
-	Torrent filedb.TorrentDetails
+	Magnet  string
+	Attempt int
+	Types   []string
 }
 
 type Manager struct {
@@ -166,7 +173,11 @@ func (m *Manager) Add(ctx context.Context, magnet string, currentAttempt int, ty
 }
 
 func (m *Manager) CollectCandidates(typetask int, now time.Time) []Candidate {
-	torrents := make([]Candidate, 0)
+	type sortable struct {
+		c          Candidate
+		updateTime time.Time
+	}
+	tmp := make([]sortable, 0)
 	for _, item := range m.FileDB.OrderedMasterEntries() {
 		bucket, err := m.FileDB.OpenRead(item.Key)
 		if err != nil {
@@ -188,15 +199,25 @@ func (m *Manager) CollectCandidates(typetask int, now time.Time) []Candidate {
 				continue
 			}
 			if typetask == 1 || typetask == 2 || toInt(t["sid"]) > 0 {
-				torrents = append(torrents, Candidate{Key: item.Key, Torrent: t})
+				tmp = append(tmp, sortable{
+					c: Candidate{
+						Key:     item.Key,
+						Magnet:  magnet,
+						Attempt: toInt(t["ffprobe_tryingdata"]),
+						Types:   types,
+					},
+					updateTime: toTime(t["updateTime"]),
+				})
 			}
 		}
 	}
-	sort.Slice(torrents, func(i, j int) bool {
-		ti := toTime(torrents[i].Torrent["updateTime"])
-		tj := toTime(torrents[j].Torrent["updateTime"])
-		return ti.After(tj)
+	sort.Slice(tmp, func(i, j int) bool {
+		return tmp[i].updateTime.After(tmp[j].updateTime)
 	})
+	torrents := make([]Candidate, len(tmp))
+	for i := range tmp {
+		torrents[i] = tmp[i].c
+	}
 	return torrents
 }
 
@@ -249,8 +270,7 @@ func (m *Manager) ProcessOnce(ctx context.Context, typetask int, now time.Time) 
 		if (typetask == 3 || typetask == 4 || typetask == 5) && time.Since(startTime) > 30*24*time.Hour {
 			break
 		}
-		magnet := toString(c.Torrent["magnet"])
-		if _, ok := m.TracksDB.GetByMagnet(magnet, nil, false); ok {
+		if _, ok := m.TracksDB.GetByMagnet(c.Magnet, nil, false); ok {
 			continue
 		}
 		select {
@@ -258,7 +278,7 @@ func (m *Manager) ProcessOnce(ctx context.Context, typetask int, now time.Time) 
 			return processed, ctx.Err()
 		case <-time.After(m.GetRandomDelay()):
 		}
-		if err := m.Add(ctx, magnet, toInt(c.Torrent["ffprobe_tryingdata"]), toStringSlice(c.Torrent["types"]), c.Key, typetask); err == nil {
+		if err := m.Add(ctx, c.Magnet, c.Attempt, c.Types, c.Key, typetask); err == nil {
 			processed++
 		}
 	}

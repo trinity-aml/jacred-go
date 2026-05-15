@@ -13,14 +13,27 @@ import (
 	"sync"
 )
 
+// DB indexes which infohashes have on-disk ffprobe results.
+// We deliberately do NOT keep parsed FFProbeModels in RAM: the previous
+// design loaded every probed torrent's full streams/tags structure on
+// startup and cached every miss from GetByInfoHash forever. With tens of
+// thousands of probed torrents this grew to hundreds of MB and never
+// shrank. The index keeps only the infohash key (~40 bytes); per-call
+// disk reads of ~1KB JSON files are cheap.
 type DB struct {
 	dataDir string
 	mu      sync.RWMutex
-	items   map[string]FFProbeModel
+	present map[string]struct{}
 }
 
-func New(dataDir string) *DB { return &DB{dataDir: dataDir, items: map[string]FFProbeModel{}} }
-func (db *DB) Count() int    { db.mu.RLock(); defer db.mu.RUnlock(); return len(db.items) }
+func New(dataDir string) *DB {
+	return &DB{dataDir: dataDir, present: map[string]struct{}{}}
+}
+func (db *DB) Count() int {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	return len(db.present)
+}
 
 func (db *DB) Path(infohash string, createFolder bool) (string, error) {
 	infohash = normalizeInfoHash(infohash)
@@ -49,6 +62,10 @@ func TheBad(types []string) bool {
 	return false
 }
 
+// Load walks the on-disk tracks tree and records which infohashes have
+// ffprobe results. It does not parse the JSON files — we only need to
+// know "does an entry exist?" for the hot GetByMagnet path. Actual
+// FFProbeModel decoding happens lazily per query.
 func (db *DB) Load() error {
 	base := filepath.Join(db.dataDir, "tracks")
 	if _, err := os.Stat(base); err != nil {
@@ -57,7 +74,7 @@ func (db *DB) Load() error {
 		}
 		return err
 	}
-	loaded := map[string]FFProbeModel{}
+	loaded := map[string]struct{}{}
 	err := filepath.Walk(base, func(path string, info os.FileInfo, err error) error {
 		if err != nil || info == nil || info.IsDir() {
 			return err
@@ -71,33 +88,30 @@ func (db *DB) Load() error {
 			return nil
 		}
 		infohash := strings.ToLower(parts[0] + parts[1] + parts[2])
-		b, err := os.ReadFile(path)
-		if err != nil {
+		if info.Size() < 16 {
 			return nil
 		}
-		var model FFProbeModel
-		if err := json.Unmarshal(b, &model); err != nil || len(model.Streams) == 0 {
-			return nil
-		}
-		loaded[infohash] = model
+		loaded[infohash] = struct{}{}
 		return nil
 	})
 	if err != nil {
 		return err
 	}
 	db.mu.Lock()
-	db.items = loaded
+	db.present = loaded
 	db.mu.Unlock()
 	return nil
 }
 
 func (db *DB) GetByInfoHash(infohash string) ([]FFStream, bool) {
 	infohash = normalizeInfoHash(infohash)
+	// Index probe first — avoids stat() and an open() for the common
+	// "no ffprobe data yet" case on the hot prepareBucketDetails path.
 	db.mu.RLock()
-	model, ok := db.items[infohash]
+	_, present := db.present[infohash]
 	db.mu.RUnlock()
-	if ok && len(model.Streams) > 0 {
-		return model.Streams, true
+	if !present {
+		return nil, false
 	}
 	path, err := db.Path(infohash, false)
 	if err != nil {
@@ -105,15 +119,16 @@ func (db *DB) GetByInfoHash(infohash string) ([]FFStream, bool) {
 	}
 	b, err := os.ReadFile(path)
 	if err != nil {
+		// File disappeared since Load — drop from index.
+		db.mu.Lock()
+		delete(db.present, infohash)
+		db.mu.Unlock()
 		return nil, false
 	}
 	var loaded FFProbeModel
 	if err := json.Unmarshal(b, &loaded); err != nil || len(loaded.Streams) == 0 {
 		return nil, false
 	}
-	db.mu.Lock()
-	db.items[infohash] = loaded
-	db.mu.Unlock()
 	return loaded.Streams, true
 }
 
@@ -148,7 +163,7 @@ func (db *DB) Put(infohash string, model FFProbeModel) error {
 		return err
 	}
 	db.mu.Lock()
-	db.items[normalizeInfoHash(infohash)] = model
+	db.present[normalizeInfoHash(infohash)] = struct{}{}
 	db.mu.Unlock()
 	return nil
 }
