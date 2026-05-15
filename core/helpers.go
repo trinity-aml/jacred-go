@@ -124,8 +124,9 @@ func AsInt(v any) int {
 		i, _ := n.Int64()
 		return int(i)
 	case string:
-		var i int
-		_, _ = fmt.Sscanf(strings.TrimSpace(n), "%d", &i)
+		// strconv.Atoi is ~10× faster than fmt.Sscanf and avoids escaping
+		// the int destination to the heap via &i.
+		i, _ := strconv.Atoi(strings.TrimSpace(n))
 		return i
 	case nil:
 		return 0

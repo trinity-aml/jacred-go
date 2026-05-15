@@ -112,6 +112,29 @@ func (p *Parser) getCookie() string {
 	return ""
 }
 
+// invalidateCookie drops the in-memory and on-disk auth cookie so the next
+// ensureLogin re-runs takeLogin. Called when a listing response comes back
+// as the login form — that's a reliable signal that bb_session has expired
+// server-side (rutracker often invalidates sessions well before our 2-hour
+// local TTL fires).
+func (p *Parser) invalidateCookie() {
+	p.cookieMu.Lock()
+	p.cookie = ""
+	p.cookieT = time.Time{}
+	p.cookieMu.Unlock()
+	_ = core.DefaultSessionStore().DeleteAuth(p.domain)
+}
+
+// looksLikeRutrackerLoginForm returns true when the HTML body is the login
+// page rather than a forum listing. rutracker login form posts to
+// /forum/login.php with input name="login_username"; that input never
+// appears on a regular topic listing (which contains class="torTopic"
+// instead). Both checks together avoid false positives on edge pages.
+func looksLikeRutrackerLoginForm(htmlBody string) bool {
+	return strings.Contains(htmlBody, `name="login_username"`) &&
+		!strings.Contains(htmlBody, `class="torTopic"`)
+}
+
 func (p *Parser) takeLogin(ctx context.Context) bool {
 	host := strings.TrimRight(p.Config.Rutracker.Host, "/")
 	if host == "" || p.Config.Rutracker.Login.U == "" {
@@ -231,6 +254,13 @@ func (p *Parser) UpdateTasksParse(ctx context.Context) (map[string][]Task, error
 		htmlBody, err := p.fetchCategoryRoot(ctx, cat)
 		if err != nil {
 			continue
+		}
+		// Same expiry guard as parsePage: pagination regex on a login page
+		// silently matches nothing and we'd save a degenerate task list.
+		if looksLikeRutrackerLoginForm(htmlBody) {
+			log.Printf("rutracker: cat=%s root returned login form (cookie expired, invalidating)", cat)
+			p.invalidateCookie()
+			break
 		}
 		maxPages := 0
 		if m := forumPagesRe.FindStringSubmatch(htmlBody); len(m) > 1 {
@@ -456,6 +486,14 @@ func (p *Parser) parsePage(ctx context.Context, cat string, page int) ([]filedb.
 	if strings.TrimSpace(htmlBody) == "" {
 		return nil, nil
 	}
+	// Detect session expiry: rutracker server-side TTL is often shorter than
+	// our 2-hour local cookieT — without this check the parser would keep
+	// hitting the login wall until the local TTL eventually rolled over.
+	if looksLikeRutrackerLoginForm(htmlBody) {
+		log.Printf("rutracker: cat=%s page=%d returned login form (cookie expired, invalidating)", cat, page)
+		p.invalidateCookie()
+		return nil, nil
+	}
 	rows := strings.Split(replaceBadNames(htmlBody), `class="torTopic"`)
 	out := make([]filedb.TorrentDetails, 0, len(rows))
 	for _, row := range rows[1:] {
@@ -488,8 +526,8 @@ func (p *Parser) saveTorrents(ctx context.Context, torrents []filedb.TorrentDeta
 	added, updated, skipped, duplicates, failed := 0, 0, 0, 0, 0
 	skipCached, skipSame, skipEmpty := 0, 0, 0
 	plog := core.NewParserLog(trackerName, filepath.Join(p.DB.DataDir, "log"), p.Config.LogParsers && p.Config.Rutracker.Log)
-	bucketCache := map[string]map[string]filedb.TorrentDetails{}
-	changed := map[string]time.Time{}
+	bucketCache := make(map[string]map[string]filedb.TorrentDetails, len(torrents))
+	changed := make(map[string]time.Time, len(torrents))
 	if seenURLs == nil {
 		seenURLs = map[string]struct{}{}
 	}

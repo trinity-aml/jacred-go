@@ -242,8 +242,8 @@ func convertTorrent(host string, it apiTorrent) (filedb.TorrentDetails, bool) {
 func (p *Parser) saveTorrents(items []filedb.TorrentDetails) (int, int, int, int, error) {
 	added, updated, skipped, failed := 0, 0, 0, 0
 	plog := core.NewParserLog(trackerName, filepath.Join(p.DB.DataDir, "log"), p.Config.LogParsers && p.Config.Aniliberty.Log)
-	bucketCache := map[string]map[string]filedb.TorrentDetails{}
-	changed := map[string]time.Time{}
+	bucketCache := make(map[string]map[string]filedb.TorrentDetails, len(items))
+	changed := make(map[string]time.Time, len(items))
 	for _, incoming := range items {
 		key := p.DB.KeyDb(asString(incoming["name"]), asString(incoming["originalname"]))
 		if strings.TrimSpace(key) == "" || key == ":" {

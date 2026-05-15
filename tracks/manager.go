@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -316,8 +317,7 @@ func toInt(v any) int {
 		i, _ := n.Int64()
 		return int(i)
 	case string:
-		var i int
-		_, _ = fmt.Sscanf(strings.TrimSpace(n), "%d", &i)
+		i, _ := strconv.Atoi(strings.TrimSpace(n))
 		return i
 	default:
 		return 0

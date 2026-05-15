@@ -216,8 +216,8 @@ func (p *Parser) saveTorrents(ctx context.Context, cookie string, torrents []fil
 	parsedCount := len(torrents)
 	addedCount, updatedCount, skippedCount, failedCount := 0, 0, 0, 0
 	plog := core.NewParserLog(trackerName, filepath.Join(p.DB.DataDir, "log"), p.Config.LogParsers && p.Config.Animelayer.Log)
-	bucketCache := map[string]map[string]filedb.TorrentDetails{}
-	changed := map[string]time.Time{}
+	bucketCache := make(map[string]map[string]filedb.TorrentDetails, len(torrents))
+	changed := make(map[string]time.Time, len(torrents))
 
 	for _, t := range torrents {
 		key := p.DB.KeyDb(asString(t["name"]), asString(t["originalname"]))

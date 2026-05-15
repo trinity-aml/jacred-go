@@ -71,7 +71,7 @@ func (db *DB) MasterEntries() map[string]TorrentInfo {
 
 func (db *DB) JackettSearch(p SearchParams) (JackettResult, error) {
 	fastdb := db.FastDB()
-	torrents := map[string]TorrentDetails{}
+	torrents := make(map[string]TorrentDetails, 64)
 	rqnum := p.IsSerial == -1 && p.UserAgent == "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/106.0.0.0 Safari/537.36"
 
 	query, title, titleOriginal, year, isSerial := p.Query, p.Title, p.TitleOriginal, p.Year, p.IsSerial
@@ -247,7 +247,7 @@ func (db *DB) TorrentsSearch(p TorrentsParams) ([]TorrentDetails, error) {
 		return []TorrentDetails{}, nil
 	}
 	mdb := db.MasterEntries()
-	torrents := map[string]TorrentDetails{}
+	torrents := make(map[string]TorrentDetails, 64)
 	// See add() in JackettSearch for why cloneTorrent is unnecessary here.
 	add := func(t TorrentDetails) {
 		if !db.trackerAllowed(asString(t["trackerName"])) {
@@ -267,7 +267,7 @@ func (db *DB) TorrentsSearch(p TorrentsParams) ([]TorrentDetails, error) {
 	}
 	_s := core.SearchName(search)
 	_alt := core.SearchName(p.AltName)
-	keys := []string{}
+	keys := make([]string, 0, 64)
 	if p.Exact {
 		for key := range mdb {
 			if strings.HasPrefix(key, _s+":") || strings.HasSuffix(key, ":"+_s) || (_alt != "" && strings.Contains(key, _alt)) {
@@ -626,12 +626,12 @@ func orderTorrentValues(m map[string]TorrentDetails) []TorrentDetails {
 }
 
 func mergeDuplicateMagnets(items []TorrentDetails) []TorrentDetails {
-	temp := map[string]struct {
+	temp := make(map[string]struct {
 		torrent      TorrentDetails
 		title        string
 		name         string
 		announceURLs []string
-	}{}
+	}, len(items))
 	for _, torrent := range items {
 		hex, name, announces := parseMagnet(asString(torrent["magnet"]))
 		if hex == "" {

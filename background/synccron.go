@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -438,9 +439,8 @@ func readInt64File(path string, def int64) int64 {
 		return def
 	}
 	s := strings.TrimSpace(string(data))
-	var v int64
-	_, err = fmt.Sscanf(s, "%d", &v)
-	if err != nil {
+	v, parseErr := strconv.ParseInt(s, 10, 64)
+	if parseErr != nil {
 		return def
 	}
 	return v

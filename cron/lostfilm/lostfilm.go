@@ -584,8 +584,8 @@ func (p *Parser) collectFromMovies(ctx context.Context, htmlBody, host, cookie s
 func (p *Parser) saveTorrents(ctx context.Context, host, cookie string, torrents []filedb.TorrentDetails) (int, int, int, int, int, int, error) {
 	added, updated, skipped, failed, fromCache, noMagnet := 0, 0, 0, 0, 0, 0
 	plog := core.NewParserLog(trackerName, filepath.Join(p.DB.DataDir, "log"), p.Config.LogParsers && p.Config.Lostfilm.Log)
-	bucketCache := map[string]map[string]filedb.TorrentDetails{}
-	changed := map[string]time.Time{}
+	bucketCache := make(map[string]map[string]filedb.TorrentDetails, len(torrents))
+	changed := make(map[string]time.Time, len(torrents))
 	for _, incoming := range torrents {
 		key := p.DB.KeyDb(asString(incoming["name"]), asString(incoming["originalname"]))
 		if strings.TrimSpace(key) == "" || key == ":" {

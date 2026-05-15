@@ -1,7 +1,6 @@
 package filedb
 
 import (
-	"compress/gzip"
 	"context"
 	"crypto/md5"
 	"encoding/json"
@@ -13,6 +12,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"jacred/core"
 )
 
 type MasterEntry struct {
@@ -183,11 +184,12 @@ func (db *DB) doSave() error {
 	if err != nil {
 		return err
 	}
-	gz := gzip.NewWriter(f)
+	gz := core.AcquireGzipWriter(f)
 	enc := json.NewEncoder(gz)
 	enc.SetEscapeHTML(false)
 	encErr := enc.Encode(master)
 	gzErr := gz.Close()
+	core.ReleaseGzipWriter(gz)
 	fErr := f.Close()
 	if encErr != nil {
 		_ = os.Remove(tmp)
@@ -529,7 +531,8 @@ func writeBucket(path string, bucket map[string]TorrentDetails) error {
 		return err
 	}
 	defer f.Close()
-	gz := gzip.NewWriter(f)
+	gz := core.AcquireGzipWriter(f)
+	defer core.ReleaseGzipWriter(gz)
 	enc := json.NewEncoder(gz)
 	enc.SetEscapeHTML(false)
 	if err := enc.Encode(bucket); err != nil {

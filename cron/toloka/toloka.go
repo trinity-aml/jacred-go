@@ -488,16 +488,41 @@ func (p *Parser) parsePage(ctx context.Context, cat string, page int) ([]parseIt
 	if err != nil {
 		return nil, err
 	}
-	if htmlBody == "" || !strings.Contains(htmlBody, `<html lang="uk"`) {
-		// Page didn't render as the Ukrainian forum view. Most common cause:
-		// session cookie expired and toloka 302'd us to /login.php (whose body
-		// our http.Client transparently followed). Invalidate the cookie so
-		// the next call re-authenticates.
-		log.Printf("toloka: page check failed cat=%s page=%d bodyLen=%d (cookie likely expired, invalidating)", cat, page, len(htmlBody))
+	if htmlBody == "" {
+		return nil, nil
+	}
+	// Expired-cookie detection: when the session cookie no longer authenticates,
+	// toloka serves /login.php in place of the forum view. The login page is
+	// also <html lang="uk">, so a language-tag check is not enough — match the
+	// form's action attribute (name="username"/"password" inputs only appear
+	// on /login.php, never on a listing). The previous lang-only check missed
+	// expiry and the parser kept fetching 0 rows until config reload.
+	if looksLikeTolokaLoginForm(htmlBody) {
+		log.Printf("toloka: cat=%s page=%d returned login form (cookie expired, invalidating)", cat, page)
 		p.invalidateCookie()
 		return nil, nil
 	}
+	if !strings.Contains(htmlBody, `<html lang="uk"`) {
+		// Body is neither the login form nor a Ukrainian forum view — toloka
+		// probably returned an error/maintenance page. Don't drop the cookie
+		// (it may still be valid), just skip this page.
+		log.Printf("toloka: cat=%s page=%d unexpected body (bodyLen=%d, not login form, not uk forum)", cat, page, len(htmlBody))
+		return nil, nil
+	}
 	return parsePageHTML(strings.TrimRight(p.Config.Toloka.Host, "/"), cat, htmlBody), nil
+}
+
+// looksLikeTolokaLoginForm returns true when the response is /login.php
+// rendered in place of the requested listing. Matches the login form's
+// signature: a form posting to login.php with username/password inputs.
+// Listing pages never contain this combination.
+func looksLikeTolokaLoginForm(htmlBody string) bool {
+	if !strings.Contains(htmlBody, `action="login.php"`) &&
+		!strings.Contains(htmlBody, `action='login.php'`) {
+		return false
+	}
+	return strings.Contains(htmlBody, `name="username"`) &&
+		strings.Contains(htmlBody, `name="password"`)
 }
 
 func matchDecode(re *regexp.Regexp, s string) string {
@@ -612,8 +637,8 @@ func parsePageHTML(host, cat, htmlBody string) []parseItem {
 func (p *Parser) saveTorrents(ctx context.Context, items []parseItem) (int, int, int, int, error) {
 	added, updated, skipped, failed := 0, 0, 0, 0
 	plog := core.NewParserLog(trackerName, filepath.Join(p.DB.DataDir, "log"), p.Config.LogParsers && p.Config.Toloka.Log)
-	bucketCache := map[string]map[string]filedb.TorrentDetails{}
-	changed := map[string]time.Time{}
+	bucketCache := make(map[string]map[string]filedb.TorrentDetails, len(items))
+	changed := make(map[string]time.Time, len(items))
 	cookie, err := p.ensureCookie(ctx)
 	if err != nil {
 		return added, updated, skipped, failed, err

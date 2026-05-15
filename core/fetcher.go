@@ -42,8 +42,9 @@ var (
 	// same domain wait for the first solve and then reuse the cached cookies
 	// instead of each spawning Chrome. lastUsed tracks recency; entries idle
 	// longer than flareDomainLockTTL are swept opportunistically.
+	// Sized to fit all configured trackers without rehash at startup.
 	flareDomainMu       sync.Mutex
-	flareDomainLocks    = make(map[string]*domainLockEntry)
+	flareDomainLocks    = make(map[string]*domainLockEntry, 32)
 	flareDomainSweepCnt int
 
 	// flareSolveWG tracks in-flight solves so CloseFlareService can wait for them.
@@ -55,14 +56,14 @@ var (
 	// retry immediately after a 90s timeout get a fast 503 instead of spawning
 	// another Chrome that almost certainly times out again.
 	flareFailMu   sync.RWMutex
-	flareLastFail = make(map[string]time.Time)
+	flareLastFail = make(map[string]time.Time, 32)
 
 	// Idle-session reaper: destroy flaresolverr-go browser sessions that
 	// haven't been used for flareSessionIdleTTL so Camoufox doesn't sit in
 	// RAM between cron runs. One session ≈ 800–1000 MB resident; without
 	// reaping, every domain we solve once pins a browser until jacred exits.
 	flareLastUsedMu sync.Mutex
-	flareLastUsed   = make(map[string]time.Time)
+	flareLastUsed   = make(map[string]time.Time, 8)
 
 	flareReaperStop chan struct{}
 	flareReaperDone chan struct{}
@@ -970,7 +971,7 @@ func (f *Fetcher) solveFlare(rawURL, domain string, forceRender bool) (*flareSes
 	clearFlareFailure(domain)
 
 	// Build cookie string from solution cookies
-	var cookieParts []string
+	cookieParts := make([]string, 0, len(resp.Solution.Cookies))
 	for _, c := range resp.Solution.Cookies {
 		cookieParts = append(cookieParts, c.Name+"="+c.Value)
 	}
@@ -1072,16 +1073,18 @@ func mergeCookies(configCookie, flareCookie string) string {
 		return configCookie
 	}
 
-	flareMap := make(map[string]string)
-	for _, part := range strings.Split(flareCookie, ";") {
+	flareParts := strings.Split(flareCookie, ";")
+	flareMap := make(map[string]string, len(flareParts))
+	for _, part := range flareParts {
 		part = strings.TrimSpace(part)
 		if eq := strings.IndexByte(part, '='); eq > 0 {
 			flareMap[strings.TrimSpace(part[:eq])] = part
 		}
 	}
 
-	var parts []string
-	for _, part := range strings.Split(configCookie, ";") {
+	configParts := strings.Split(configCookie, ";")
+	parts := make([]string, 0, len(configParts)+len(flareParts))
+	for _, part := range configParts {
 		part = strings.TrimSpace(part)
 		if eq := strings.IndexByte(part, '='); eq > 0 {
 			name := strings.TrimSpace(part[:eq])
@@ -1091,7 +1094,7 @@ func mergeCookies(configCookie, flareCookie string) string {
 		}
 	}
 
-	for _, part := range strings.Split(flareCookie, ";") {
+	for _, part := range flareParts {
 		part = strings.TrimSpace(part)
 		if part != "" {
 			parts = append(parts, part)

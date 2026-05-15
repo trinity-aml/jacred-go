@@ -195,8 +195,8 @@ func (p *Parser) fetchPage(ctx context.Context, from, size, secondsSince int, qu
 func (p *Parser) saveTorrents(ctx context.Context, torrents []filedb.TorrentDetails) (int, int, int, int, error) {
 	added, updated, skipped, failed := 0, 0, 0, 0
 	plog := core.NewParserLog(trackerName, filepath.Join(p.DB.DataDir, "log"), p.Config.LogParsers && p.Config.Knaben.Log)
-	bucketCache := map[string]map[string]filedb.TorrentDetails{}
-	changed := map[string]time.Time{}
+	bucketCache := make(map[string]map[string]filedb.TorrentDetails, len(torrents))
+	changed := make(map[string]time.Time, len(torrents))
 	for _, incoming := range torrents {
 		key := p.DB.KeyDb(asString(incoming["name"]), asString(incoming["originalname"]))
 		if key == ":" || strings.TrimSpace(key) == "" {

@@ -1,7 +1,6 @@
 package filedb
 
 import (
-	"compress/gzip"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -183,11 +183,11 @@ func (db *DB) openReadPath(path string) (map[string]TorrentDetails, error) {
 		return nil, err
 	}
 	defer f.Close()
-	gz, err := gzip.NewReader(f)
+	gz, err := core.AcquireGzipReader(f)
 	if err != nil {
 		return nil, err
 	}
-	defer gz.Close()
+	defer core.ReleaseGzipReader(gz)
 	var out map[string]TorrentDetails
 	err = json.NewDecoder(gz).Decode(&out)
 	return out, err
@@ -240,7 +240,11 @@ func (db *DB) RebuildIndexes() error {
 			return err
 		}
 	}
-	fast := map[string][]string{}
+	// Sized to len(master) as a conservative upper bound — each key
+	// contributes 1-2 distinct parts, so the actual final size is typically
+	// 0.5×–1.0× len(master). Pre-sizing avoids the rehash cascade as the
+	// map grows past 8/16/32/… buckets during the initial fill.
+	fast := make(map[string][]string, len(master))
 	for key := range master {
 		for _, part := range strings.Split(key, ":") {
 			if part == "" {
@@ -264,7 +268,7 @@ func readMasterDb(path string) (map[string]TorrentInfo, error) {
 		return nil, err
 	}
 	defer f.Close()
-	r, err := gzip.NewReader(f)
+	r, err := core.AcquireGzipReader(f)
 	if err != nil {
 		if _, err2 := f.Seek(0, io.SeekStart); err2 == nil {
 			var out map[string]TorrentInfo
@@ -274,7 +278,7 @@ func readMasterDb(path string) (map[string]TorrentInfo, error) {
 		}
 		return nil, err
 	}
-	defer r.Close()
+	defer core.ReleaseGzipReader(r)
 	var out map[string]TorrentInfo
 	if err := json.NewDecoder(r).Decode(&out); err == nil {
 		return out, nil
@@ -325,7 +329,7 @@ func (db *DB) LastUpdateDB() string {
 }
 func (db *DB) Search(query, title, titleOriginal string, year, isSerial int) ([]TorrentDetails, error) {
 	fastdb := db.FastDB()
-	torrents := map[string]TorrentDetails{}
+	torrents := make(map[string]TorrentDetails, 64)
 	add := func(t TorrentDetails) {
 		url := asString(t["url"])
 		if url == "" {
@@ -534,8 +538,9 @@ func asInt(v any) int {
 		i, _ := n.Int64()
 		return int(i)
 	case string:
-		var i int
-		fmt.Sscanf(n, "%d", &i)
+		// strconv.Atoi avoids the heap escape of &i that Sscanf forces,
+		// and runs ~10× faster on string→int conversion.
+		i, _ := strconv.Atoi(strings.TrimSpace(n))
 		return i
 	default:
 		return 0

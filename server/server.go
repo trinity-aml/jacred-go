@@ -1410,7 +1410,7 @@ func isLocalOrPrivate(ip net.IP) bool {
 	}
 	return false
 }
-func atoi(v string) int { n := 0; _, _ = fmt.Sscanf(v, "%d", &n); return n }
+func atoi(v string) int { n, _ := strconv.Atoi(strings.TrimSpace(v)); return n }
 func parseBool(v string) bool {
 	b, _ := strconv.ParseBool(v)
 	return b
