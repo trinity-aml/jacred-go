@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"html"
+	"io"
 	"log"
 	"net/http"
 	"net/url"
@@ -198,7 +199,19 @@ func (p *Parser) takeLogin(ctx context.Context) error {
 		return err
 	}
 	defer resp.Body.Close()
-	log.Printf("nnmclub: login response status=%d", resp.StatusCode)
+	bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	bodyPeek := strings.ReplaceAll(strings.ReplaceAll(core.DecodeCP1251(bodyBytes), "\n", " "), "\r", "")
+	if len(bodyPeek) > 600 {
+		bodyPeek = bodyPeek[:600]
+	}
+	log.Printf("nnmclub: login response status=%d server=%q cf-ray=%q ct=%q len(body)=%d",
+		resp.StatusCode,
+		resp.Header.Get("Server"),
+		resp.Header.Get("CF-Ray"),
+		resp.Header.Get("Content-Type"),
+		resp.ContentLength,
+	)
+	log.Printf("nnmclub: login body-peek: %s", bodyPeek)
 
 	var parts []string
 	for _, line := range resp.Header.Values("Set-Cookie") {
