@@ -111,14 +111,21 @@ func (db *DB) saveBucketInternal(key string, bucket map[string]TorrentDetails, u
 		db.mu.Unlock()
 		return nil
 	}
-	// Store in dirty cache — disk write deferred to FlushDirtyBuckets
+	// Store in dirty cache — disk write deferred to FlushDirtyBuckets.
+	// Skip the evercache copy: OpenRead already prefers dirtyBuckets while a
+	// version is in-flight, and reads after flush will rebuild the evercache
+	// from disk on demand. Two parallel copies of the same bucket (dirty +
+	// evercache) used to triple the working set during heavy sync cycles.
 	db.dirtyMu.Lock()
 	db.dirtyBuckets[key] = &dirtyEntry{
 		bucket:    deepCopyBucket(bucket),
 		updatedAt: updatedAt.UTC(),
 	}
 	db.dirtyMu.Unlock()
-	db.ecPut(path, bucket)
+	// Drop any stale evercache entry for this path so a concurrent reader
+	// that misses dirtyBuckets (race against flush) doesn't see an old
+	// version cached from before this save.
+	ecDelete(path)
 	db.mu.Lock()
 	db.masterDb[key] = TorrentInfo{UpdateTime: updatedAt.UTC(), FileTime: ToFileTimeUTC(updatedAt.UTC())}
 	db.dirty.Store(true)

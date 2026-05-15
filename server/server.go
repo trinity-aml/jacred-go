@@ -15,6 +15,9 @@ import (
 	"strings"
 	"time"
 
+	"net/http/pprof"
+	"runtime"
+
 	"jacred/app"
 	"jacred/cron/anidub"
 	"jacred/cron/anifilm"
@@ -220,6 +223,20 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/dev/fixselezenurls", s.handleDevFixSelezenUrls)
 	mux.HandleFunc("/admin/config", s.handleAdminConfig)
 	mux.HandleFunc("/admin/cf-domains", s.handleAdminCFDomains)
+
+	// pprof: live heap/goroutine/CPU profiling. Routes are gated by the
+	// middleware's local-only check (see isLocalOnlyPath: "/debug/") and by
+	// devKey when configured — pprof exposes process internals and must not
+	// be public. Capture a heap snapshot with:
+	//   go tool pprof -http :8080 'http://127.0.0.1:9117/debug/pprof/heap'
+	// Or inspect raw counters at /debug/memstats.
+	mux.HandleFunc("/debug/pprof/", pprof.Index)
+	mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+	mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
+	mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+	mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+	mux.HandleFunc("/debug/memstats", handleMemStats)
+	mux.HandleFunc("/debug/freeosmem", handleFreeOSMem)
 	mux.HandleFunc("/cron/knaben/parse", s.handleCronKnabenParse)
 	mux.HandleFunc("/stats/refresh", s.handleStatsRefresh)
 	mux.HandleFunc("/cron/anidub/parse", s.handleCronAnidubParse)
@@ -1336,6 +1353,50 @@ func (s *Server) middleware(next http.Handler) http.Handler {
 	})
 }
 
+// handleMemStats reports key runtime memory stats as JSON. Handy for charting
+// RSS/heap growth without running a full pprof capture.
+func handleMemStats(w http.ResponseWriter, r *http.Request) {
+	var m runtime.MemStats
+	runtime.ReadMemStats(&m)
+	out := map[string]any{
+		"alloc_mb":       m.Alloc / 1024 / 1024,
+		"total_alloc_mb": m.TotalAlloc / 1024 / 1024,
+		"sys_mb":         m.Sys / 1024 / 1024,
+		"heap_alloc_mb":  m.HeapAlloc / 1024 / 1024,
+		"heap_sys_mb":    m.HeapSys / 1024 / 1024,
+		"heap_idle_mb":   m.HeapIdle / 1024 / 1024,
+		"heap_inuse_mb":  m.HeapInuse / 1024 / 1024,
+		"heap_released_mb": m.HeapReleased / 1024 / 1024,
+		"heap_objects":   m.HeapObjects,
+		"stack_inuse_mb": m.StackInuse / 1024 / 1024,
+		"mspan_inuse_mb": m.MSpanInuse / 1024 / 1024,
+		"mcache_inuse":   m.MCacheInuse,
+		"gc_count":       m.NumGC,
+		"gc_pause_ms_total": m.PauseTotalNs / 1_000_000,
+		"goroutines":     runtime.NumGoroutine(),
+		"next_gc_mb":     m.NextGC / 1024 / 1024,
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(out)
+}
+
+// handleFreeOSMem forces the runtime to return unused heap memory to the OS.
+// Use when RSS lags behind heap_inuse and you want immediate reclaim. Heavy
+// (blocks GC), so don't call on a hot path.
+func handleFreeOSMem(w http.ResponseWriter, r *http.Request) {
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	debug.FreeOSMemory()
+	runtime.ReadMemStats(&after)
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"heap_released_before_mb": before.HeapReleased / 1024 / 1024,
+		"heap_released_after_mb":  after.HeapReleased / 1024 / 1024,
+		"heap_idle_before_mb":     before.HeapIdle / 1024 / 1024,
+		"heap_idle_after_mb":      after.HeapIdle / 1024 / 1024,
+	})
+}
+
 // headerWritten проверяет, был ли уже записан заголовок ответа (best-effort).
 func headerWritten(w http.ResponseWriter) bool {
 	// Если Content-Type уже установлен, скорее всего заголовок был записан
@@ -1352,7 +1413,7 @@ func setCommonCORSHeaders(w http.ResponseWriter, allowPrivate bool) {
 
 func isLocalOnlyPath(path string) bool {
 	lp := strings.ToLower(path)
-	return strings.HasPrefix(lp, "/cron/") || path == "/jsondb" || strings.HasPrefix(lp, "/jsondb/") || strings.HasPrefix(lp, "/dev/") || strings.HasPrefix(lp, "/admin/")
+	return strings.HasPrefix(lp, "/cron/") || path == "/jsondb" || strings.HasPrefix(lp, "/jsondb/") || strings.HasPrefix(lp, "/dev/") || strings.HasPrefix(lp, "/admin/") || strings.HasPrefix(lp, "/debug/")
 }
 func isPathWhitelisted(path string) bool {
 	switch path {

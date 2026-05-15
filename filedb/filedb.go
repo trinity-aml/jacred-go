@@ -49,7 +49,16 @@ type DB struct {
 	saveMu   sync.Mutex // serializes concurrent SaveChangesToFile calls
 	masterDb map[string]TorrentInfo
 	fastdb   map[string][]string
-	keyLocks sync.Map  // per-key *sync.Mutex for write serialization
+	// keyShards holds a fixed pool of mutexes. We hash bucket keys into a
+	// slot to serialize writes, instead of allocating a fresh *sync.Mutex
+	// per key. The old sync.Map design leaked one mutex per distinct key
+	// ever encountered — over a month of sync the map grew unbounded as
+	// new titles streamed in. 256 shards keeps the false-sharing rate
+	// negligible (a Linux box with 100k unique active keys ends up with
+	// ~400 keys per slot; contention is only seen when two writers hit
+	// the same slot, which is the same probability as a 1-in-256 hash
+	// collision).
+	keyShards [256]sync.Mutex
 	dirty    atomic.Bool  // true when masterDb has unsaved changes
 	lastSaved atomic.Int64 // unix nanoseconds of last successful save
 	fdbLog   *FdbLogger   // audit logger for bucket changes (nil if disabled)
@@ -103,10 +112,18 @@ func (db *DB) GetConfig() app.Config {
 	return c
 }
 
-// lockKey returns a per-key mutex for serializing writes to the same bucket file.
+// lockKey returns the shared mutex that serializes writes for the slot the
+// key hashes into. Two different keys may share a slot — that's intentional;
+// the shard pool is fixed-size so the lock table never grows.
 func (db *DB) lockKey(key string) *sync.Mutex {
-	v, _ := db.keyLocks.LoadOrStore(key, &sync.Mutex{})
-	return v.(*sync.Mutex)
+	// FNV-1a over the key bytes. Cheap and well-distributed for our string
+	// shape (md5-ish hex + title fragments).
+	var h uint32 = 2166136261
+	for i := 0; i < len(key); i++ {
+		h ^= uint32(key[i])
+		h *= 16777619
+	}
+	return &db.keyShards[h%uint32(len(db.keyShards))]
 }
 
 func (db *DB) KeyDb(name, original string) string { return core.NameToHash(name, original) }
