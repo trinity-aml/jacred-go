@@ -1097,6 +1097,97 @@ func (f *Fetcher) solveFlare(rawURL, domain string, forceRender bool) (*flareSes
 	return sess, direct, nil
 }
 
+// SolveForLogin runs a fresh flaresolverr GET on rawURL and returns the full
+// browser state needed by parsers that want to drive their login flow
+// locally: complete cookie jar (anti-bot tokens + phpBB session + any
+// cf cookies), final User-Agent, response body, and the Turnstile widget
+// token if the page hosts one. Use this instead of GetFlareCookies when
+// the calling parser needs the rendered HTML or a Turnstile token in
+// addition to cookies.
+func (f *Fetcher) SolveForLogin(ctx context.Context, rawURL string) (cookies, userAgent, body, turnstileToken string, err error) {
+	if flareShutdown.Load() {
+		return "", "", "", "", fmt.Errorf("flaresolverr: service is shutting down")
+	}
+	svc := getFlareService()
+	if svc == nil {
+		return "", "", "", "", fmt.Errorf("flaresolverr service not initialized")
+	}
+	domain := extractDomain(rawURL)
+	if remaining, blocked := flareCooldownRemaining(domain); blocked {
+		return "", "", "", "", fmt.Errorf("flaresolverr: %s in cooldown for %s", domain, remaining.Round(time.Second))
+	}
+	dm := getDomainLock(domain)
+	dm.Lock()
+	defer dm.Unlock()
+	if flareShutdown.Load() {
+		return "", "", "", "", fmt.Errorf("flaresolverr: service is shutting down")
+	}
+	flareSolveSem <- struct{}{}
+	defer func() { <-flareSolveSem }()
+	flareSolveWG.Add(1)
+	flareInflight.Add(1)
+	defer flareSolveWG.Done()
+	defer flareInflight.Add(-1)
+
+	log.Printf("flaresolverr: solving login flow for %s", domain)
+	browserID := flareSharedSessionID
+	solveCtx, cancel := context.WithTimeout(ctx, 120*time.Second)
+	defer cancel()
+
+	// TabsTillVerify hints the library to do extra interactive verification
+	// passes when a challenge widget is on the page. Geckodriver backend
+	// ignores the field today; webdriver/chromedp backends use it.
+	tabs := 1
+	resp, _ := svc.ControllerV1(solveCtx, &flaresolverr.V1Request{
+		Cmd:               "request.get",
+		URL:               rawURL,
+		MaxTimeout:        90000,
+		WaitInSeconds:     12,
+		Session:           browserID,
+		SessionTTLMinutes: int(flareSessionTTL / time.Minute),
+		TabsTillVerify:    &tabs,
+	})
+	markSessionUsed(browserID)
+
+	if resp.Status != "ok" {
+		markFlareFailure(domain)
+		return "", "", "", "", fmt.Errorf("flaresolverr status=%s message=%s", resp.Status, resp.Message)
+	}
+	if resp.Solution == nil {
+		markFlareFailure(domain)
+		return "", "", "", "", fmt.Errorf("flaresolverr: no solution returned")
+	}
+
+	parts := make([]string, 0, len(resp.Solution.Cookies))
+	for _, c := range resp.Solution.Cookies {
+		parts = append(parts, c.Name+"="+c.Value)
+	}
+	cookies = strings.Join(parts, "; ")
+	userAgent = resp.Solution.UserAgent
+	if userAgent == "" {
+		userAgent = "Mozilla/5.0"
+	}
+	body = resp.Solution.Response
+	turnstileToken = resp.Solution.TurnstileToken
+	log.Printf("flaresolverr: login solve %s cookies=%d body=%d turnstile=%v",
+		domain, len(resp.Solution.Cookies), len(body), turnstileToken != "")
+
+	if cookies != "" {
+		clearFlareFailure(domain)
+		sess := &flareSession{
+			cookies:   cookies,
+			userAgent: userAgent,
+			browserID: browserID,
+			obtained:  time.Now(),
+		}
+		f.flareMu.Lock()
+		f.flareCache[domain] = sess
+		f.flareMu.Unlock()
+		saveFlareSession(domain, sess)
+	}
+	return cookies, userAgent, body, turnstileToken, nil
+}
+
 // LoginViaFlare submits a login form through the flaresolverr browser. The
 // browser opens loginURL, transparently solves any Cloudflare challenge,
 // then POSTs postData. Returns the full set of cookies set on the response

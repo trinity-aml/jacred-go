@@ -164,45 +164,38 @@ func (p *Parser) takeLogin(ctx context.Context) error {
 		},
 	}
 
-	// Step A: GET /forum/login.php through flaresolverr (Camoufox). nnmclub
+	// Step A: solve the login page through flaresolverr (Camoufox). nnmclub
 	// is fronted by a custom JS-challenge anti-bot (cookies eb927f21fc_*,
-	// u_eb927f21fc) on top of Cloudflare's edge — direct http.Client
-	// requests never even hit phpBB, the upstream serves a generic fallback
-	// page instead. Camoufox runs the JS, the challenge sets its tokens +
-	// phpBB drops anonymous session cookies (phpbb2mysql_4_t, etc), and we
-	// pick the whole jar back out of the flare session for use in the POST.
-	//
-	// Invalidate first so we get a fresh solve — a stale 3-cookie session
-	// from before this code path (only Yandex.Metrica, no anti-bot tokens)
-	// would otherwise be reused and the login form GET would loop.
+	// u_eb927f21fc) AND embeds a Cloudflare Turnstile widget inside the
+	// login form. Direct http.Client requests never even hit phpBB — the
+	// upstream serves a generic fallback page instead. Camoufox runs the
+	// JS, the anti-bot tokens get set, phpBB drops anonymous session
+	// cookies, and Turnstile (in Managed Challenge Invisible mode) fills
+	// the cf-turnstile-response input. SolveForLogin returns all of it.
 	p.Fetcher.InvalidateSession(loginURL)
-	tsGet := p.Config.NNMClub
-	tsGet.Cookie = "" // start clean so anti-bot/phpBB initialize fresh
-	getResult, err := p.Fetcher.Get(loginURL, tsGet)
-	if err != nil {
-		log.Printf("nnmclub: login form fetch error: %v", err)
-		return err
+	flareCookies, flareUA2, formBody, turnstileToken, solveErr := p.Fetcher.SolveForLogin(ctx, loginURL)
+	if solveErr != nil {
+		log.Printf("nnmclub: login form solve error: %v", solveErr)
+		return solveErr
 	}
-	formHTML := core.DecodeCP1251(getResult.Body)
-	// PeekFlareCookies returns the full browser jar — anti-bot tokens +
-	// phpBB anonymous + any cf cookies — exactly what the POST needs.
-	flareSessionCookies, flareSessionUA, hasFlareSession := p.Fetcher.PeekFlareCookies(loginURL)
-	if hasFlareSession && strings.TrimSpace(flareSessionUA) != "" {
-		flareUA = flareSessionUA
+	if strings.TrimSpace(flareUA2) != "" {
+		flareUA = flareUA2
 	}
-	postCookie := flareSessionCookies
-	cookieCount := 0
-	for _, part := range strings.Split(flareSessionCookies, ";") {
-		if strings.Contains(part, "=") {
-			cookieCount++
-		}
-	}
-	log.Printf("nnmclub: login form GET status=%d body=%d cookies=%d",
-		getResult.StatusCode, len(getResult.Body), cookieCount)
+	formHTML := flareBodyToCP1251(formBody)
+	postCookie := flareCookies
+	cookieCount := strings.Count(flareCookies, "=")
+	log.Printf("nnmclub: login form solve body=%d cookies=%d turnstile=%v",
+		len(formBody), cookieCount, turnstileToken != "")
 
 	hidden := extractHiddenInputs(formHTML)
 	if _, ok := hidden["creation_time"]; ok {
 		log.Printf("nnmclub: form CSRF tokens present (creation_time + form_token)")
+	}
+	hasTurnstileWidget := strings.Contains(formHTML, "cf-turnstile") ||
+		strings.Contains(formHTML, "challenges.cloudflare.com/turnstile")
+	if hasTurnstileWidget && turnstileToken == "" {
+		log.Printf("nnmclub: Turnstile widget detected but no token captured — interactive challenge cannot be auto-solved. Paste a fresh browser cookie into init.yaml NNMClub.Cookie or solve manually.")
+		return fmt.Errorf("nnmclub: turnstile interactive challenge required")
 	}
 	if !strings.Contains(formHTML, `name="username"`) && !strings.Contains(formHTML, `name='username'`) {
 		log.Printf("nnmclub: login form HTML missing username field — anti-bot soft-block? body-peek: %.300s", strings.ReplaceAll(formHTML, "\n", " "))
@@ -218,6 +211,9 @@ func (p *Parser) takeLogin(ctx context.Context) error {
 		if v, ok := hidden[name]; ok {
 			form.Set(name, v)
 		}
+	}
+	if turnstileToken != "" {
+		form.Set("cf-turnstile-response", turnstileToken)
 	}
 	form.Set("login", "\xc2\xf5\xee\xe4") // "Вход" in CP1251 — the form is CP1251
 
@@ -1011,6 +1007,13 @@ func boolToInt(b bool) int {
 	}
 	return 0
 }
+
+// flareBodyToCP1251 returns the HTML body string for parsing. flaresolverr
+// delivers Response as a UTF-8 string (Camoufox renders and serializes the
+// DOM as UTF-8 regardless of the page charset), so no CP1251 decoding is
+// needed. Wrapped as a function so the call sites read symmetrically with
+// the rest of the parser, which uses core.DecodeCP1251 on raw bytes.
+func flareBodyToCP1251(body string) string { return body }
 
 var hiddenInputRe = regexp.MustCompile(`(?is)<input\b[^>]*\btype\s*=\s*["']hidden["'][^>]*>`)
 var hiddenAttrRe = regexp.MustCompile(`(?is)\b(name|value)\s*=\s*["']([^"']*)["']`)
