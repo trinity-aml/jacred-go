@@ -1163,9 +1163,51 @@ func (f *Fetcher) LoginViaFlare(ctx context.Context, rawURL, postData string) (c
 	body = resp.Solution.Response
 	log.Printf("flaresolverr: login POST %s returned cookies=%d body=%d", domain, len(resp.Solution.Cookies), len(body))
 
+	// flaresolverr-go bug workaround: in the geckodriver backend the resolve
+	// flow reads currentCookies BEFORE WaitInSeconds elapses, so for a
+	// request.post the form-submit navigation often hasn't settled when the
+	// cookie snapshot is taken. The jar inside the persistent session IS up
+	// to date — we just can't see it in this response. Drive a follow-up
+	// request.get on the same session to the site origin so the WebDriver
+	// re-reads cookies on a stable, fully-loaded same-origin page.
+	if cookies == "" {
+		origin := originURL(rawURL)
+		if origin == "" {
+			origin = rawURL
+		}
+		log.Printf("flaresolverr: post returned 0 cookies, probing %s for auth jar", origin)
+		probeCtx, cancel2 := context.WithTimeout(ctx, 90*time.Second)
+		resp2, _ := svc.ControllerV1(probeCtx, &flaresolverr.V1Request{
+			Cmd:               "request.get",
+			URL:               origin,
+			MaxTimeout:        60000,
+			WaitInSeconds:     2,
+			Session:           browserID,
+			SessionTTLMinutes: int(flareSessionTTL / time.Minute),
+		})
+		cancel2()
+		markSessionUsed(browserID)
+		if resp2.Status == "ok" && resp2.Solution != nil {
+			parts2 := make([]string, 0, len(resp2.Solution.Cookies))
+			for _, c := range resp2.Solution.Cookies {
+				parts2 = append(parts2, c.Name+"="+c.Value)
+			}
+			if len(parts2) > 0 {
+				cookies = strings.Join(parts2, "; ")
+				if resp2.Solution.UserAgent != "" {
+					userAgent = resp2.Solution.UserAgent
+				}
+				if resp2.Solution.Response != "" {
+					body = resp2.Solution.Response
+				}
+				log.Printf("flaresolverr: post follow-up probe %s returned cookies=%d", domain, len(parts2))
+			}
+		}
+	}
+
 	if cookies == "" {
 		markFlareFailure(domain)
-		return "", userAgent, body, fmt.Errorf("flaresolverr: %s login POST returned 0 cookies", domain)
+		return "", userAgent, body, fmt.Errorf("flaresolverr: %s login POST returned 0 cookies (even after follow-up probe)", domain)
 	}
 	clearFlareFailure(domain)
 
