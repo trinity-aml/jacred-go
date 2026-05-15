@@ -906,6 +906,15 @@ func (f *Fetcher) getFlareSession(domain string) *flareSession {
 	if !ok || time.Since(sess.obtained) > flareSessionTTL {
 		return nil
 	}
+	// A session with no cookies isn't useful — it's a leftover from a solve
+	// that returned 0 cookies (CF challenge resolved but no clearance issued,
+	// or the geckodriver currentCookies-before-wait bug). Treating it as
+	// valid wedges callers into using empty Cookie: headers, which CF then
+	// blocks. Pretend the session doesn't exist so solveFlare gets called
+	// again and actually populates the jar.
+	if strings.TrimSpace(sess.cookies) == "" {
+		return nil
+	}
 	return sess
 }
 

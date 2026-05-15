@@ -154,8 +154,18 @@ func (p *Parser) takeLogin(ctx context.Context) error {
 	if strings.TrimSpace(flareUA) == "" {
 		flareUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
 	}
-	if strings.TrimSpace(flareCookie) == "" {
-		log.Printf("nnmclub: no cf_clearance — attempting plain POST (site may be CF-off right now)")
+	// Merge in the static config Cookie if present — operators sometimes
+	// paste a working cf_clearance + UA from a browser session there, and
+	// listing fetches do work with it. The POST needs the same coverage
+	// or CF blocks the request before phpBB ever sees it (status=200 from
+	// a CF interstitial, no Set-Cookie, login appears to "succeed at
+	// transport level" but no auth cookies come back).
+	postCookie := flareCookie
+	if cfgCookie := strings.TrimSpace(p.Config.NNMClub.Cookie); cfgCookie != "" {
+		postCookie = core.MergeCookieStrings(postCookie, cfgCookie)
+	}
+	if strings.TrimSpace(postCookie) == "" {
+		log.Printf("nnmclub: no cf_clearance available — attempting plain POST anyway")
 	}
 
 	form := url.Values{}
@@ -171,8 +181,8 @@ func (p *Parser) takeLogin(ctx context.Context) error {
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("User-Agent", flareUA)
-	if strings.TrimSpace(flareCookie) != "" {
-		req.Header.Set("Cookie", flareCookie)
+	if strings.TrimSpace(postCookie) != "" {
+		req.Header.Set("Cookie", postCookie)
 	}
 	req.Header.Set("Referer", loginURL)
 
@@ -194,16 +204,24 @@ func (p *Parser) takeLogin(ctx context.Context) error {
 	for _, line := range resp.Header.Values("Set-Cookie") {
 		parts = append(parts, strings.SplitN(line, ";", 2)[0])
 	}
-	cookieStr := strings.Join(parts, "; ")
-	if strings.Contains(cookieStr, "phpbb2mysql") || strings.Contains(cookieStr, "sid=") {
+	authCookies := strings.Join(parts, "; ")
+	if strings.Contains(authCookies, "phpbb2mysql") || strings.Contains(authCookies, "sid=") {
+		// Merge with cf_clearance so the saved cookie covers both halves —
+		// listing fetches reuse this same string, and a phpBB-only cookie
+		// would lose cf_clearance and get bounced at the CF edge on the
+		// next GET.
+		merged := authCookies
+		if strings.TrimSpace(postCookie) != "" {
+			merged = core.MergeCookieStrings(postCookie, authCookies)
+		}
 		p.cookieMu.Lock()
-		p.dynCookie = cookieStr
+		p.dynCookie = merged
 		p.cookieMu.Unlock()
-		_ = core.DefaultSessionStore().SaveAuth(p.domain, cookieStr)
+		_ = core.DefaultSessionStore().SaveAuth(p.domain, merged)
 		log.Printf("nnmclub: login OK")
 		return nil
 	}
-	log.Printf("nnmclub: login FAILED — cookies: %s", cookieStr)
+	log.Printf("nnmclub: login FAILED — cookies: %s", authCookies)
 	return fmt.Errorf("nnmclub: login failed")
 }
 
