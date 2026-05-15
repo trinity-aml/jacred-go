@@ -58,6 +58,15 @@ var (
 	flareFailMu   sync.RWMutex
 	flareLastFail = make(map[string]time.Time, 32)
 
+	// flareLastChallenge records when fetchViaFlare's standard-HTTP probe last
+	// saw a CF challenge for a domain. While the entry is within probeTTL we
+	// skip the probe and go straight to solveFlare — saving one wasted HTTP
+	// roundtrip per cached-session rollover (~60 min) on still-protected
+	// sites. Cleared when a probe returns a non-challenge body, which
+	// signals CF has been lifted server-side.
+	flareChallengeMu  sync.RWMutex
+	flareLastChallenge = make(map[string]time.Time, 32)
+
 	// Idle-session reaper: destroy flaresolverr-go browser sessions that
 	// haven't been used for flareSessionIdleTTL so Camoufox doesn't sit in
 	// RAM between cron runs. One session ≈ 800–1000 MB resident; without
@@ -73,6 +82,11 @@ const (
 	flareFailCooldown   = 3 * time.Minute
 	flareSessionIdleTTL = 5 * time.Minute
 	flareReaperInterval = 1 * time.Minute
+	// flareProbeTTL bounds how long we trust a "domain showed a CF challenge
+	// recently" mark. 6h is long enough to skip probes during a typical
+	// parse cycle yet short enough that a CF removal is picked up within a
+	// few hours of the next cron run.
+	flareProbeTTL = 6 * time.Hour
 
 	// Single flaresolverr-go session shared by all CF-gated parsers. One
 	// Camoufox process hosts navigations for every domain (Firefox isolates
@@ -286,6 +300,33 @@ func clearFlareFailure(domain string) {
 	flareFailMu.Lock()
 	delete(flareLastFail, domain)
 	flareFailMu.Unlock()
+}
+
+// recentChallengeSeen reports whether the standard-HTTP probe last saw a CF
+// challenge for this domain within flareProbeTTL.
+func recentChallengeSeen(domain string) bool {
+	flareChallengeMu.RLock()
+	t, ok := flareLastChallenge[domain]
+	flareChallengeMu.RUnlock()
+	return ok && time.Since(t) < flareProbeTTL
+}
+
+func markChallengeSeen(domain string) {
+	flareChallengeMu.Lock()
+	flareLastChallenge[domain] = time.Now()
+	flareChallengeMu.Unlock()
+}
+
+// clearChallengeSeen drops the mark when the probe stopped seeing challenges,
+// signalling CF was removed (or never gated this URL).
+func clearChallengeSeen(domain string) {
+	flareChallengeMu.Lock()
+	_, existed := flareLastChallenge[domain]
+	delete(flareLastChallenge, domain)
+	flareChallengeMu.Unlock()
+	if existed {
+		log.Printf("flaresolverr: %s served direct HTTP without CF challenge — consider fetchmode: standard in config", domain)
+	}
 }
 
 // cleanupStaleProfiles removes /tmp/flaresolverr-go-profile-* directories left
@@ -743,11 +784,15 @@ func (f *Fetcher) doHTTP(method, rawURL, cookie, userAgent, contentType string, 
 // fetchViaFlare uses embedded flaresolverr-go to solve CF and fetch pages.
 // Strategy:
 //   1. Try cached cookies with standard HTTP (fast path)
-//   2. If no cache or 403: solve CF challenge on the site's origin via
-//      flaresolverr-go browser (not the deep URL — some sites serve a
-//      managed challenge on deep URLs that automation can't pass)
-//   3. Use the resulting cookies to fetch the actual deep URL
-//   4. Cache cookies for subsequent requests
+//   2. No cached cookies → probe with plain HTTP first. Some trackers
+//      configured as fetchmode: flaresolverr have since dropped CF (e.g.
+//      megapeer); the probe returns valid HTML, we skip a 10s+ Chrome
+//      solve. If the probe is a challenge / 403, fall through to step 3.
+//   3. Solve CF challenge on the site's origin via flaresolverr-go browser
+//      (not the deep URL — some sites serve a managed challenge on deep
+//      URLs that automation can't pass)
+//   4. Use the resulting cookies to fetch the actual deep URL
+//   5. Cache cookies for subsequent requests
 func (f *Fetcher) fetchViaFlare(rawURL, cookie string, extraHeaders map[string]string, transport *http.Transport) (*FetchResult, error) {
 	domain := extractDomain(rawURL)
 	httpCookiesFailed := false
@@ -769,6 +814,22 @@ func (f *Fetcher) fetchViaFlare(rawURL, cookie string, extraHeaders map[string]s
 		// Force the browser to actually navigate this URL; reusing the cached
 		// session we just tried would send us straight back here.
 		httpCookiesFailed = true
+	} else if !recentChallengeSeen(domain) {
+		// No cached flare session, and the last probe within flareProbeTTL
+		// did NOT see a challenge — probe again. Skips the wasted probe on
+		// still-protected sites where we already know CF is up.
+		if probe, err := f.doHTTP(http.MethodGet, rawURL, cookie, "Mozilla/5.0", "", nil, extraHeaders, transport); err == nil {
+			if probe.StatusCode != 403 && !isCloudflareChallenge(probe.Body) {
+				// CF appears inactive — skip the Chrome solve, use direct body.
+				clearChallengeSeen(domain)
+				return probe, nil
+			}
+			// Challenge confirmed: remember so the next caller within TTL
+			// skips this probe and dives straight to solveFlare.
+			markChallengeSeen(domain)
+		}
+		// On HTTP error fall through to solveFlare without marking — a
+		// transient network issue shouldn't lock us out of the probe path.
 	}
 
 	// Solve via flaresolverr-go browser. For non-binary URLs the browser
