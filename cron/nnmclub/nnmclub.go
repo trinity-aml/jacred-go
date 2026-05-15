@@ -143,17 +143,6 @@ func (p *Parser) takeLogin(ctx context.Context) error {
 	log.Printf("nnmclub: attempting login to %s as %s", host, p.Config.NNMClub.Login.U)
 
 	loginURL := host + "/forum/login.php"
-	// /forum/login.php is itself behind Cloudflare, so we must obtain
-	// cf_clearance + the matching browser UA *before* posting credentials.
-	// GetFlareCookies persists the flare half to Data/cookie/<domain>.json on
-	// success, so subsequent listing fetches will reuse it.
-	flareCookie, flareUA := p.Fetcher.GetFlareCookies(loginURL)
-	if strings.TrimSpace(flareCookie) == "" {
-		return fmt.Errorf("nnmclub: flare solve failed for %s", loginURL)
-	}
-	if strings.TrimSpace(flareUA) == "" {
-		flareUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-	}
 
 	form := url.Values{}
 	form.Set("username", p.Config.NNMClub.Login.U)
@@ -162,34 +151,18 @@ func (p *Parser) takeLogin(ctx context.Context) error {
 	form.Set("redirect", "")
 	form.Set("login", "\xc2\xf5\xee\xe4") // "Вход" in CP1251 — the form is CP1251
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, loginURL, strings.NewReader(form.Encode()))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("User-Agent", flareUA)
-	req.Header.Set("Cookie", flareCookie)
-	req.Header.Set("Referer", loginURL)
-
-	loginClient := &http.Client{
-		Timeout: 20 * time.Second,
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
-	}
-	resp, err := loginClient.Do(req)
+	// Submit the POST through flaresolverr so the browser resolves any CF
+	// challenge first, then the auth cookies (phpbb2mysql / sid) come back
+	// in the same response alongside cf_clearance. Doing the POST locally
+	// with cf_clearance copied from a separate GET broke when CF rotated
+	// clearance between the two requests — the server then served a CF
+	// page and dropped our credentials on the floor, leaving phpbb2mysql
+	// unset and the parser stuck in an endless re-login loop.
+	cookieStr, _, _, err := p.Fetcher.LoginViaFlare(ctx, loginURL, form.Encode())
 	if err != nil {
 		log.Printf("nnmclub: login error: %v", err)
 		return err
 	}
-	defer resp.Body.Close()
-	log.Printf("nnmclub: login response status=%d", resp.StatusCode)
-
-	var parts []string
-	for _, line := range resp.Header.Values("Set-Cookie") {
-		parts = append(parts, strings.SplitN(line, ";", 2)[0])
-	}
-	cookieStr := strings.Join(parts, "; ")
 	if strings.Contains(cookieStr, "phpbb2mysql") || strings.Contains(cookieStr, "sid=") {
 		p.cookieMu.Lock()
 		p.dynCookie = cookieStr

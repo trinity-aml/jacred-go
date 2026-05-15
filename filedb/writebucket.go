@@ -1,6 +1,10 @@
 package filedb
 
 import (
+	"compress/gzip"
+	"errors"
+	"io"
+	"log"
 	"os"
 	"sort"
 	"strings"
@@ -15,7 +19,41 @@ func (db *DB) OpenReadOrEmpty(key string) (map[string]TorrentDetails, error) {
 	if os.IsNotExist(err) {
 		return map[string]TorrentDetails{}, nil
 	}
+	// Corrupt bucket file (typically truncated by an OOM-kill mid-write).
+	// Quarantine it and return an empty bucket so the next save rewrites
+	// a fresh, valid file. Without this the parser hangs on the same page
+	// forever — every save attempt re-reads the bad bucket and errors out.
+	if isCorruptBucketErr(err) {
+		path := db.PathDb(key)
+		quarantineCorruptBucket(path, err)
+		return map[string]TorrentDetails{}, nil
+	}
 	return nil, err
+}
+
+func isCorruptBucketErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	return errors.Is(err, io.EOF) ||
+		errors.Is(err, io.ErrUnexpectedEOF) ||
+		errors.Is(err, gzip.ErrChecksum) ||
+		errors.Is(err, gzip.ErrHeader)
+}
+
+// quarantineCorruptBucket renames a corrupt file to <path>.corrupt so the
+// next save creates a fresh file at the original path. We keep the bad
+// copy for offline inspection rather than deleting it outright.
+func quarantineCorruptBucket(path string, cause error) {
+	dst := path + ".corrupt"
+	if err := os.Rename(path, dst); err != nil {
+		// Best-effort: if rename fails (e.g. file already vanished) just
+		// drop the original. The save path will recreate it.
+		_ = os.Remove(path)
+		log.Printf("filedb: quarantine failed for %s (removed instead): cause=%v rename_err=%v", path, cause, err)
+		return
+	}
+	log.Printf("filedb: quarantined corrupt bucket %s -> %s (cause=%v)", path, dst, cause)
 }
 
 // OpenReadOrEmptyLocked reads the bucket while holding the per-key write lock.

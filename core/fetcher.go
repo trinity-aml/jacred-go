@@ -1043,6 +1043,17 @@ func (f *Fetcher) solveFlare(rawURL, domain string, forceRender bool) (*flareSes
 		ua = "Mozilla/5.0"
 	}
 
+	// Empty cookie set means the browser navigated but never received CF
+	// clearance (challenge not actually solved, or solver returned before
+	// cookies were persisted). Caching this as a valid session creates a
+	// permanent stall: every subsequent GetFlareCookies returns ("", ua)
+	// and parsers loop on re-login. Treat it as a transient failure so
+	// the next caller re-attempts the solve.
+	if cookieStr == "" {
+		markFlareFailure(domain)
+		return nil, nil, fmt.Errorf("flaresolverr: %s solved but returned 0 cookies", domain)
+	}
+
 	sess := &flareSession{
 		cookies:   cookieStr,
 		userAgent: ua,
@@ -1071,6 +1082,108 @@ func (f *Fetcher) solveFlare(rawURL, domain string, forceRender bool) (*flareSes
 	}
 
 	return sess, direct, nil
+}
+
+// LoginViaFlare submits a login form through the flaresolverr browser. The
+// browser opens loginURL, transparently solves any Cloudflare challenge,
+// then POSTs postData. Returns the full set of cookies set on the response
+// (cf_clearance + the site's session/auth cookies all in one string), the
+// browser User-Agent, and the rendered post-submit body. The CF half is
+// also stored in the flare cache so subsequent listing fetches via Fetcher
+// reuse the same cf_clearance.
+//
+// This is the right primitive for sites that gate login.php behind CF —
+// doing the POST locally (with cf_clearance copied from a separate GET)
+// fails when the site's session cookies are set as HttpOnly/SameSite=Strict
+// or when CF rotates clearance between the GET and the POST. Going through
+// the browser sidesteps both.
+func (f *Fetcher) LoginViaFlare(ctx context.Context, rawURL, postData string) (cookies, userAgent, body string, err error) {
+	if flareShutdown.Load() {
+		return "", "", "", fmt.Errorf("flaresolverr: service is shutting down")
+	}
+	svc := getFlareService()
+	if svc == nil {
+		return "", "", "", fmt.Errorf("flaresolverr service not initialized")
+	}
+	domain := extractDomain(rawURL)
+	if remaining, blocked := flareCooldownRemaining(domain); blocked {
+		return "", "", "", fmt.Errorf("flaresolverr: %s in cooldown for %s after recent failure", domain, remaining.Round(time.Second))
+	}
+
+	dm := getDomainLock(domain)
+	dm.Lock()
+	defer dm.Unlock()
+
+	if flareShutdown.Load() {
+		return "", "", "", fmt.Errorf("flaresolverr: service is shutting down")
+	}
+
+	flareSolveSem <- struct{}{}
+	defer func() { <-flareSolveSem }()
+	flareSolveWG.Add(1)
+	flareInflight.Add(1)
+	defer flareSolveWG.Done()
+	defer flareInflight.Add(-1)
+
+	browserID := flareSharedSessionID
+	log.Printf("flaresolverr: submitting login POST for %s", domain)
+
+	postCtx, cancel := context.WithTimeout(ctx, 120*time.Second)
+	defer cancel()
+
+	resp, _ := svc.ControllerV1(postCtx, &flaresolverr.V1Request{
+		Cmd:               "request.post",
+		URL:               rawURL,
+		PostData:          postData,
+		MaxTimeout:        90000,
+		WaitInSeconds:     3,
+		Session:           browserID,
+		SessionTTLMinutes: int(flareSessionTTL / time.Minute),
+	})
+	markSessionUsed(browserID)
+
+	if resp.Status != "ok" {
+		markFlareFailure(domain)
+		return "", "", "", fmt.Errorf("flaresolverr status=%s message=%s", resp.Status, resp.Message)
+	}
+	if resp.Solution == nil {
+		markFlareFailure(domain)
+		return "", "", "", fmt.Errorf("flaresolverr: no solution returned")
+	}
+
+	cookieParts := make([]string, 0, len(resp.Solution.Cookies))
+	for _, c := range resp.Solution.Cookies {
+		cookieParts = append(cookieParts, c.Name+"="+c.Value)
+	}
+	cookies = strings.Join(cookieParts, "; ")
+	userAgent = resp.Solution.UserAgent
+	if userAgent == "" {
+		userAgent = "Mozilla/5.0"
+	}
+	body = resp.Solution.Response
+	log.Printf("flaresolverr: login POST %s returned cookies=%d body=%d", domain, len(resp.Solution.Cookies), len(body))
+
+	if cookies == "" {
+		markFlareFailure(domain)
+		return "", userAgent, body, fmt.Errorf("flaresolverr: %s login POST returned 0 cookies", domain)
+	}
+	clearFlareFailure(domain)
+
+	// Cache the CF half so subsequent listing fetches don't trigger another
+	// solve. We store the full cookie string — cf_clearance is the part that
+	// matters for CF, the extra session cookies are harmless to include.
+	sess := &flareSession{
+		cookies:   cookies,
+		userAgent: userAgent,
+		browserID: browserID,
+		obtained:  time.Now(),
+	}
+	f.flareMu.Lock()
+	f.flareCache[domain] = sess
+	f.flareMu.Unlock()
+	saveFlareSession(domain, sess)
+
+	return cookies, userAgent, body, nil
 }
 
 func extractDomain(rawURL string) string {
