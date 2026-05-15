@@ -157,14 +157,17 @@ func (p *Parser) takeLogin(ctx context.Context) error {
 	}
 	// Merge in the static config Cookie if present — operators sometimes
 	// paste a working cf_clearance + UA from a browser session there, and
-	// listing fetches do work with it. The POST needs the same coverage
-	// or CF blocks the request before phpBB ever sees it (status=200 from
-	// a CF interstitial, no Set-Cookie, login appears to "succeed at
-	// transport level" but no auth cookies come back).
-	postCookie := flareCookie
+	// listing fetches do work with it. Then filter to CF-only cookies:
+	// sending stale phpbb2mysql/sid in the POST makes phpBB treat the
+	// caller as "already has a session" and skip the login flow entirely
+	// (status=200, normal HTML page back, NO Set-Cookie). Logging in
+	// requires us to look like a fresh anonymous visitor at the phpBB
+	// layer while still carrying cf_clearance at the CF edge.
+	rawCookies := flareCookie
 	if cfgCookie := strings.TrimSpace(p.Config.NNMClub.Cookie); cfgCookie != "" {
-		postCookie = core.MergeCookieStrings(postCookie, cfgCookie)
+		rawCookies = core.MergeCookieStrings(rawCookies, cfgCookie)
 	}
+	postCookie := filterCloudflareCookies(rawCookies)
 	if strings.TrimSpace(postCookie) == "" {
 		log.Printf("nnmclub: no cf_clearance available — attempting plain POST anyway")
 	}
@@ -965,6 +968,36 @@ func asString(v any) string {
 		return fmt.Sprint(v)
 	}
 }
+// filterCloudflareCookies keeps only the CF-edge cookies (cf_clearance,
+// __cf_bm, __cfduid) and drops everything else. Used before submitting the
+// login POST so phpBB sees us as a fresh visitor (no leftover sid /
+// phpbb2mysql_data confusing the auth flow) while CF still recognizes us
+// as a verified client.
+func filterCloudflareCookies(cookies string) string {
+	keep := map[string]bool{
+		"cf_clearance": true,
+		"__cf_bm":      true,
+		"__cfduid":     true,
+		"__cflb":       true,
+	}
+	var out []string
+	for _, part := range strings.Split(cookies, ";") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		eq := strings.IndexByte(part, '=')
+		if eq <= 0 {
+			continue
+		}
+		name := strings.TrimSpace(part[:eq])
+		if keep[name] {
+			out = append(out, part)
+		}
+	}
+	return strings.Join(out, "; ")
+}
+
 func asInt(v any) int {
 	switch x := v.(type) {
 	case int:
