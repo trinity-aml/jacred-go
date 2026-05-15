@@ -167,16 +167,66 @@ func (p *Parser) takeLogin(ctx context.Context) error {
 	if cfgCookie := strings.TrimSpace(p.Config.NNMClub.Cookie); cfgCookie != "" {
 		rawCookies = core.MergeCookieStrings(rawCookies, cfgCookie)
 	}
-	postCookie := filterCloudflareCookies(rawCookies)
-	if strings.TrimSpace(postCookie) == "" {
-		log.Printf("nnmclub: no cf_clearance available — attempting plain POST anyway")
+	cfCookies := filterCloudflareCookies(rawCookies)
+	if strings.TrimSpace(cfCookies) == "" {
+		log.Printf("nnmclub: no cf_clearance available — attempting login anyway")
 	}
 
+	loginClient := &http.Client{
+		Timeout: 20 * time.Second,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+
+	// Step A: GET /forum/login.php to obtain anonymous phpbb2mysql_data /
+	// phpbb2mysql_sid cookies and to parse hidden CSRF fields (creation_time,
+	// form_token) that recent phpBB releases require. Submitting credentials
+	// without these makes phpBB silently drop the POST and return the index
+	// page instead of either a login form (with error) or a redirect (on
+	// success), which is exactly the symptom we're seeing.
+	getReq, err := http.NewRequestWithContext(ctx, http.MethodGet, loginURL, nil)
+	if err != nil {
+		return err
+	}
+	getReq.Header.Set("User-Agent", flareUA)
+	if strings.TrimSpace(cfCookies) != "" {
+		getReq.Header.Set("Cookie", cfCookies)
+	}
+	getResp, err := loginClient.Do(getReq)
+	if err != nil {
+		log.Printf("nnmclub: login form fetch error: %v", err)
+		return err
+	}
+	getBytes, _ := io.ReadAll(io.LimitReader(getResp.Body, 64<<10))
+	getResp.Body.Close()
+	formHTML := core.DecodeCP1251(getBytes)
+
+	// Collect anonymous phpBB cookies from the GET response and merge with cf.
+	anonParts := []string{}
+	for _, line := range getResp.Header.Values("Set-Cookie") {
+		anonParts = append(anonParts, strings.SplitN(line, ";", 2)[0])
+	}
+	anonCookies := strings.Join(anonParts, "; ")
+	postCookie := core.MergeCookieStrings(cfCookies, anonCookies)
+	log.Printf("nnmclub: login form GET status=%d set-cookie-count=%d", getResp.StatusCode, len(anonParts))
+
+	hidden := extractHiddenInputs(formHTML)
+	if _, ok := hidden["creation_time"]; ok {
+		log.Printf("nnmclub: form CSRF tokens present (creation_time + form_token)")
+	}
+
+	// Step B: POST with anonymous phpBB cookies + cf_clearance + CSRF fields.
 	form := url.Values{}
 	form.Set("username", p.Config.NNMClub.Login.U)
 	form.Set("password", p.Config.NNMClub.Login.P)
 	form.Set("autologin", "on")
-	form.Set("redirect", "")
+	form.Set("redirect", hidden["redirect"]) // server sets the canonical redirect in the hidden field
+	for _, name := range []string{"creation_time", "form_token"} {
+		if v, ok := hidden[name]; ok {
+			form.Set(name, v)
+		}
+	}
 	form.Set("login", "\xc2\xf5\xee\xe4") // "Вход" in CP1251 — the form is CP1251
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, loginURL, strings.NewReader(form.Encode()))
@@ -189,13 +239,8 @@ func (p *Parser) takeLogin(ctx context.Context) error {
 		req.Header.Set("Cookie", postCookie)
 	}
 	req.Header.Set("Referer", loginURL)
+	req.Header.Set("Origin", host)
 
-	loginClient := &http.Client{
-		Timeout: 20 * time.Second,
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
-	}
 	resp, err := loginClient.Do(req)
 	if err != nil {
 		log.Printf("nnmclub: login error: %v", err)
@@ -968,6 +1013,31 @@ func asString(v any) string {
 		return fmt.Sprint(v)
 	}
 }
+var hiddenInputRe = regexp.MustCompile(`(?is)<input\b[^>]*\btype\s*=\s*["']hidden["'][^>]*>`)
+var hiddenAttrRe = regexp.MustCompile(`(?is)\b(name|value)\s*=\s*["']([^"']*)["']`)
+
+// extractHiddenInputs pulls all <input type="hidden"> name/value pairs out of
+// a page's HTML so we can replay CSRF tokens (creation_time, form_token) and
+// any server-canonical hidden fields (redirect, sid) when submitting the form.
+func extractHiddenInputs(htmlBody string) map[string]string {
+	out := map[string]string{}
+	for _, tag := range hiddenInputRe.FindAllString(htmlBody, -1) {
+		var name, value string
+		for _, attr := range hiddenAttrRe.FindAllStringSubmatch(tag, -1) {
+			switch strings.ToLower(attr[1]) {
+			case "name":
+				name = html.UnescapeString(attr[2])
+			case "value":
+				value = html.UnescapeString(attr[2])
+			}
+		}
+		if name != "" {
+			out[name] = value
+		}
+	}
+	return out
+}
+
 // filterCloudflareCookies keeps only the CF-edge cookies (cf_clearance,
 // __cf_bm, __cfduid) and drops everything else. Used before submitting the
 // login POST so phpBB sees us as a fresh visitor (no leftover sid /
