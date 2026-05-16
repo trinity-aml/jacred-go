@@ -631,9 +631,16 @@ func (p *Parser) fetch(ctx context.Context, rawURL string) (string, error) {
 	if c := p.getCookie(); c != "" {
 		ts.Cookie = c
 	}
-	data, _, err := p.Fetcher.Download(rawURL, ts)
+	started := time.Now()
+	data, status, err := p.Fetcher.Download(rawURL, ts)
+	elapsed := time.Since(started).Round(time.Millisecond)
+	isListing := strings.Contains(rawURL, "viewforum.php")
 	if err != nil {
+		log.Printf("rutracker: fetch err elapsed=%s url=%s err=%v", elapsed, rawURL, err)
 		return "", err
+	}
+	if isListing || elapsed > 5*time.Second {
+		log.Printf("rutracker: fetch ok elapsed=%s status=%d bytes=%d url=%s", elapsed, status, len(data), rawURL)
 	}
 	return core.DecodeCP1251(data), nil
 }
