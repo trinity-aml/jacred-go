@@ -253,13 +253,19 @@ func (p *Parser) ParseAllTask(ctx context.Context, force bool) (string, error) {
 
 	totalPages := 0
 	for _, byArg := range snapshot {
-		for _, list := range byArg {
+		for arg, list := range byArg {
+			if arg == "" {
+				continue
+			}
 			totalPages += len(list)
 		}
 	}
 	processed, fetched, added, updated, skipped, failed, errs := 0, 0, 0, 0, 0, 0, 0
 	for cat, byArg := range snapshot {
 		for arg, list := range byArg {
+			if arg == "" {
+				continue
+			}
 			for _, task := range list {
 				if !force && task.UpdatedToday(p.loc) {
 					continue
@@ -341,91 +347,48 @@ func (p *Parser) ParseLatest(ctx context.Context, pages int) (string, error) {
 		_ = p.takeLogin(ctx)
 	}
 	if pages <= 0 {
-		pages = 5
+		pages = 100
 	}
-	p.mu.Lock()
-	snapshot := cloneTasks(p.tasks)
-	p.mu.Unlock()
-	if len(snapshot) == 0 {
-		if _, err := p.UpdateTasksParse(ctx); err != nil {
-			return "", err
-		}
-		p.mu.Lock()
-		snapshot = cloneTasks(p.tasks)
-		p.mu.Unlock()
+	if pages > 100 {
+		pages = 100
 	}
 	var lines []string
 	processed, fetched, added, updated, skipped, failed, errs := 0, 0, 0, 0, 0, 0, 0
-	for cat, byArg := range snapshot {
-		for arg, list := range byArg {
-			sort.Slice(list, func(i, j int) bool { return list[i].Page < list[j].Page })
-			if len(list) > pages {
-				list = list[:pages]
+	for _, cat := range parseCats {
+		for page := 0; page < pages; page++ {
+			if p.Config.Kinozal.ParseDelay > 0 {
+				select {
+				case <-ctx.Done():
+					return "", ctx.Err()
+				case <-time.After(time.Duration(p.Config.Kinozal.ParseDelay) * time.Millisecond):
+				}
 			}
-			for _, task := range list {
-				if p.Config.Kinozal.ParseDelay > 0 {
-					select {
-					case <-ctx.Done():
-						return "", ctx.Err()
-					case <-time.After(time.Duration(p.Config.Kinozal.ParseDelay) * time.Millisecond):
-					}
-				}
-				items, err := p.parsePage(ctx, cat, task.Page, arg)
-				if err != nil {
-					log.Printf("kinozal: parselatest cat=%s arg=%s page=%d error: %v", cat, arg, task.Page, err)
-					errs++
-					continue
-				}
-				processed++
-				if len(items) == 0 {
-					log.Printf("kinozal: parselatest cat=%s arg=%s page=%d empty (marking today)", cat, arg, task.Page)
-					p.mu.Lock()
-					if argMap, ok := p.tasks[cat]; ok {
-						if list2, ok := argMap[arg]; ok {
-							for i := range list2 {
-								if list2[i].Page == task.Page {
-									list2[i].MarkToday(p.loc)
-								}
-							}
-							argMap[arg] = list2
-							p.tasks[cat] = argMap
-						}
-					}
-					_ = p.saveTasksLocked()
-					p.mu.Unlock()
-					continue
-				}
-				a, u, s, f, err := p.saveTorrents(ctx, items)
-				if err != nil {
-					log.Printf("kinozal: parselatest cat=%s arg=%s page=%d save error: %v", cat, arg, task.Page, err)
-					errs++
-					continue
-				}
-				fetched += len(items)
-				added += a
-				updated += u
-				skipped += s
-				failed += f
-				log.Printf("kinozal: parselatest cat=%s arg=%s page=%d fetched=%d added=%d skipped=%d failed=%d", cat, arg, task.Page, len(items), a, s, f)
-				p.mu.Lock()
-				if argMap, ok := p.tasks[cat]; ok {
-					if list2, ok := argMap[arg]; ok {
-						for i := range list2 {
-							if list2[i].Page == task.Page {
-								list2[i].MarkToday(p.loc)
-							}
-						}
-						argMap[arg] = list2
-						p.tasks[cat] = argMap
-					}
-				}
-				if err := p.saveTasksLocked(); err != nil {
-					p.mu.Unlock()
-					return "", err
-				}
-				p.mu.Unlock()
-				lines = append(lines, fmt.Sprintf("%s - %s - %d", cat, arg, task.Page))
+			items, err := p.parsePage(ctx, cat, page, "")
+			if err != nil {
+				log.Printf("kinozal: parselatest cat=%s page=%d error: %v", cat, page, err)
+				errs++
+				continue
 			}
+			processed++
+			if len(items) == 0 {
+				log.Printf("kinozal: parselatest cat=%s page=%d empty (marking today)", cat, page)
+				p.markLatestPageToday(cat, page)
+				continue
+			}
+			a, u, s, f, err := p.saveTorrents(ctx, items)
+			if err != nil {
+				log.Printf("kinozal: parselatest cat=%s page=%d save error: %v", cat, page, err)
+				errs++
+				continue
+			}
+			fetched += len(items)
+			added += a
+			updated += u
+			skipped += s
+			failed += f
+			log.Printf("kinozal: parselatest cat=%s page=%d fetched=%d added=%d skipped=%d failed=%d", cat, page, len(items), a, s, f)
+			p.markLatestPageToday(cat, page)
+			lines = append(lines, fmt.Sprintf("%s - %d", cat, page))
 		}
 	}
 	log.Printf("kinozal: parselatest done processed=%d fetched=%d added=%d updated=%d skipped=%d failed=%d errors=%d", processed, fetched, added, updated, skipped, failed, errs)
@@ -433,6 +396,33 @@ func (p *Parser) ParseLatest(ctx context.Context, pages int) (string, error) {
 		return "ok", nil
 	}
 	return strings.Join(lines, "\n") + "\n", nil
+}
+
+func (p *Parser) markLatestPageToday(cat string, page int) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.tasks == nil {
+		p.tasks = map[string]map[string][]Task{}
+	}
+	if _, ok := p.tasks[cat]; !ok {
+		p.tasks[cat] = map[string][]Task{}
+	}
+	list := p.tasks[cat][""]
+	found := false
+	for i := range list {
+		if list[i].Page == page {
+			list[i].MarkToday(p.loc)
+			found = true
+			break
+		}
+	}
+	if !found {
+		t := Task{Page: page}
+		t.MarkToday(p.loc)
+		list = append(list, t)
+	}
+	p.tasks[cat][""] = list
+	_ = p.saveTasksLocked()
 }
 
 func (p *Parser) parsePage(ctx context.Context, cat string, page int, arg string) ([]filedb.TorrentDetails, error) {

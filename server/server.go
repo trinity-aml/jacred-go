@@ -973,7 +973,7 @@ func (s *Server) handleCronKinozalParseLatest(w http.ResponseWriter, r *http.Req
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	textRes, err := s.KinozalParser.ParseLatest(context.Background(), parseOptionalInt(r.URL.Query(), "pages", 5))
+	textRes, err := s.KinozalParser.ParseLatest(context.Background(), parseOptionalInt(r.URL.Query(), "pages", 100))
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
