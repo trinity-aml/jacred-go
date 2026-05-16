@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"html"
+	"io"
 	"log"
 	"net/http"
 	"net/url"
@@ -65,12 +66,13 @@ func (t *Task) MarkToday(loc *time.Location) {
 }
 
 type Parser struct {
-	Config   app.Config
-	DB       *filedb.DB
-	DataDir  string
-	Client   *http.Client
-	Fetcher  *core.Fetcher
-	loc      *time.Location
+	Config     app.Config
+	DB         *filedb.DB
+	DataDir    string
+	Client     *http.Client
+	SlowClient *http.Client
+	Fetcher    *core.Fetcher
+	loc        *time.Location
 	mu          sync.Mutex
 	working     bool
 	allWork     bool
@@ -93,7 +95,12 @@ func New(cfg app.Config, db *filedb.DB, dataDir string) *Parser {
 	if loc == nil {
 		loc = time.Local
 	}
-	p := &Parser{Config: cfg, DB: db, DataDir: dataDir, Client: &http.Client{Timeout: 35 * time.Second}, Fetcher: core.NewFetcher(cfg), loc: loc, tasks: map[string][]Task{}, domain: core.DomainFromHost(cfg.Rutracker.Host)}
+	host := strings.TrimRight(cfg.Rutracker.Host, "/")
+	if host == "" {
+		host = "https://rutracker.org"
+	}
+	slowTransport := core.TransportForURL(host, cfg.Rutracker.UseProxy, cfg.Rutracker.InsecureSkipVerify, cfg)
+	p := &Parser{Config: cfg, DB: db, DataDir: dataDir, Client: &http.Client{Timeout: 35 * time.Second}, SlowClient: &http.Client{Timeout: 60 * time.Second, Transport: slowTransport}, Fetcher: core.NewFetcher(cfg), loc: loc, tasks: map[string][]Task{}, domain: core.DomainFromHost(cfg.Rutracker.Host)}
 	_ = p.loadTasks()
 	if saved, savedT := core.DefaultSessionStore().LoadAuth(p.domain); saved != "" && time.Since(savedT) < 2*time.Hour {
 		p.cookie = saved
@@ -627,20 +634,36 @@ func (p *Parser) fetchTopic(ctx context.Context, url string) (string, error) {
 	return p.fetch(ctx, url)
 }
 func (p *Parser) fetch(ctx context.Context, rawURL string) (string, error) {
-	ts := p.Config.Rutracker
+	cookie := ""
 	if c := p.getCookie(); c != "" {
-		ts.Cookie = c
+		cookie = c
+	} else {
+		cookie = p.Config.Rutracker.Cookie
 	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return "", err
+	}
+	if cookie != "" {
+		req.Header.Set("Cookie", cookie)
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
 	started := time.Now()
-	data, status, err := p.Fetcher.Download(rawURL, ts)
+	resp, err := p.SlowClient.Do(req)
 	elapsed := time.Since(started).Round(time.Millisecond)
 	isListing := strings.Contains(rawURL, "viewforum.php")
 	if err != nil {
 		log.Printf("rutracker: fetch err elapsed=%s url=%s err=%v", elapsed, rawURL, err)
 		return "", err
 	}
+	defer resp.Body.Close()
+	data, readErr := io.ReadAll(io.LimitReader(resp.Body, 5<<20))
+	if readErr != nil {
+		log.Printf("rutracker: fetch read err elapsed=%s url=%s err=%v", elapsed, rawURL, readErr)
+		return "", readErr
+	}
 	if isListing || elapsed > 5*time.Second {
-		log.Printf("rutracker: fetch ok elapsed=%s status=%d bytes=%d url=%s", elapsed, status, len(data), rawURL)
+		log.Printf("rutracker: fetch ok elapsed=%s status=%d bytes=%d url=%s", elapsed, resp.StatusCode, len(data), rawURL)
 	}
 	return core.DecodeCP1251(data), nil
 }
