@@ -344,9 +344,10 @@ curl "http://127.0.0.1:9117/cron/kinozal/updatetasksparse"
 
 # Step 2: Parse all discovered tasks (can take a long time)
 curl "http://127.0.0.1:9117/cron/kinozal/parsealltask"
+curl "http://127.0.0.1:9117/cron/kinozal/parsealltask?force=true"  # ignore "updated today" flag
 
-# Or: Parse only the latest 5 pages (quick daily update)
-curl "http://127.0.0.1:9117/cron/kinozal/parselatest"
+# Or: Parse only the latest N pages (quick daily update)
+curl "http://127.0.0.1:9117/cron/kinozal/parselatest"           # default pages=100 (kinozal); others default pages=5
 curl "http://127.0.0.1:9117/cron/kinozal/parselatest?pages=10"
 
 # Fallback: parse a single known page
@@ -463,8 +464,10 @@ GET /cron/kinozal/parse
 
 GET /cron/kinozal/updatetasksparse
 GET /cron/kinozal/parsealltask
+  force=true   — re-parse all tasks even if marked updated today
+
 GET /cron/kinozal/parselatest
-  pages=N   (default 5)
+  pages=N   (default 100, max 100) — scan unfiltered pages 0..N-1 per category, no year filter
 ```
 
 #### Knaben
