@@ -99,8 +99,11 @@ func New(cfg app.Config, db *filedb.DB, dataDir string) *Parser {
 	if host == "" {
 		host = "https://rutracker.org"
 	}
-	slowTransport := core.TransportForURL(host, cfg.Rutracker.UseProxy, cfg.Rutracker.InsecureSkipVerify, cfg)
-	p := &Parser{Config: cfg, DB: db, DataDir: dataDir, Client: &http.Client{Timeout: 35 * time.Second}, SlowClient: &http.Client{Timeout: 60 * time.Second, Transport: slowTransport}, Fetcher: core.NewFetcher(cfg), loc: loc, tasks: map[string][]Task{}, domain: core.DomainFromHost(cfg.Rutracker.Host)}
+	slowClient := &http.Client{Timeout: 60 * time.Second}
+	if t := core.TransportForURL(host, cfg.Rutracker.UseProxy, cfg.Rutracker.InsecureSkipVerify, cfg); t != nil {
+		slowClient.Transport = t
+	}
+	p := &Parser{Config: cfg, DB: db, DataDir: dataDir, Client: &http.Client{Timeout: 35 * time.Second}, SlowClient: slowClient, Fetcher: core.NewFetcher(cfg), loc: loc, tasks: map[string][]Task{}, domain: core.DomainFromHost(cfg.Rutracker.Host)}
 	_ = p.loadTasks()
 	if saved, savedT := core.DefaultSessionStore().LoadAuth(p.domain); saved != "" && time.Since(savedT) < 2*time.Hour {
 		p.cookie = saved
