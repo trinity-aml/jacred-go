@@ -644,14 +644,16 @@ func (p *Parser) fetch(ctx context.Context, rawURL string) (string, error) {
 		cookie = p.Config.Rutracker.Cookie
 	}
 	isListing := strings.Contains(rawURL, "viewforum.php")
-	for attempt := 0; attempt < 2; attempt++ {
-		if attempt > 0 {
+	delays := []time.Duration{0, 5 * time.Second, 10 * time.Second, 15 * time.Second}
+	for attempt, delay := range delays {
+		if delay > 0 {
 			select {
 			case <-ctx.Done():
 				return "", ctx.Err()
-			case <-time.After(5 * time.Second):
+			case <-time.After(delay):
 			}
 		}
+		last := attempt == len(delays)-1
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 		if err != nil {
 			return "", err
@@ -665,26 +667,26 @@ func (p *Parser) fetch(ctx context.Context, rawURL string) (string, error) {
 		elapsed := time.Since(started).Round(time.Millisecond)
 		if err != nil {
 			log.Printf("rutracker: fetch err elapsed=%s attempt=%d url=%s err=%v", elapsed, attempt+1, rawURL, err)
-			if attempt == 0 {
-				continue
+			if last {
+				return "", err
 			}
-			return "", err
+			continue
 		}
 		data, readErr := io.ReadAll(io.LimitReader(resp.Body, 5<<20))
 		resp.Body.Close()
 		if readErr != nil {
 			log.Printf("rutracker: fetch read err elapsed=%s attempt=%d url=%s err=%v", elapsed, attempt+1, rawURL, readErr)
-			if attempt == 0 {
-				continue
+			if last {
+				return "", readErr
 			}
-			return "", readErr
+			continue
 		}
 		if resp.StatusCode >= 500 {
 			log.Printf("rutracker: fetch %d elapsed=%s attempt=%d bytes=%d url=%s", resp.StatusCode, elapsed, attempt+1, len(data), rawURL)
-			if attempt == 0 {
-				continue
+			if last {
+				return "", fmt.Errorf("rutracker returned HTTP %d", resp.StatusCode)
 			}
-			return "", fmt.Errorf("rutracker returned HTTP %d", resp.StatusCode)
+			continue
 		}
 		if isListing || elapsed > 5*time.Second {
 			log.Printf("rutracker: fetch ok elapsed=%s status=%d bytes=%d url=%s", elapsed, resp.StatusCode, len(data), rawURL)
