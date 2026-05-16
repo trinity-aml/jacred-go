@@ -210,6 +210,12 @@ func (s *memStorage) OpenTorrent(_ context.Context, info *metainfo.Info, infoHas
 			s.mu.Lock()
 			delete(s.torrents, infoHash)
 			s.mu.Unlock()
+			for _, pc := range mt.pieces {
+				pc.mu.Lock()
+				pc.closed = true
+				pc.data = nil
+				pc.mu.Unlock()
+			}
 			return nil
 		},
 	}, nil
@@ -226,6 +232,7 @@ type memPiece struct {
 	size     int64
 	data     []byte
 	complete bool
+	closed   bool
 }
 
 func (p *memPiece) ReadAt(b []byte, off int64) (int, error) {
@@ -244,6 +251,9 @@ func (p *memPiece) ReadAt(b []byte, off int64) (int, error) {
 func (p *memPiece) WriteAt(b []byte, off int64) (int, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if p.closed {
+		return len(b), nil
+	}
 	if p.data == nil {
 		p.data = make([]byte, p.size)
 	}
