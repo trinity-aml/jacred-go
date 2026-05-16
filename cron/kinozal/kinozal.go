@@ -646,18 +646,54 @@ func (p *Parser) fetchBrowse(ctx context.Context, cat string, page int, arg stri
 	if c := p.getCookie(); c != "" {
 		ts.Cookie = c
 	}
-	data, status, err := p.Fetcher.Download(rawURL, ts)
-	if err != nil {
-		return "", err
+	delays := []time.Duration{0, 5 * time.Second, 10 * time.Second, 15 * time.Second}
+	for attempt, delay := range delays {
+		if delay > 0 {
+			select {
+			case <-ctx.Done():
+				return "", ctx.Err()
+			case <-time.After(delay):
+			}
+		}
+		last := attempt == len(delays)-1
+		started := time.Now()
+		data, status, err := p.Fetcher.Download(rawURL, ts)
+		elapsed := time.Since(started).Round(time.Millisecond)
+		if err != nil {
+			log.Printf("kinozal: fetch err elapsed=%s attempt=%d url=%s err=%v", elapsed, attempt+1, rawURL, err)
+			if last {
+				return "", err
+			}
+			continue
+		}
+		text := core.DecodeCP1251(data)
+		if !strings.Contains(text, "Кинозал") {
+			text = string(data)
+		}
+		if status >= 500 {
+			log.Printf("kinozal: fetch %d elapsed=%s attempt=%d bytes=%d url=%s", status, elapsed, attempt+1, len(data), rawURL)
+			if last {
+				return "", fmt.Errorf("kinozal returned HTTP %d", status)
+			}
+			continue
+		}
+		if status < 200 || status >= 300 {
+			log.Printf("kinozal: fetch %d elapsed=%s attempt=%d bytes=%d url=%s (not-retryable)", status, elapsed, attempt+1, len(data), rawURL)
+			return "", nil
+		}
+		if !strings.Contains(text, "Кинозал.ТВ</title>") {
+			log.Printf("kinozal: fetch bad-body elapsed=%s attempt=%d bytes=%d url=%s", elapsed, attempt+1, len(data), rawURL)
+			if last {
+				return text, nil
+			}
+			continue
+		}
+		if elapsed > 5*time.Second {
+			log.Printf("kinozal: fetch ok elapsed=%s status=%d bytes=%d url=%s", elapsed, status, len(data), rawURL)
+		}
+		return text, nil
 	}
-	text := core.DecodeCP1251(data)
-	if !strings.Contains(text, "Кинозал") {
-		text = string(data)
-	}
-	if status < 200 || status >= 300 {
-		return "", nil
-	}
-	return text, nil
+	return "", fmt.Errorf("kinozal fetch exhausted retries")
 }
 
 func (p *Parser) takeLogin(ctx context.Context) error {
