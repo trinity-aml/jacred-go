@@ -439,6 +439,10 @@ func (p *Parser) parsePage(ctx context.Context, cat string, page int, arg string
 		return nil, err
 	}
 	if htmlBody == "" || !strings.Contains(htmlBody, "Кинозал.ТВ</title>") {
+		log.Printf("kinozal: parsePage cat=%s arg=%s page=%d bad-body bytes=%d hasTitle=%v hasLogout=%v",
+			cat, arg, page, len(htmlBody),
+			strings.Contains(htmlBody, "Кинозал.ТВ</title>"),
+			strings.Contains(htmlBody, ">Выход</a>"))
 		return nil, nil
 	}
 	if p.getCookie() == "" || !strings.Contains(htmlBody, ">Выход</a>") {
@@ -446,6 +450,23 @@ func (p *Parser) parsePage(ctx context.Context, cat string, page int, arg string
 	}
 	rows := rowSplitRe.Split(replaceBadNames(htmlBody), -1)
 	out := make([]filedb.TorrentDetails, 0, len(rows))
+	defer func() {
+		if len(out) == 0 {
+			sample := ""
+			if len(rows) > 1 {
+				r := rows[1]
+				if len(r) > 300 {
+					r = r[:300]
+				}
+				sample = strings.ReplaceAll(r, "\n", " ")
+			}
+			log.Printf("kinozal: parsePage cat=%s arg=%s page=%d 0-items bytes=%d rows=%d hasLogout=%v hasNotFound=%v sample=%q",
+				cat, arg, page, len(htmlBody), len(rows)-1,
+				strings.Contains(htmlBody, ">Выход</a>"),
+				strings.Contains(htmlBody, "По вашему запросу") || strings.Contains(htmlBody, "не найдено") || strings.Contains(htmlBody, "ничего не найдено"),
+				sample)
+		}
+	}()
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	host := strings.TrimRight(p.Config.Kinozal.Host, "/")
 	for _, row := range rows[1:] {
