@@ -643,32 +643,55 @@ func (p *Parser) fetch(ctx context.Context, rawURL string) (string, error) {
 	} else {
 		cookie = p.Config.Rutracker.Cookie
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
-	if err != nil {
-		return "", err
-	}
-	if cookie != "" {
-		req.Header.Set("Cookie", cookie)
-	}
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-	started := time.Now()
-	resp, err := p.SlowClient.Do(req)
-	elapsed := time.Since(started).Round(time.Millisecond)
 	isListing := strings.Contains(rawURL, "viewforum.php")
-	if err != nil {
-		log.Printf("rutracker: fetch err elapsed=%s url=%s err=%v", elapsed, rawURL, err)
-		return "", err
+	for attempt := 0; attempt < 2; attempt++ {
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				return "", ctx.Err()
+			case <-time.After(5 * time.Second):
+			}
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+		if err != nil {
+			return "", err
+		}
+		if cookie != "" {
+			req.Header.Set("Cookie", cookie)
+		}
+		req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+		started := time.Now()
+		resp, err := p.SlowClient.Do(req)
+		elapsed := time.Since(started).Round(time.Millisecond)
+		if err != nil {
+			log.Printf("rutracker: fetch err elapsed=%s attempt=%d url=%s err=%v", elapsed, attempt+1, rawURL, err)
+			if attempt == 0 {
+				continue
+			}
+			return "", err
+		}
+		data, readErr := io.ReadAll(io.LimitReader(resp.Body, 5<<20))
+		resp.Body.Close()
+		if readErr != nil {
+			log.Printf("rutracker: fetch read err elapsed=%s attempt=%d url=%s err=%v", elapsed, attempt+1, rawURL, readErr)
+			if attempt == 0 {
+				continue
+			}
+			return "", readErr
+		}
+		if resp.StatusCode >= 500 {
+			log.Printf("rutracker: fetch %d elapsed=%s attempt=%d bytes=%d url=%s", resp.StatusCode, elapsed, attempt+1, len(data), rawURL)
+			if attempt == 0 {
+				continue
+			}
+			return "", fmt.Errorf("rutracker returned HTTP %d", resp.StatusCode)
+		}
+		if isListing || elapsed > 5*time.Second {
+			log.Printf("rutracker: fetch ok elapsed=%s status=%d bytes=%d url=%s", elapsed, resp.StatusCode, len(data), rawURL)
+		}
+		return core.DecodeCP1251(data), nil
 	}
-	defer resp.Body.Close()
-	data, readErr := io.ReadAll(io.LimitReader(resp.Body, 5<<20))
-	if readErr != nil {
-		log.Printf("rutracker: fetch read err elapsed=%s url=%s err=%v", elapsed, rawURL, readErr)
-		return "", readErr
-	}
-	if isListing || elapsed > 5*time.Second {
-		log.Printf("rutracker: fetch ok elapsed=%s status=%d bytes=%d url=%s", elapsed, resp.StatusCode, len(data), rawURL)
-	}
-	return core.DecodeCP1251(data), nil
+	return "", fmt.Errorf("rutracker fetch exhausted retries")
 }
 
 func (p *Parser) loadTasks() error {
