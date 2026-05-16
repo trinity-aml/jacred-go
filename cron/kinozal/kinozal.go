@@ -28,7 +28,7 @@ const trackerName = "kinozal"
 var parseCats = []string{"45", "46", "8", "6", "15", "17", "35", "39", "13", "14", "24", "11", "9", "47", "18", "37", "12", "10", "7", "16", "49", "50", "21", "22", "20"}
 
 var (
-	browsePagesRe = regexp.MustCompile(`>([0-9]+)</a></li><li><a rel="next"`)
+	browsePagesRe = regexp.MustCompile(`page=([0-9]+)[^"]*"[^>]*>[0-9]+</a></li><li><a rel="next"`)
 	rowSplitRe    = regexp.MustCompile(`<tr class=('first bg'|bg)>`)
 	cleanSpaceRe  = regexp.MustCompile(`[\n\r\t\x{00A0} ]+`)
 	dateOnlyRe    = regexp.MustCompile(`<td class='s'>([0-9]{2}\.[0-9]{2}\.[0-9]{4}) в [0-9]{2}:[0-9]{2}</td>`)
@@ -204,7 +204,9 @@ func (p *Parser) UpdateTasksParse(ctx context.Context) (map[string]map[string][]
 			}
 			pagesMap := map[int]Task{}
 			for _, t := range p.tasks[cat][arg] {
-				pagesMap[t.Page] = t
+				if t.Page <= maxPages {
+					pagesMap[t.Page] = t
+				}
 			}
 			for page := 0; page <= maxPages; page++ {
 				if _, ok := pagesMap[page]; !ok {
@@ -439,10 +441,6 @@ func (p *Parser) parsePage(ctx context.Context, cat string, page int, arg string
 		return nil, err
 	}
 	if htmlBody == "" || !strings.Contains(htmlBody, "Кинозал.ТВ</title>") {
-		log.Printf("kinozal: parsePage cat=%s arg=%s page=%d bad-body bytes=%d hasTitle=%v hasLogout=%v",
-			cat, arg, page, len(htmlBody),
-			strings.Contains(htmlBody, "Кинозал.ТВ</title>"),
-			strings.Contains(htmlBody, ">Выход</a>"))
 		return nil, nil
 	}
 	if p.getCookie() == "" || !strings.Contains(htmlBody, ">Выход</a>") {
@@ -450,23 +448,6 @@ func (p *Parser) parsePage(ctx context.Context, cat string, page int, arg string
 	}
 	rows := rowSplitRe.Split(replaceBadNames(htmlBody), -1)
 	out := make([]filedb.TorrentDetails, 0, len(rows))
-	defer func() {
-		if len(out) == 0 {
-			sample := ""
-			if len(rows) > 1 {
-				r := rows[1]
-				if len(r) > 300 {
-					r = r[:300]
-				}
-				sample = strings.ReplaceAll(r, "\n", " ")
-			}
-			log.Printf("kinozal: parsePage cat=%s arg=%s page=%d 0-items bytes=%d rows=%d hasLogout=%v hasNotFound=%v sample=%q",
-				cat, arg, page, len(htmlBody), len(rows)-1,
-				strings.Contains(htmlBody, ">Выход</a>"),
-				strings.Contains(htmlBody, "По вашему запросу") || strings.Contains(htmlBody, "не найдено") || strings.Contains(htmlBody, "ничего не найдено"),
-				sample)
-		}
-	}()
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	host := strings.TrimRight(p.Config.Kinozal.Host, "/")
 	for _, row := range rows[1:] {
@@ -667,54 +648,18 @@ func (p *Parser) fetchBrowse(ctx context.Context, cat string, page int, arg stri
 	if c := p.getCookie(); c != "" {
 		ts.Cookie = c
 	}
-	delays := []time.Duration{0, 5 * time.Second, 10 * time.Second, 15 * time.Second}
-	for attempt, delay := range delays {
-		if delay > 0 {
-			select {
-			case <-ctx.Done():
-				return "", ctx.Err()
-			case <-time.After(delay):
-			}
-		}
-		last := attempt == len(delays)-1
-		started := time.Now()
-		data, status, err := p.Fetcher.Download(rawURL, ts)
-		elapsed := time.Since(started).Round(time.Millisecond)
-		if err != nil {
-			log.Printf("kinozal: fetch err elapsed=%s attempt=%d url=%s err=%v", elapsed, attempt+1, rawURL, err)
-			if last {
-				return "", err
-			}
-			continue
-		}
-		text := core.DecodeCP1251(data)
-		if !strings.Contains(text, "Кинозал") {
-			text = string(data)
-		}
-		if status >= 500 {
-			log.Printf("kinozal: fetch %d elapsed=%s attempt=%d bytes=%d url=%s", status, elapsed, attempt+1, len(data), rawURL)
-			if last {
-				return "", fmt.Errorf("kinozal returned HTTP %d", status)
-			}
-			continue
-		}
-		if status < 200 || status >= 300 {
-			log.Printf("kinozal: fetch %d elapsed=%s attempt=%d bytes=%d url=%s (not-retryable)", status, elapsed, attempt+1, len(data), rawURL)
-			return "", nil
-		}
-		if !strings.Contains(text, "Кинозал.ТВ</title>") {
-			log.Printf("kinozal: fetch bad-body elapsed=%s attempt=%d bytes=%d url=%s", elapsed, attempt+1, len(data), rawURL)
-			if last {
-				return text, nil
-			}
-			continue
-		}
-		if elapsed > 5*time.Second {
-			log.Printf("kinozal: fetch ok elapsed=%s status=%d bytes=%d url=%s", elapsed, status, len(data), rawURL)
-		}
-		return text, nil
+	data, status, err := p.Fetcher.Download(rawURL, ts)
+	if err != nil {
+		return "", err
 	}
-	return "", fmt.Errorf("kinozal fetch exhausted retries")
+	text := core.DecodeCP1251(data)
+	if !strings.Contains(text, "Кинозал") {
+		text = string(data)
+	}
+	if status < 200 || status >= 300 {
+		return "", nil
+	}
+	return text, nil
 }
 
 func (p *Parser) takeLogin(ctx context.Context) error {
