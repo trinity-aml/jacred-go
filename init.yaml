@@ -258,6 +258,16 @@ Ultradox:
     u: ""
     p: ""
 
+Viruseproject:
+  host: "https://viruseproject.tv"
+  useproxy: false
+  reqMinute: 8
+  parseDelay: 7000
+  log: false
+  login:
+    u: ""
+    p: ""
+
 globalproxy:
   - pattern: \\.onion
     useAuth: false

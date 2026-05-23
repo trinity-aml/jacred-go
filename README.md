@@ -235,6 +235,7 @@ Kinozal:
 | Leproduction | `https://www.le-production.tv` |
 | Korsars | `https://korsars.pro` |
 | Ultradox | `https://ultradox.top` |
+| Viruseproject | `https://viruseproject.tv` |
 
 ### Proxy
 
@@ -293,7 +294,7 @@ curl "http://127.0.0.1:9117/cron/kinozal/parse?page=3"
 
 Parse N pages starting from the first. `0` means unlimited (all pages).
 
-**Trackers:** Megapeer (`maxpage`, default 1), Animelayer (`maxpage`, default 1), Anistar (`limit_page`, default 0 = all), Leproduction (`limit_page`, default 0 = all)
+**Trackers:** Megapeer (`maxpage`, default 1), Animelayer (`maxpage`, default 1), Anistar (`limit_page`, default 0 = all), Leproduction (`limit_page`, default 0 = all), Viruseproject (`limit_page`, default 1; 0 = all)
 
 ```bash
 # Megapeer/Animelayer: default = 1 page
@@ -548,6 +549,13 @@ GET /cron/ultradox/parselatest
   pages=N   (default 5)
 ```
 Listing-then-detail tracker, no login. Six sections: `serial-hd`, `hd`, `rufilm`, `camrip`, `webrips`, `anime`. Listing rows expose placeholder magnets with empty btih, so the parser follows each title link to the detail page where every quality variant has a full info-hash. One torrent record is stored per quality variant. Sid/pir are placeholder values (1) — the site doesn't expose peer counts. Upstream's TLS certificate is expired, so the default config carries `insecureSkipVerify: true`.
+
+#### Viruseproject
+```
+GET /cron/viruseproject/parse
+  limit_page=N   (default 1; 0 = unlimited, scan all category pages)
+```
+Listing-then-detail tracker, no login. K2/Joomla layout. Categories: `serials`, `movies`, `documentary`, `cartoons`, `reality-show`. Pagination via `?start=N` (step 10). Each detail page exposes one or more `.torrent` attachments per quality variant — the parser downloads the file and computes the magnet/infohash. **One record per quality variant**. Title format: `<itemTitle>[ (year)] [<videoQuality>] [<resolution>]` — year is appended only when missing from itemTitle, resolution defaults to `[400p]` when not parseable from the .torrent filename, `<videoQuality>` comes from the "Качество видео" extra field (`WEBRip`, `WEB-DLRip`, `PDTVRip`, `DVDRip`, …). Date stored from the page header (`itemDateCreated`).
 
 #### Selezen
 ```

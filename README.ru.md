@@ -234,6 +234,7 @@ Kinozal:
 | Leproduction | `https://www.le-production.tv` |
 | Korsars | `https://korsars.pro` |
 | Ultradox | `https://ultradox.top` |
+| Viruseproject | `https://viruseproject.tv` |
 
 ### Прокси
 
@@ -292,7 +293,7 @@ curl "http://127.0.0.1:9117/cron/kinozal/parse?page=3"
 
 Парсит N страниц начиная с первой. `0` означает без лимита (все страницы).
 
-**Трекеры:** Megapeer (`maxpage`, по умолч. 1), Animelayer (`maxpage`, по умолч. 1), Anistar (`limit_page`, по умолч. 0 = все), Leproduction (`limit_page`, по умолч. 0 = все)
+**Трекеры:** Megapeer (`maxpage`, по умолч. 1), Animelayer (`maxpage`, по умолч. 1), Anistar (`limit_page`, по умолч. 0 = все), Leproduction (`limit_page`, по умолч. 0 = все), Viruseproject (`limit_page`, по умолч. 1; 0 = все)
 
 ```bash
 # Megapeer/Animelayer: по умолчанию = 1 страница
@@ -547,6 +548,13 @@ GET /cron/ultradox/parselatest
   pages=N   (по умолч. 5)
 ```
 Listing-then-detail трекер, без авторизации. Шесть разделов: `serial-hd`, `hd`, `rufilm`, `camrip`, `webrips`, `anime`. На листинге у магнетов пустой btih — поэтому парсер по каждой раздаче ходит на детальную страницу, где для каждого варианта качества лежит магнет с настоящим info-hash. Каждый вариант сохраняется как отдельная запись. Sid/pir выставлены в 1 (сайт не отдаёт пиры). У сайта просрочен TLS-сертификат, поэтому в дефолтном конфиге `insecureSkipVerify: true`.
+
+#### Viruseproject
+```
+GET /cron/viruseproject/parse
+  limit_page=N   (по умолч. 1; 0 = все страницы каждой категории)
+```
+Listing-then-detail трекер, без авторизации. K2/Joomla. Категории: `serials`, `movies`, `documentary`, `cartoons`, `reality-show`. Пагинация через `?start=N` (шаг 10). На детальной странице один или несколько `.torrent` файлов на разное качество — парсер скачивает файл и вычисляет магнет/info-hash. **Одна запись на каждое качество**. Формат заголовка: `<itemTitle>[ (year)] [<videoQuality>] [<resolution>]` — год добавляется только если отсутствует в itemTitle, разрешение по умолчанию `[400p]` если не получилось извлечь из имени `.torrent` файла, `<videoQuality>` берётся из поля «Качество видео» (`WEBRip`, `WEB-DLRip`, `PDTVRip`, `DVDRip`, …). Дата создания записи — из шапки страницы (`itemDateCreated`).
 
 #### Selezen
 ```

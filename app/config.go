@@ -254,6 +254,8 @@ func trackerByName(cfg *Config, name string) *TrackerSettings {
 		return &cfg.Korsars
 	case "Ultradox":
 		return &cfg.Ultradox
+	case "Viruseproject":
+		return &cfg.Viruseproject
 	default:
 		return nil
 	}
