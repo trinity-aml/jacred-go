@@ -24,7 +24,6 @@ import (
 	"jacred/cron/aniliberty"
 	"jacred/cron/animelayer"
 	"jacred/cron/anistar"
-	"jacred/cron/baibako"
 	"jacred/cron/bitru"
 	"jacred/cron/bitruapi"
 	"jacred/cron/kinozal"
@@ -66,7 +65,6 @@ type Server struct {
 	AnimelayerParser   *animelayer.Parser
 	AnistarParser      *anistar.Parser
 	AnifilmParser      *anifilm.Parser
-	BaibakoParser      *baibako.Parser
 	BitruParser        *bitru.Parser
 	BitruAPIParser     *bitruapi.Parser
 	RutorParser        *rutor.Parser
@@ -113,7 +111,7 @@ func New(cfg app.Config, db *filedb.DB, tracksDB *tracks.DB, wwwroot string) *Se
 		tracksDB = tracks.New("Data")
 		_ = tracksDB.Load()
 	}
-	return &Server{Config: cfg, DB: db, WWWRoot: wwwroot, Version: VersionInfo{Version: "dev", GitSha: "unknown", GitBranch: "unknown", BuildDate: time.Now().UTC().Format("2006-01-02 15:04:05 UTC")}, KnabenParser: knaben.New(cfg, db), AnidubParser: anidub.New(cfg, db), AnilibertyParser: aniliberty.New(cfg, db), AnimelayerParser: animelayer.New(cfg, db), AnistarParser: anistar.New(cfg, db, "Data"), AnifilmParser: anifilm.New(cfg, db, "Data"), BaibakoParser: baibako.New(cfg, db, "Data"), BitruParser: bitru.New(cfg, db, "Data"), BitruAPIParser: bitruapi.New(cfg, db, "Data"), RutorParser: rutor.New(cfg, db, "Data"), MegapeerParser: megapeer.New(cfg, db), TorrentByParser: torrentby.New(cfg, db, "Data"), NNMClubParser: nnmclub.New(cfg, db, "Data"), LostfilmParser: lostfilm.New(cfg, db), RutrackerParser: rutracker.New(cfg, db, "Data"), KinozalParser: kinozal.New(cfg, db, "Data"), TolokaParser: toloka.New(cfg, db, "Data"), SelezenParser: selezen.New(cfg, db, "Data"), LeproductionParser: leproduction.New(cfg, db, "Data"), MazepaParser: mazepa.New(cfg, db, "Data"), KorsarsParser: korsars.New(cfg, db, "Data"), UltradoxParser: ultradox.New(cfg, db, "Data"), TracksDB: tracksDB, cache: newSearchCache(5*time.Minute, 10000)}
+	return &Server{Config: cfg, DB: db, WWWRoot: wwwroot, Version: VersionInfo{Version: "dev", GitSha: "unknown", GitBranch: "unknown", BuildDate: time.Now().UTC().Format("2006-01-02 15:04:05 UTC")}, KnabenParser: knaben.New(cfg, db), AnidubParser: anidub.New(cfg, db), AnilibertyParser: aniliberty.New(cfg, db), AnimelayerParser: animelayer.New(cfg, db), AnistarParser: anistar.New(cfg, db, "Data"), AnifilmParser: anifilm.New(cfg, db, "Data"), BitruParser: bitru.New(cfg, db, "Data"), BitruAPIParser: bitruapi.New(cfg, db, "Data"), RutorParser: rutor.New(cfg, db, "Data"), MegapeerParser: megapeer.New(cfg, db), TorrentByParser: torrentby.New(cfg, db, "Data"), NNMClubParser: nnmclub.New(cfg, db, "Data"), LostfilmParser: lostfilm.New(cfg, db), RutrackerParser: rutracker.New(cfg, db, "Data"), KinozalParser: kinozal.New(cfg, db, "Data"), TolokaParser: toloka.New(cfg, db, "Data"), SelezenParser: selezen.New(cfg, db, "Data"), LeproductionParser: leproduction.New(cfg, db, "Data"), MazepaParser: mazepa.New(cfg, db, "Data"), KorsarsParser: korsars.New(cfg, db, "Data"), UltradoxParser: ultradox.New(cfg, db, "Data"), TracksDB: tracksDB, cache: newSearchCache(5*time.Minute, 10000)}
 }
 
 // GetConfig returns a thread-safe copy of the current config.
@@ -144,8 +142,6 @@ func (s *Server) UpdateConfig(cfg app.Config) {
 	s.AnistarParser.Fetcher.UpdateConfig(cfg)
 	s.AnifilmParser.Config = cfg
 	s.AnifilmParser.Fetcher.UpdateConfig(cfg)
-	s.BaibakoParser.Config = cfg
-	s.BaibakoParser.Fetcher.UpdateConfig(cfg)
 	s.BitruParser.Config = cfg
 	s.BitruParser.Fetcher.UpdateConfig(cfg)
 	s.BitruAPIParser.Config = cfg
@@ -292,7 +288,6 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/cron/selezen/parselatest", s.handleCronSelezenParseLatest)
 	mux.HandleFunc("/cron/anistar/parse", s.handleCronAnistarParse)
 	mux.HandleFunc("/cron/anifilm/parse", s.handleCronAnifilmParse)
-	mux.HandleFunc("/cron/baibako/parse", s.handleCronBaibakoParse)
 	mux.HandleFunc("/cron/leproduction/parse", s.handleCronLeproductionParse)
 	mux.HandleFunc("/cron/mazepa/parse", s.handleCronMazepaParse)
 	mux.HandleFunc("/cron/mazepa/updatetasksparse", s.handleCronMazepaUpdateTasksParse)
@@ -1110,19 +1105,6 @@ func (s *Server) handleCronAnifilmParse(w http.ResponseWriter, r *http.Request) 
 	}
 	fullparse := parseBool(r.URL.Query().Get("fullparse"))
 	res, err := s.AnifilmParser.Parse(context.Background(), fullparse)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": res.Status})
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"status": res.Status, "fetched": res.Fetched, "added": res.Added, "updated": res.Updated, "skipped": res.Skipped, "failed": res.Failed, "text": fmt.Sprintf("fetched=%d +%d ~%d =%d failed=%d", res.Fetched, res.Added, res.Updated, res.Skipped, res.Failed)})
-}
-
-func (s *Server) handleCronBaibakoParse(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		return
-	}
-	res, err := s.BaibakoParser.Parse(context.Background(), parseOptionalInt(r.URL.Query(), "maxpage", 10))
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": res.Status})
 		return

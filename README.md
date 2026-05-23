@@ -233,7 +233,6 @@ Kinozal:
 | Anistar | `https://anistar.org` |
 | Anifilm | `https://anifilm.pro` |
 | Leproduction | `https://www.le-production.tv` |
-| Baibako | `http://baibako.tv` |
 | Korsars | `https://korsars.pro` |
 | Ultradox | `https://ultradox.top` |
 
@@ -294,10 +293,10 @@ curl "http://127.0.0.1:9117/cron/kinozal/parse?page=3"
 
 Parse N pages starting from the first. `0` means unlimited (all pages).
 
-**Trackers:** Megapeer (`maxpage`, default 1), Animelayer (`maxpage`, default 1), Baibako (`maxpage`, default 10), Anistar (`limit_page`, default 0 = all), Leproduction (`limit_page`, default 0 = all)
+**Trackers:** Megapeer (`maxpage`, default 1), Animelayer (`maxpage`, default 1), Anistar (`limit_page`, default 0 = all), Leproduction (`limit_page`, default 0 = all)
 
 ```bash
-# Megapeer/Animelayer/Baibako: default = 1 page
+# Megapeer/Animelayer: default = 1 page
 curl "http://127.0.0.1:9117/cron/megapeer/parse"
 
 # Parse up to 5 pages
@@ -428,12 +427,6 @@ GET /cron/anistar/parse
 GET /cron/anifilm/parse
   fullparse=false   (default) — only new/updated since last run
   fullparse=true    — re-parse all pages
-```
-
-#### Baibako
-```
-GET /cron/baibako/parse
-  maxpage=N   (default 10)
 ```
 
 #### Bitru

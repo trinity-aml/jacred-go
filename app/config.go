@@ -250,8 +250,6 @@ func trackerByName(cfg *Config, name string) *TrackerSettings {
 		return &cfg.Anifilm
 	case "Leproduction":
 		return &cfg.Leproduction
-	case "Baibako":
-		return &cfg.Baibako
 	case "Korsars":
 		return &cfg.Korsars
 	case "Ultradox":

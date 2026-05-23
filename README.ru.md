@@ -232,7 +232,6 @@ Kinozal:
 | Anistar | `https://anistar.org` |
 | Anifilm | `https://anifilm.pro` |
 | Leproduction | `https://www.le-production.tv` |
-| Baibako | `http://baibako.tv` |
 | Korsars | `https://korsars.pro` |
 | Ultradox | `https://ultradox.top` |
 
@@ -293,10 +292,10 @@ curl "http://127.0.0.1:9117/cron/kinozal/parse?page=3"
 
 Парсит N страниц начиная с первой. `0` означает без лимита (все страницы).
 
-**Трекеры:** Megapeer (`maxpage`, по умолч. 1), Animelayer (`maxpage`, по умолч. 1), Baibako (`maxpage`, по умолч. 10), Anistar (`limit_page`, по умолч. 0 = все), Leproduction (`limit_page`, по умолч. 0 = все)
+**Трекеры:** Megapeer (`maxpage`, по умолч. 1), Animelayer (`maxpage`, по умолч. 1), Anistar (`limit_page`, по умолч. 0 = все), Leproduction (`limit_page`, по умолч. 0 = все)
 
 ```bash
-# Megapeer/Animelayer/Baibako: по умолчанию = 1 страница
+# Megapeer/Animelayer: по умолчанию = 1 страница
 curl "http://127.0.0.1:9117/cron/megapeer/parse"
 
 # Парсить до 5 страниц
@@ -427,12 +426,6 @@ GET /cron/anistar/parse
 GET /cron/anifilm/parse
   fullparse=false   (по умолч.) — только новые/обновлённые с последнего запуска
   fullparse=true    — переразобрать все страницы
-```
-
-#### Baibako
-```
-GET /cron/baibako/parse
-  maxpage=N   (по умолч. 10)
 ```
 
 #### Bitru

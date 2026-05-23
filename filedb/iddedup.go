@@ -10,7 +10,6 @@ var (
 	torrentByRe2 = regexp.MustCompile(`/(\d+)/`)
 	megapeerIDRe = regexp.MustCompile(`/torrent/(\d+)`)
 	selezenIDRe  = regexp.MustCompile(`/relizy-ot-selezen/(\d+)-`)
-	baibakoIDRe  = regexp.MustCompile(`(?i)details\.php\?id=(\d+)`)
 )
 
 // GetTorrentIDFromURL extracts the numeric torrent ID from a tracker URL.
@@ -37,10 +36,6 @@ func GetTorrentIDFromURL(trackerName, url string) int {
 		}
 	case "selezen":
 		if m := selezenIDRe.FindStringSubmatch(url); len(m) == 2 {
-			return atoid(m[1])
-		}
-	case "baibako":
-		if m := baibakoIDRe.FindStringSubmatch(url); len(m) == 2 {
 			return atoid(m[1])
 		}
 	}

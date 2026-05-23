@@ -113,7 +113,6 @@ func MarshalYAML(cfg Config) string {
 	writeTracker(&b, "Anistar", cfg.Anistar)
 	writeTracker(&b, "Anifilm", cfg.Anifilm)
 	writeTracker(&b, "Leproduction", cfg.Leproduction)
-	writeTracker(&b, "Baibako", cfg.Baibako)
 	writeTracker(&b, "Korsars", cfg.Korsars)
 	writeTracker(&b, "Ultradox", cfg.Ultradox)
 
