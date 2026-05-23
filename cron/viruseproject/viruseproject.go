@@ -259,6 +259,7 @@ func (p *Parser) buildRecords(ctx context.Context, postURL, dhtml, host string, 
 			Types:        types,
 			URL:          recordURL,
 			Title:        title,
+			Sid:          1, // site doesn't expose peer counts
 			SizeName:     sizeName,
 			Size:         sizeBytes,
 			CreateTime:   createTimeStr,
