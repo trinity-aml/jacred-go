@@ -221,6 +221,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/dev/fixanimelayerduplicates", s.handleDevFixAnimelayerDuplicates)
 	mux.HandleFunc("/dev/fixkinozalurls", s.handleDevFixKinozalUrls)
 	mux.HandleFunc("/dev/fixselezenurls", s.handleDevFixSelezenUrls)
+	mux.HandleFunc("/dev/migrateviruseprojecturls", s.handleDevMigrateViruseprojectUrls)
 	mux.HandleFunc("/admin/config", s.handleAdminConfig)
 	mux.HandleFunc("/admin/cf-domains", s.handleAdminCFDomains)
 

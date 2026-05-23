@@ -3,6 +3,7 @@ package viruseproject
 import (
 	"context"
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -67,6 +68,9 @@ func TestBuildRecordsFromFixtures(t *testing.T) {
 				t.Logf("record[%d]: title=%q url=%q size=%v(%v) q=%v vt=%v name=%q orig=%q year=%v create=%v _tid=%v _downloadURI=%v",
 					i, r["title"], r["url"], r["size"], r["sizeName"], r["quality"], r["videotype"],
 					r["name"], r["originalname"], r["relased"], r["createTime"], r["_tid"], r["_downloadURI"])
+				if u, _ := r["url"].(string); !strings.Contains(u, "#q=") {
+					t.Errorf("record %d: url %q lacks #q= fragment", i, u)
+				}
 				if title, _ := r["title"].(string); title == "" {
 					t.Errorf("empty title in record %d", i)
 				}

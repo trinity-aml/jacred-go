@@ -1577,6 +1577,52 @@ func (s *Server) handleDevFixSelezenUrls(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "urlsFixed": totalFixed, "duplicatesRemoved": totalRemoved})
 }
 
+// handleDevMigrateViruseprojectUrls rewrites legacy viruseproject URLs from
+// the "?q=…&id=…" form to "#q=…&id=…" — the fragment lets the browser open
+// the canonical page while still keeping the per-quality URL key unique in
+// the DB. If a record with the target URL already exists in the bucket the
+// legacy copy is dropped instead of overwriting the newer one.
+func (s *Server) handleDevMigrateViruseprojectUrls(w http.ResponseWriter, r *http.Request) {
+	if !isLocalRequest(r) {
+		writeJSON(w, http.StatusForbidden, map[string]any{"badip": true})
+		return
+	}
+	migrated, droppedAsDup := 0, 0
+	for _, item := range s.DB.UnorderedMasterEntries() {
+		bucket, err := s.DB.OpenReadOrEmpty(item.Key)
+		if err != nil {
+			continue
+		}
+		bucketChanged := false
+		for u, t := range bucket {
+			if t == nil || asString(t["trackerName"]) != "viruseproject" {
+				continue
+			}
+			idx := strings.Index(u, "?q=")
+			if idx < 0 {
+				continue
+			}
+			newURL := u[:idx] + "#" + u[idx+1:]
+			if _, clash := bucket[newURL]; clash {
+				delete(bucket, u)
+				droppedAsDup++
+				bucketChanged = true
+				continue
+			}
+			delete(bucket, u)
+			t["url"] = newURL
+			bucket[newURL] = t
+			migrated++
+			bucketChanged = true
+		}
+		if bucketChanged {
+			_ = s.DB.SaveBucket(item.Key, bucket, time.Now().UTC())
+		}
+	}
+	_ = s.DB.SaveChangesToFileNow()
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "migrated": migrated, "droppedAsDup": droppedAsDup})
+}
+
 // handleAdminConfigGet returns the full parsed config as JSON.
 func (s *Server) handleAdminConfigGet(w http.ResponseWriter, r *http.Request) {
 	if !isLocalRequest(r) {

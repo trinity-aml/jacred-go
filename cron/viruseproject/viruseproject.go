@@ -252,7 +252,7 @@ func (p *Parser) buildRecords(ctx context.Context, postURL, dhtml, host string, 
 
 		title := fmt.Sprintf("%s [%s]", baseTitle, resolution)
 
-		recordURL := fmt.Sprintf("%s?q=%d&id=%s", postURL, resInt, downloadID)
+		recordURL := fmt.Sprintf("%s#q=%d&id=%s", postURL, resInt, downloadID)
 
 		out = append(out, filedb.TorrentRecord{
 			TrackerName:  trackerName,
