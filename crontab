@@ -66,8 +66,8 @@
 */40 *   *   *   *    curl -s "http://127.0.0.1:9117/cron/anifilm/parse"
 10   */5 *   *   *    curl -s "http://127.0.0.1:9117/cron/anifilm/parse?fullparse=true"
 
-*/15 *   *   *   *    curl -s "http://127.0.0.1:9117/cron/baibako/parse"
-15   */6 *   *   *    curl -s "http://127.0.0.1:9117/cron/baibako/parse?maxpage=418"
+*/15 *   *   *   *    curl -s "http://127.0.0.1:9117/cron/viruseproject/parse?limit_page=1"
+15   */6 *   *   *    curl -s "http://127.0.0.1:9117/cron/viruseproject/parse?limit_page=0"
 
 */40 *   *   *   *    curl -s "http://127.0.0.1:9117/cron/lostfilm/parsepages"
 20   */6 *   *   *    curl -s "http://127.0.0.1:9117/cron/lostfilm/parsepages?pageTo=100"
