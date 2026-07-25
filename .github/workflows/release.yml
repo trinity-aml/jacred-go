@@ -4,11 +4,31 @@ name: release
 # branch pushes or pull requests, and no workflow_dispatch: tagging is the one
 # action that publishes a release.
 #
-#   git tag -a v1.2.3 -m "..." && git push origin v1.2.3
+#   git tag -a 1.2.6 -m "..." && git push origin 1.2.6
+#
+# The first pattern is the scheme this repository already uses — all existing
+# tags are bare semver (1.0.0 … 1.2.5) with no "v" prefix, so a "v*" filter
+# would never fire. The prefixed form is accepted as well in case the
+# convention changes later.
 on:
   push:
     tags:
-      - 'v*'
+      - '[0-9]+.[0-9]+.[0-9]+'
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+
+  # Manual re-run from the Actions tab. This is not an automatic trigger — the
+  # workflow still only fires by itself on a tag push.
+  #
+  # The tag has to be given explicitly: on a manual dispatch github.ref_name is
+  # whatever branch the run was started from ("main"), so without this input the
+  # job would build branch HEAD and try to publish a release literally named
+  # "main".
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing tag to build and publish (e.g. 1.2.6)'
+        required: true
+        type: string
 
 permissions:
   contents: write # required to create the release and upload assets
@@ -17,6 +37,9 @@ jobs:
   release:
     runs-on: ubuntu-latest
     env:
+      # One name for both entry points: the dispatch input when present,
+      # otherwise the pushed tag.
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
       # A go.work in the tree would silently swap a pinned dependency for a
       # local checkout. It is gitignored, so this is belt-and-braces.
       GOWORK: off
@@ -25,9 +48,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ env.RELEASE_TAG }}
           # build_all.sh derives the version from `git describe --tags`, which
           # needs full history and the tag objects.
           fetch-depth: 0
+
+      # A dispatch input is free-form text; a branch name or a typo here would
+      # otherwise produce a release named after something that is not a version.
+      - name: Verify the ref is a tag
+        run: |
+          if ! git rev-parse -q --verify "refs/tags/${RELEASE_TAG}" >/dev/null; then
+            echo "::error::'${RELEASE_TAG}' is not an existing tag in this repository"
+            exit 1
+          fi
+          echo "building tag ${RELEASE_TAG} ($(git rev-parse --short HEAD))"
 
       - uses: actions/setup-go@v5
         with:
@@ -63,10 +97,13 @@ jobs:
           SKIP_ARCHIVE: '1' # binaries are published individually
         run: ./build_all.sh
 
+      # Only the bare binaries are checksummed and published. The glob excludes
+      # archives so that flipping SKIP_ARCHIVE off later cannot quietly add a
+      # 130 MB tarball of every platform to the release.
       - name: Checksums
         working-directory: Dist
         run: |
-          sha256sum jacred-* > SHA256SUMS
+          sha256sum $(ls jacred-* | grep -v '\.tar\.gz$') > SHA256SUMS
           cat SHA256SUMS
 
       # gh is preinstalled on GitHub-hosted runners, so no third-party action is
@@ -75,9 +112,18 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "${GITHUB_REF_NAME}" \
-            --title "${GITHUB_REF_NAME}" \
-            --generate-notes \
-            Dist/jacred-* \
-            Dist/SHA256SUMS \
-            init.yaml.example
+          mapfile -t assets < <(ls Dist/jacred-* | grep -v '\.tar\.gz$')
+          assets+=(Dist/SHA256SUMS init.yaml.example)
+
+          # A manual re-run targets a tag that usually already has a release,
+          # and `gh release create` refuses to overwrite one. Replace the assets
+          # in that case instead of failing the run.
+          if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
+            echo "release ${RELEASE_TAG} exists — replacing its assets"
+            gh release upload "${RELEASE_TAG}" --clobber "${assets[@]}"
+          else
+            gh release create "${RELEASE_TAG}" \
+              --title "${RELEASE_TAG}" \
+              --generate-notes \
+              "${assets[@]}"
+          fi

@@ -1273,6 +1273,18 @@ Nothing runs on ordinary branch pushes or pull requests. The job verifies
 target via `build_all.sh`, then publishes a release containing each binary,
 `SHA256SUMS` and `init.yaml.example`.
 
+A run can also be started by hand from the Actions tab, or with:
+
+```bash
+gh workflow run release.yml -f tag=1.2.3
+```
+
+The tag is a required input because on a manual dispatch `github.ref_name` is
+the branch the run was started from, not a tag — without it the job would build
+branch HEAD and publish a release named `main`. The workflow checks the value
+really is an existing tag before building. Re-running a tag that already has a
+release replaces its assets instead of failing.
+
 Notes:
 
 - The version baked into `/version` comes from `git describe --tags`, so the
