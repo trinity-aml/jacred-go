@@ -199,7 +199,7 @@ timeSyncSpidr: 60                       # Интервал spider-синхрон
 
 ```yaml
 Kinozal:
-  host: "https://kinozal.tv"   # Переопределить хост по умолчанию
+  host: "https://kinozal.guru"   # Переопределить хост по умолчанию
   cookie: "uid=abc123; pass=..." # Cookie сессии (обязательно для трекеров с авторизацией)
   login:
     u: "username"
@@ -217,7 +217,7 @@ Kinozal:
 | Rutor | `https://rutor.is` |
 | Megapeer | `https://megapeer.vip` |
 | TorrentBy | `https://torrent.by` |
-| Kinozal | `https://kinozal.tv` |
+| Kinozal | `https://kinozal.guru` |
 | NNMClub | `https://nnmclub.to` |
 | Bitru | `https://bitru.org` |
 | Toloka | `https://toloka.to` |
@@ -635,7 +635,7 @@ curl "http://127.0.0.1:9117/api/v1.0/torrents?search=Inception&exact=true"
 [
   {
     "tracker": "Kinozal",
-    "url": "https://kinozal.tv/details.php?id=123456",
+    "url": "https://kinozal.guru/details.php?id=123456",
     "title": "Дюна / Dune (2021) BDRip 1080p",
     "size": 15032385536,
     "sizeName": "14.0 GB",
@@ -831,7 +831,7 @@ curl "http://127.0.0.1:9117/sync/fdb/torrents?time=0&spidr=true"
         "time": "2024-01-15 10:30:45",
         "fileTime": 133476543210000000,
         "torrents": {
-          "https://kinozal.tv/details.php?id=123": { ... }
+          "https://kinozal.guru/details.php?id=123": { ... }
         }
       }
     }

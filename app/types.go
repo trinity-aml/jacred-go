@@ -141,7 +141,7 @@ func DefaultConfig() Config {
 		Rutor:               TrackerSettings{Host: "https://rutor.is", ReqMinute: 8, ParseDelay: 7000},
 		Megapeer:            TrackerSettings{Host: "https://megapeer.vip", ReqMinute: 8, ParseDelay: 7000},
 		TorrentBy:           TrackerSettings{Host: "https://torrent.by", ReqMinute: 8, ParseDelay: 7000, InsecureSkipVerify: true},
-		Kinozal:             TrackerSettings{Host: "https://kinozal.tv", ReqMinute: 8, ParseDelay: 7000},
+		Kinozal:             TrackerSettings{Host: "https://kinozal.guru", ReqMinute: 8, ParseDelay: 7000},
 		NNMClub:             TrackerSettings{Host: "https://nnmclub.to", ReqMinute: 8, ParseDelay: 7000},
 		Bitru:               TrackerSettings{Host: "https://bitru.org", ReqMinute: 8, ParseDelay: 7000},
 		Toloka:              TrackerSettings{Host: "https://toloka.to", ReqMinute: 8, ParseDelay: 7000},

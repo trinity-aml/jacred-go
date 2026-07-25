@@ -254,7 +254,7 @@ TorrentBy:
 # Supports: parse?page=N, updatetasksparse, parsealltask, parselatest?pages=N
 
 Kinozal:
-  host: "https://kinozal.tv"
+  host: "https://kinozal.guru"
   parseDelay: 7000
   reqMinute: 6
   login:

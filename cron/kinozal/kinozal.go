@@ -40,14 +40,25 @@ var (
 	mp2Re         = regexp.MustCompile(`(?is)class="r[0-9]+">([^<]+)</a>`)
 	mp3Re         = regexp.MustCompile(`(?is)<td class='sl_s'>([0-9]+)</td>`)
 	mp4Re         = regexp.MustCompile(`(?is)<td class='sl_p'>([0-9]+)</td>`)
-	mp5Re         = regexp.MustCompile(`(?is)<td class='s'>([0-9\.,]+ (МБ|ГБ))</td>`)
-	forSeasonRe   = regexp.MustCompile(`^([^\(/]+) (\([^\)/]+\) )?\([0-9\-]+ сезоны?: [^\)/]+\) ([^/]+ )?/ ([^\(/]+) / ([0-9]{4})`)
-	forSeriesRe   = regexp.MustCompile(`^([^\(/]+) (\([^\)/]+\) )?\([^\)/]+\) ([^/]+ )?/ ([^\(/]+) / ([0-9]{4})`)
-	forShortRe    = regexp.MustCompile(`^([^\(/]+) / ([^\(/]+) / ([0-9]{4})`)
-	tvMainRe      = regexp.MustCompile(`^([^\(/]+) (\([^\)/]+\) )?/ ([^\(/]+) / ([0-9]{4})`)
-	tvShortRe     = regexp.MustCompile(`^([^/\(]+) (\([^\)/]+\) )?/ ([0-9]{4})`)
-	idURLRe       = regexp.MustCompile(`\?id=([0-9]+)`)
-	hashRe        = regexp.MustCompile(`<ul><li>Инфо хеш: +([^<]+)</li>`)
+	// КБ and ТБ are included because a row whose size falls outside the listed
+	// units fails the "all fields present" guard in parsePage and is dropped
+	// entirely. Multi-season packs do reach terabytes; filedb/fulldetails.go
+	// and every sibling parser already understand ТБ.
+	mp5Re       = regexp.MustCompile(`(?is)<td class='s'>([0-9\.,]+ (КБ|МБ|ГБ|ТБ))</td>`)
+	forSeasonRe = regexp.MustCompile(`^([^\(/]+) (\([^\)/]+\) )?\([0-9\-]+ сезоны?: [^\)/]+\) ([^/]+ )?/ ([^\(/]+) / ([0-9]{4})`)
+	forSeriesRe = regexp.MustCompile(`^([^\(/]+) (\([^\)/]+\) )?\([^\)/]+\) ([^/]+ )?/ ([^\(/]+) / ([0-9]{4})`)
+	forShortRe  = regexp.MustCompile(`^([^\(/]+) / ([^\(/]+) / ([0-9]{4})`)
+	tvMainRe    = regexp.MustCompile(`^([^\(/]+) (\([^\)/]+\) )?/ ([^\(/]+) / ([0-9]{4})`)
+	tvShortRe   = regexp.MustCompile(`^([^/\(]+) (\([^\)/]+\) )?/ ([0-9]{4})`)
+	idURLRe     = regexp.MustCompile(`\?id=([0-9]+)`)
+	// Sanity check that a browse response is a real tracker page rather than
+	// an error or a redirect body. Matched on the brand root only: the site
+	// rebranded "Кинозал.ТВ" -> "Кинозал.GURU" with the 2026 domain move, and
+	// pinning the full old name made every page fail this guard — parsePage
+	// then returned zero records with no error, which read as "no new
+	// torrents" instead of "parser is broken".
+	kinozalTitleRe = regexp.MustCompile(`Кинозал\.[^<]*</title>`)
+	hashRe         = regexp.MustCompile(`<ul><li>Инфо хеш: +([^<]+)</li>`)
 
 	inlineReC4d16cRe = regexp.MustCompile(`uid=([0-9]+)`)
 	inlineReF31405Re = regexp.MustCompile(`pass=([^;]+)(;|$)`)
@@ -112,7 +123,15 @@ type Parser struct {
 	cookieMu         sync.Mutex
 	cookie           string
 	lastLoginAttempt time.Time
-	domain           string
+}
+
+// domainKey is the session-store key for the configured host. It is derived on
+// every call rather than cached at construction: a live config reload replaces
+// Config in place (server.UpdateConfig) without rebuilding the parser, so a
+// cached value would keep pointing at the previous domain after a host change
+// and the auth cookie would be written to the wrong Data/cookie/<domain>.json.
+func (p *Parser) domainKey() string {
+	return core.DomainFromHost(requestHost(p.Config.Kinozal))
 }
 
 func New(cfg app.Config, db *filedb.DB, dataDir string) *Parser {
@@ -120,9 +139,9 @@ func New(cfg app.Config, db *filedb.DB, dataDir string) *Parser {
 	if loc == nil {
 		loc = time.Local
 	}
-	p := &Parser{Config: cfg, DB: db, DataDir: dataDir, Fetcher: core.NewFetcher(cfg), loc: loc, tasks: map[string]map[string][]Task{}, domain: core.DomainFromHost(cfg.Kinozal.Host)}
+	p := &Parser{Config: cfg, DB: db, DataDir: dataDir, Fetcher: core.NewFetcher(cfg), loc: loc, tasks: map[string]map[string][]Task{}}
 	_ = p.loadTasks()
-	if saved, _ := core.DefaultSessionStore().LoadAuth(p.domain); saved != "" {
+	if saved, _ := core.DefaultSessionStore().LoadAuth(p.domainKey()); saved != "" {
 		p.cookie = saved
 		log.Printf("kinozal: loaded saved cookie from disk")
 	}
@@ -430,7 +449,7 @@ func (p *Parser) parsePage(ctx context.Context, cat string, page int, arg string
 	if err != nil {
 		return nil, err
 	}
-	if htmlBody == "" || !strings.Contains(htmlBody, "Кинозал.ТВ</title>") {
+	if htmlBody == "" || !kinozalTitleRe.MatchString(htmlBody) {
 		return nil, nil
 	}
 	if p.getCookie() == "" || !strings.Contains(htmlBody, ">Выход</a>") {
@@ -702,7 +721,7 @@ func (p *Parser) takeLogin(ctx context.Context) error {
 		p.cookieMu.Lock()
 		p.cookie = cookie
 		p.cookieMu.Unlock()
-		_ = core.DefaultSessionStore().SaveAuth(p.domain, cookie)
+		_ = core.DefaultSessionStore().SaveAuth(p.domainKey(), cookie)
 		log.Printf("kinozal: login OK — uid=%s", uid)
 	} else {
 		log.Printf("kinozal: login FAILED — uid=%q pass=%q", uid, pass)
