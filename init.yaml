@@ -248,8 +248,7 @@ Korsars:
     p: ""
 
 Ultradox:
-  host: "https://ultradox.top"
-  insecureSkipVerify: true
+  host: "https://ultradox.onl"
   useproxy: false
   reqMinute: 8
   parseDelay: 7000

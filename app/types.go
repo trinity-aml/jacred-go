@@ -157,7 +157,7 @@ func DefaultConfig() Config {
 		Anifilm:             TrackerSettings{Host: "https://anifilm.pro", ReqMinute: 8, ParseDelay: 7000},
 		Leproduction:        TrackerSettings{Host: "https://www.le-production.tv", ReqMinute: 8, ParseDelay: 7000},
 		Korsars:             TrackerSettings{Host: "https://korsars.pro", ReqMinute: 8, ParseDelay: 7000},
-		Ultradox:            TrackerSettings{Host: "https://ultradox.top", ReqMinute: 8, ParseDelay: 7000, InsecureSkipVerify: true},
+		Ultradox:            TrackerSettings{Host: "https://ultradox.onl", ReqMinute: 8, ParseDelay: 7000},
 		Viruseproject:       TrackerSettings{Host: "https://viruseproject.tv", ReqMinute: 8, ParseDelay: 7000},
 		GlobalProxy:         []ProxySettings{{Pattern: `\.onion`, List: []string{"socks5://127.0.0.1:9050"}}},
 	}

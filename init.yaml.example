@@ -453,13 +453,16 @@ Korsars:
 # btih), so the parser follows each detail URL; a detail page exposes 1-3
 # quality variants and one record is stored per variant (sid=1, pir=1).
 # 6 sections: serial-hd, hd, rufilm, camrip, webrips, anime.
-# The TLS certificate is currently expired upstream — keep
-# insecureSkipVerify: true until they renew it.
+#
+# The host moved from ultradox.top (now dead) to ultradox.onl, which 307s to a
+# numbered mirror such as 021.ultadox.space — follow the redirect, do not
+# hardcode the mirror. The origin answers 503 unless the Referer is a search
+# engine; the parser sends the required browser headers itself, so nothing is
+# needed here. TLS certificates are valid again, so insecureSkipVerify is off.
 # Supports: parse?page=N, updatetasksparse, parsealltask, parselatest?pages=N
 
 Ultradox:
-  host: "https://ultradox.top"
-  insecureSkipVerify: true
+  host: "https://ultradox.onl"
   parseDelay: 5000
   reqMinute: 8
 

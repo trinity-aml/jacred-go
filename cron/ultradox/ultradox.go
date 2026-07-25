@@ -22,6 +22,31 @@ import (
 
 const trackerName = "ultradox"
 
+// The site's nginx answers 503 to any request whose Referer is not a search
+// engine — google.com and yandex.ru pass, the site's own origin and arbitrary
+// hosts do not. It is a plain referrer gate, not a Cloudflare challenge, so
+// flaresolverr does not help; the headers below are what a Firefox navigation
+// arriving from a search result looks like.
+//
+// Accept-Encoding is deliberately absent. net/http advertises gzip on its own
+// and transparently decompresses only the encoding it negotiated, so asking
+// for br/zstd here would hand us a body we cannot decode. Connection and Host
+// are likewise left to the transport.
+const browserUA = "Mozilla/5.0 (X11; Linux x86_64; rv:153.0) Gecko/20100101 Firefox/153.0"
+
+var browserHeaders = map[string]string{
+	"Accept":                    "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+	"Accept-Language":           "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
+	"Cache-Control":             "no-cache",
+	"Pragma":                    "no-cache",
+	"Referer":                   "https://www.google.com/",
+	"Sec-Fetch-Dest":            "document",
+	"Sec-Fetch-Mode":            "navigate",
+	"Sec-Fetch-Site":            "cross-site",
+	"Sec-Fetch-User":            "?1",
+	"Upgrade-Insecure-Requests": "1",
+}
+
 // section maps a URL path segment to torrent types stored in records. The
 // site itself sometimes redirects /serial/ → /serial-hd/; we hit the final
 // path directly.
@@ -67,7 +92,32 @@ var (
 	// clean for the search-name index. Anything in [...] or (XXX) blocks
 	// past the (YYYY) year falls into this bucket.
 	titleNameRe = regexp.MustCompile(`^([^(\[]+)`)
+	// Season block on titles that carry no "(YYYY)" — serial and anime
+	// listings. Matches "(3 сезон)" and "(1-2 сезон)".
+	titleSeasonRe = regexp.MustCompile(`\(\s*\d+\s*(?:-\s*\d+\s*)?сезон`)
+
+	// Year on a detail page: <li itemprop="copyrightYear"><span>Год:</span> 2026</li>.
+	// Serial listings never show a year, so this is the only place to get one,
+	// and the detail page is already fetched for its magnets.
+	detailYearRe = regexp.MustCompile(`(?is)itemprop="copyrightYear"[^>]*>\s*<span>[^<]*</span>\s*([0-9]{4})`)
+
+	// Tokens that end the title inside a torrent filename. The year is matched
+	// on a prefix rather than a whole token because the site sometimes drops
+	// the separator ("Trassa.more.more.2026O.TELECINE").
+	dnYearRe   = regexp.MustCompile(`^(?:19|20)\d{2}`)
+	dnSeasonRe = regexp.MustCompile(`^[Ss]\d{1,2}(?:[Ee]\d{1,3})?$`)
+	dnResRe    = regexp.MustCompile(`^\d{3,4}[pP]$`)
 )
+
+// dnStopTokens end the title portion of a torrent filename: source, codec and
+// container markers that always follow the name.
+var dnStopTokens = map[string]bool{
+	"bdrip": true, "webrip": true, "webdl": true, "web-dl": true, "web-dlrip": true,
+	"hdrip": true, "dvdrip": true, "camrip": true, "telecine": true, "ts": true,
+	"hdtv": true, "bluray": true, "proper": true, "repack": true,
+	"avi": true, "mkv": true, "mp4": true,
+	"x264": true, "x265": true, "h264": true, "h265": true, "hevc": true, "avc": true,
+}
 
 type Task struct {
 	UpdateTime string `json:"updateTime"`
@@ -134,6 +184,24 @@ func New(cfg app.Config, db *filedb.DB, dataDir string) *Parser {
 
 func (p *Parser) UpdateConfig(cfg app.Config) {
 	p.Config = cfg
+}
+
+// fetchPage GETs a site URL with the headers the referrer gate requires and
+// fails loudly on an error status. Silently parsing a 503 body used to look
+// like "the site has no torrents today" — the listing simply came back empty
+// and every counter read zero.
+func (p *Parser) fetchPage(rawURL string) (string, error) {
+	res, err := p.Fetcher.Do(rawURL, p.Config.Ultradox, core.FetchOptions{
+		UserAgent:    browserUA,
+		ExtraHeaders: browserHeaders,
+	})
+	if err != nil {
+		return "", err
+	}
+	if res.StatusCode >= 400 {
+		return "", fmt.Errorf("http %d", res.StatusCode)
+	}
+	return string(res.Body), nil
 }
 
 // listingItem is the result of parsing one row on a /<section>/ page. We
@@ -204,13 +272,13 @@ func (p *Parser) expandToTorrents(ctx context.Context, sec section, items []list
 		if err := p.delay(ctx); err != nil {
 			return out, err
 		}
-		variants, err := p.fetchDetail(ctx, it.detailURL)
+		variants, info, err := p.fetchDetail(ctx, it.detailURL)
 		if err != nil {
 			log.Printf("ultradox: detail %s error: %v (skipping)", it.detailURL, err)
 			continue
 		}
 		for _, v := range variants {
-			t := buildTorrent(host, sec, it, v, now)
+			t := buildTorrent(host, sec, it, v, info, now)
 			if t != nil {
 				out = append(out, t)
 			}
@@ -241,7 +309,7 @@ func (p *Parser) fetchSectionPage(ctx context.Context, sec section, page int) ([
 	} else {
 		u = fmt.Sprintf("%s/%s/page/%d/", host, sec.path, page)
 	}
-	body, _, err := p.Fetcher.GetString(u, p.Config.Ultradox)
+	body, err := p.fetchPage(u)
 	if err != nil {
 		return nil, err
 	}
@@ -348,6 +416,15 @@ func flattenTitle(raw string) string {
 	return core.StripTagsAndCollapseSpaces(mainText)
 }
 
+// detailInfo is the per-release metadata a detail page adds on top of the
+// listing row. It is resolved once per item so every quality variant shares
+// the same identity — deriving it per variant risks two variants disagreeing
+// and landing in different buckets.
+type detailInfo struct {
+	year     int
+	original string
+}
+
 // magnetVariant describes one quality available on a detail page.
 type magnetVariant struct {
 	hash    string
@@ -358,19 +435,25 @@ type magnetVariant struct {
 }
 
 // fetchDetail downloads a detail page (path is site-relative, e.g.
-// "/nerufilm/123-foo.html") and extracts every magnet variant.
-func (p *Parser) fetchDetail(ctx context.Context, path string) ([]magnetVariant, error) {
+// "/nerufilm/123-foo.html") and extracts every magnet variant plus the year.
+// The year only exists here — serial listings never print one — and this page
+// is fetched for the magnets anyway, so it costs no extra request.
+func (p *Parser) fetchDetail(ctx context.Context, path string) ([]magnetVariant, detailInfo, error) {
 	host := strings.TrimRight(p.Config.Ultradox.Host, "/")
 	if !strings.HasPrefix(path, "http") {
 		path = host + "/" + strings.TrimLeft(path, "/")
 	}
-	body, _, err := p.Fetcher.GetString(path, p.Config.Ultradox)
+	body, err := p.fetchPage(path)
 	if err != nil {
-		return nil, err
+		return nil, detailInfo{}, err
+	}
+	var info detailInfo
+	if m := detailYearRe.FindStringSubmatch(body); len(m) >= 2 {
+		info.year, _ = strconv.Atoi(m[1])
 	}
 	matches := detailMagnetRe.FindAllStringSubmatchIndex(body, -1)
 	if len(matches) == 0 {
-		return nil, nil
+		return nil, info, nil
 	}
 	out := make([]magnetVariant, 0, len(matches))
 	seen := map[string]struct{}{}
@@ -398,7 +481,13 @@ func (p *Parser) fetchDetail(ctx context.Context, path string) ([]magnetVariant,
 			quality: extractQuality(dn),
 		})
 	}
-	return out, nil
+	for _, v := range out {
+		if o := originalFromFilename(v.dn); o != "" {
+			info.original = o
+			break
+		}
+	}
+	return out, info, nil
 }
 
 // extractFullMagnet locates the closing `"` of the href starting at start
@@ -427,9 +516,24 @@ func extractQuality(dn string) string {
 	return ""
 }
 
-func buildTorrent(host string, sec section, item listingItem, v magnetVariant, nowRFC string) filedb.TorrentDetails {
+func buildTorrent(host string, sec section, item listingItem, v magnetVariant, info detailInfo, nowRFC string) filedb.TorrentDetails {
 	if v.hash == "" || v.magnet == "" {
 		return nil
+	}
+
+	// Identity comes from the listing title as published. The quality suffix
+	// added below is display-only: parsing the augmented title instead would
+	// give every quality variant of one release its own name, and therefore
+	// its own database bucket.
+	name, originalName, year := parseTitle(item.title)
+	if year == 0 {
+		year = info.year
+	}
+	if originalName == "" && sec.path != "rufilm" {
+		// rufilm is the domestic-cinema section: its filenames carry a
+		// transliteration of the Russian title, not a foreign original, and
+		// storing that as originalname would only invent a second spelling.
+		originalName = info.original
 	}
 
 	// Compose a per-variant title so existing UpdateFullDetails detects
@@ -439,7 +543,6 @@ func buildTorrent(host string, sec section, item listingItem, v magnetVariant, n
 		title = title + " [" + v.quality + "]"
 	}
 
-	name, originalName, year := parseTitle(title)
 	if strings.TrimSpace(name) == "" {
 		// Fallback: take everything up to the first paren/bracket.
 		if m := titleNameRe.FindStringSubmatch(title); len(m) >= 2 {
@@ -482,17 +585,31 @@ func buildTorrent(host string, sec section, item listingItem, v magnetVariant, n
 	return rec.ToMap()
 }
 
-// parseTitle splits the listing title into (name, original, year). Most
-// listings carry a "(YYYY)" block; if there's a slashed original name
-// before it, capture that too.
+// parseTitle splits the listing title into (name, original, year).
+//
+// Movie sections carry a "(YYYY)" block that marks where the real title ends:
+//
+//	"Ип Ман: Битва кланов (2026) (ПМ) [BDRip]" -> "Ип Ман: Битва кланов", 2026
+//
+// Serial and anime sections carry no year at all, so the cut has to be made on
+// the season/episode markers instead:
+//
+//	"Эйфория (3 сезон) [+9 серия] [Ultradox]" -> "Эйфория", 0
+//
+// Getting that second case wrong is not cosmetic: the bucket key is derived
+// from name+originalname, so leaving "[+9 серия]" in the name gives one show a
+// fresh key on every episode release, and leaving the quality suffix in gives
+// each quality variant its own key. Both split a title that other trackers
+// store as a single mergeable record.
 func parseTitle(title string) (name, original string, year int) {
-	if m := titleYearRe.FindStringSubmatch(title); len(m) >= 2 {
-		year, _ = strconv.Atoi(m[1])
-	}
 	cut := title
-	if y := titleYearRe.FindStringIndex(cut); y != nil {
-		cut = strings.TrimSpace(cut[:y[0]])
+	if m := titleYearRe.FindStringSubmatchIndex(title); m != nil {
+		year, _ = strconv.Atoi(title[m[2]:m[3]])
+		cut = title[:m[0]]
+	} else {
+		cut = trimMetadataBlocks(title)
 	}
+	cut = strings.TrimSpace(cut)
 	if idx := strings.Index(cut, " / "); idx >= 0 {
 		name = strings.TrimSpace(cut[:idx])
 		original = strings.TrimSpace(cut[idx+3:])
@@ -500,6 +617,77 @@ func parseTitle(title string) (name, original string, year int) {
 	}
 	name = strings.TrimSpace(cut)
 	return
+}
+
+// originalFromFilename recovers the Latin original title from a torrent
+// filename, which is the only place ultradox publishes one:
+//
+//	"The.Death.Of.Robin.Hood.2026.D.BDRip.avi.torrent" -> "The Death Of Robin Hood"
+//	"Trigun.Stargaze.S02.720p.Ru.Ultradox.torrent"     -> "Trigun Stargaze"
+//
+// Everything from the first year / season / source token onwards is dropped.
+// Returns "" when nothing recognizable precedes such a token, so the caller
+// keeps an empty originalname rather than storing junk.
+func originalFromFilename(dn string) string {
+	tokens := strings.Split(strings.TrimSuffix(dn, ".torrent"), ".")
+	end := -1
+	for i, tok := range tokens {
+		if isDNStopToken(tok) {
+			end = i
+			break
+		}
+	}
+	// end == 0 means the filename opens with metadata and carries no title.
+	// This also gives up on a film actually named after a year ("1917.2019.…"),
+	// which is the safe direction: an empty original beats a wrong one.
+	if end <= 0 {
+		return ""
+	}
+	tokens = tokens[:end]
+	// Release names disambiguate remakes with a country tag ("Euphoria.US.S03").
+	// Other trackers index the show without it.
+	if len(tokens) > 1 {
+		switch strings.ToUpper(tokens[len(tokens)-1]) {
+		case "US", "UK":
+			tokens = tokens[:len(tokens)-1]
+		}
+	}
+	out := strings.TrimSpace(strings.Join(tokens, " "))
+	if !strings.ContainsFunc(out, func(r rune) bool {
+		return (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z')
+	}) {
+		return ""
+	}
+	return out
+}
+
+// isDNStopToken reports whether a filename token marks the end of the title.
+// Digits are de-obfuscated first — the site writes "1O8Op" for "1080p".
+func isDNStopToken(tok string) bool {
+	norm := strings.ReplaceAll(tok, "O", "0")
+	if dnYearRe.MatchString(norm) || dnResRe.MatchString(norm) {
+		return true
+	}
+	if dnSeasonRe.MatchString(tok) {
+		return true
+	}
+	return dnStopTokens[strings.ToLower(tok)]
+}
+
+// trimMetadataBlocks truncates a title with no "(YYYY)" at the first trailing
+// metadata block — the season parenthesis or any bracketed marker such as
+// "[+9 серия]", "[Ultradox]" or "[WEB-DL]". The season is dropped rather than
+// kept because every other tracker stores the show without it, and matching
+// their spelling is what lets the records merge.
+func trimMetadataBlocks(title string) string {
+	end := len(title)
+	if m := titleSeasonRe.FindStringIndex(title); m != nil {
+		end = m[0]
+	}
+	if i := strings.Index(title, "["); i >= 0 && i < end {
+		end = i
+	}
+	return title[:end]
 }
 
 func humanSize(bytes int64) string {
@@ -599,8 +787,9 @@ func (p *Parser) UpdateTasksParse(ctx context.Context) (map[string][]Task, error
 		p.tasks = map[string][]Task{}
 	}
 	for _, sec := range sections {
-		body, _, err := p.Fetcher.GetString(strings.TrimRight(p.Config.Ultradox.Host, "/")+"/"+sec.path+"/", p.Config.Ultradox)
+		body, err := p.fetchPage(strings.TrimRight(p.Config.Ultradox.Host, "/") + "/" + sec.path + "/")
 		if err != nil {
+			log.Printf("ultradox: updatetasks %s error: %v", sec.path, err)
 			continue
 		}
 		maxPage := 1
