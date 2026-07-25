@@ -415,21 +415,21 @@ func parsePageHTML(host, cat, htmlBody string, now time.Time) []filedb.TorrentDe
 		pir, _ := strconv.Atoi(pirRaw)
 		types := []string{cat}
 		items = append(items, filedb.TorrentRecord{
-			TrackerName: trackerName,
-			Types: types,
-			URL: strings.TrimRight(host, "/") + "/" + strings.TrimLeft(urlPath, "/"),
-			Title: title,
-			Sid: sid,
-			Pir: pir,
-			SizeName: sizeName,
-			Size: parseSizeBytes(sizeName),
-			CreateTime: createTime.Format(time.RFC3339Nano),
-			UpdateTime: now.UTC().Format(time.RFC3339Nano),
-			Name: name,
+			TrackerName:  trackerName,
+			Types:        types,
+			URL:          strings.TrimRight(host, "/") + "/" + strings.TrimLeft(urlPath, "/"),
+			Title:        title,
+			Sid:          sid,
+			Pir:          pir,
+			SizeName:     sizeName,
+			Size:         parseSizeBytes(sizeName),
+			CreateTime:   createTime.Format(time.RFC3339Nano),
+			UpdateTime:   now.UTC().Format(time.RFC3339Nano),
+			Name:         name,
 			OriginalName: original,
-			Relased: relased,
-			SearchName: core.SearchName(name),
-			SearchOrig: core.SearchName(firstNonEmpty(original, name)),
+			Relased:      relased,
+			SearchName:   core.SearchName(name),
+			SearchOrig:   core.SearchName(firstNonEmpty(original, name)),
 		}.ToMap())
 	}
 	return items
@@ -704,7 +704,6 @@ func cloneTasks(src map[string][]Task) map[string][]Task {
 	}
 	return out
 }
-
 
 func fileTime(t filedb.TorrentDetails) time.Time {
 	for _, key := range []string{"updateTime", "createTime"} {

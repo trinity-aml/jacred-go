@@ -28,18 +28,18 @@ import (
 	"jacred/cron/bitruapi"
 	"jacred/cron/kinozal"
 	"jacred/cron/knaben"
+	"jacred/cron/korsars"
 	"jacred/cron/leproduction"
 	"jacred/cron/lostfilm"
 	"jacred/cron/mazepa"
 	"jacred/cron/megapeer"
 	"jacred/cron/nnmclub"
 	"jacred/cron/rutor"
-	"jacred/cron/korsars"
-	"jacred/cron/ultradox"
 	"jacred/cron/rutracker"
 	"jacred/cron/selezen"
 	"jacred/cron/toloka"
 	"jacred/cron/torrentby"
+	"jacred/cron/ultradox"
 	"jacred/cron/viruseproject"
 	"sync"
 
@@ -55,35 +55,35 @@ type VersionInfo struct {
 }
 
 type Server struct {
-	Config             app.Config
-	cfgMu              sync.RWMutex
-	DB                 *filedb.DB
-	WWWRoot            string
-	Version            VersionInfo
-	KnabenParser       *knaben.Parser
-	AnidubParser       *anidub.Parser
-	AnilibertyParser   *aniliberty.Parser
-	AnimelayerParser   *animelayer.Parser
-	AnistarParser      *anistar.Parser
-	AnifilmParser      *anifilm.Parser
-	BitruParser        *bitru.Parser
-	BitruAPIParser     *bitruapi.Parser
-	RutorParser        *rutor.Parser
-	MegapeerParser     *megapeer.Parser
-	TorrentByParser    *torrentby.Parser
-	NNMClubParser      *nnmclub.Parser
-	LostfilmParser     *lostfilm.Parser
-	RutrackerParser    *rutracker.Parser
-	KinozalParser      *kinozal.Parser
-	TolokaParser       *toloka.Parser
-	SelezenParser      *selezen.Parser
-	LeproductionParser *leproduction.Parser
-	MazepaParser       *mazepa.Parser
-	KorsarsParser      *korsars.Parser
-	UltradoxParser     *ultradox.Parser
+	Config              app.Config
+	cfgMu               sync.RWMutex
+	DB                  *filedb.DB
+	WWWRoot             string
+	Version             VersionInfo
+	KnabenParser        *knaben.Parser
+	AnidubParser        *anidub.Parser
+	AnilibertyParser    *aniliberty.Parser
+	AnimelayerParser    *animelayer.Parser
+	AnistarParser       *anistar.Parser
+	AnifilmParser       *anifilm.Parser
+	BitruParser         *bitru.Parser
+	BitruAPIParser      *bitruapi.Parser
+	RutorParser         *rutor.Parser
+	MegapeerParser      *megapeer.Parser
+	TorrentByParser     *torrentby.Parser
+	NNMClubParser       *nnmclub.Parser
+	LostfilmParser      *lostfilm.Parser
+	RutrackerParser     *rutracker.Parser
+	KinozalParser       *kinozal.Parser
+	TolokaParser        *toloka.Parser
+	SelezenParser       *selezen.Parser
+	LeproductionParser  *leproduction.Parser
+	MazepaParser        *mazepa.Parser
+	KorsarsParser       *korsars.Parser
+	UltradoxParser      *ultradox.Parser
 	ViruseprojectParser *viruseproject.Parser
-	TracksDB           *tracks.DB
-	cache              *searchCache // search result cache (5 min TTL)
+	TracksDB            *tracks.DB
+	cache               *searchCache // search result cache (5 min TTL)
 
 	// bgWG tracks Server-owned background goroutines (RunStatsLoop and
 	// ad-hoc /stats/refresh fires). On shutdown, main.go calls Wait() to
@@ -1360,22 +1360,22 @@ func handleMemStats(w http.ResponseWriter, r *http.Request) {
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
 	out := map[string]any{
-		"alloc_mb":       m.Alloc / 1024 / 1024,
-		"total_alloc_mb": m.TotalAlloc / 1024 / 1024,
-		"sys_mb":         m.Sys / 1024 / 1024,
-		"heap_alloc_mb":  m.HeapAlloc / 1024 / 1024,
-		"heap_sys_mb":    m.HeapSys / 1024 / 1024,
-		"heap_idle_mb":   m.HeapIdle / 1024 / 1024,
-		"heap_inuse_mb":  m.HeapInuse / 1024 / 1024,
-		"heap_released_mb": m.HeapReleased / 1024 / 1024,
-		"heap_objects":   m.HeapObjects,
-		"stack_inuse_mb": m.StackInuse / 1024 / 1024,
-		"mspan_inuse_mb": m.MSpanInuse / 1024 / 1024,
-		"mcache_inuse":   m.MCacheInuse,
-		"gc_count":       m.NumGC,
+		"alloc_mb":          m.Alloc / 1024 / 1024,
+		"total_alloc_mb":    m.TotalAlloc / 1024 / 1024,
+		"sys_mb":            m.Sys / 1024 / 1024,
+		"heap_alloc_mb":     m.HeapAlloc / 1024 / 1024,
+		"heap_sys_mb":       m.HeapSys / 1024 / 1024,
+		"heap_idle_mb":      m.HeapIdle / 1024 / 1024,
+		"heap_inuse_mb":     m.HeapInuse / 1024 / 1024,
+		"heap_released_mb":  m.HeapReleased / 1024 / 1024,
+		"heap_objects":      m.HeapObjects,
+		"stack_inuse_mb":    m.StackInuse / 1024 / 1024,
+		"mspan_inuse_mb":    m.MSpanInuse / 1024 / 1024,
+		"mcache_inuse":      m.MCacheInuse,
+		"gc_count":          m.NumGC,
 		"gc_pause_ms_total": m.PauseTotalNs / 1_000_000,
-		"goroutines":     runtime.NumGoroutine(),
-		"next_gc_mb":     m.NextGC / 1024 / 1024,
+		"goroutines":        runtime.NumGoroutine(),
+		"next_gc_mb":        m.NextGC / 1024 / 1024,
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(out)

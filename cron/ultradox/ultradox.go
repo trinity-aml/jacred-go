@@ -45,7 +45,7 @@ var sections = []section{
 // redirect), so we ignore it and follow the title link to the detail page
 // where real magnets with full info-hashes live.
 var (
-	rowSplitRe       = regexp.MustCompile(`<tr>\s*<td class="torrent-table-date">`)
+	rowSplitRe = regexp.MustCompile(`<tr>\s*<td class="torrent-table-date">`)
 	// Match either an absolute "DD-MM-YYYY, HH:MM" stamp or the relative
 	// "Сегодня, HH:MM" / "Вчера, HH:MM" the site uses for recent rows.
 	rowDateRe        = regexp.MustCompile(`^([^<]+)</td>`)

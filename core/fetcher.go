@@ -64,7 +64,7 @@ var (
 	// roundtrip per cached-session rollover (~60 min) on still-protected
 	// sites. Cleared when a probe returns a non-challenge body, which
 	// signals CF has been lifted server-side.
-	flareChallengeMu  sync.RWMutex
+	flareChallengeMu   sync.RWMutex
 	flareLastChallenge = make(map[string]time.Time, 32)
 
 	// Idle-session reaper: destroy flaresolverr-go browser sessions that
@@ -783,16 +783,16 @@ func (f *Fetcher) doHTTP(method, rawURL, cookie, userAgent, contentType string, 
 
 // fetchViaFlare uses embedded flaresolverr-go to solve CF and fetch pages.
 // Strategy:
-//   1. Try cached cookies with standard HTTP (fast path)
-//   2. No cached cookies → probe with plain HTTP first. Some trackers
-//      configured as fetchmode: flaresolverr have since dropped CF (e.g.
-//      megapeer); the probe returns valid HTML, we skip a 10s+ Chrome
-//      solve. If the probe is a challenge / 403, fall through to step 3.
-//   3. Solve CF challenge on the site's origin via flaresolverr-go browser
-//      (not the deep URL — some sites serve a managed challenge on deep
-//      URLs that automation can't pass)
-//   4. Use the resulting cookies to fetch the actual deep URL
-//   5. Cache cookies for subsequent requests
+//  1. Try cached cookies with standard HTTP (fast path)
+//  2. No cached cookies → probe with plain HTTP first. Some trackers
+//     configured as fetchmode: flaresolverr have since dropped CF (e.g.
+//     megapeer); the probe returns valid HTML, we skip a 10s+ Chrome
+//     solve. If the probe is a challenge / 403, fall through to step 3.
+//  3. Solve CF challenge on the site's origin via flaresolverr-go browser
+//     (not the deep URL — some sites serve a managed challenge on deep
+//     URLs that automation can't pass)
+//  4. Use the resulting cookies to fetch the actual deep URL
+//  5. Cache cookies for subsequent requests
 func (f *Fetcher) fetchViaFlare(rawURL, cookie string, extraHeaders map[string]string, transport *http.Transport) (*FetchResult, error) {
 	domain := extractDomain(rawURL)
 	httpCookiesFailed := false
@@ -1021,9 +1021,9 @@ func (f *Fetcher) solveFlare(rawURL, domain string, forceRender bool) (*flareSes
 	}
 
 	resp, _ := svc.ControllerV1(ctx, &flaresolverr.V1Request{
-		Cmd:               "request.get",
-		URL:               solveURL,
-		MaxTimeout:        90000,
+		Cmd:        "request.get",
+		URL:        solveURL,
+		MaxTimeout: 90000,
 		// 8s wait covers slow custom anti-bot JS challenges (e.g. nnmclub's
 		// eb927f21fc_* cookies set a ~2s delay + verification). At 2s the
 		// browser snapshot caught only Yandex.Metrica cookies, missing both

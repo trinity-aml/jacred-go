@@ -194,19 +194,19 @@ func (p *Parser) parsePage(ctx context.Context, page int) (int, int, int, int, i
 		pir, _ := strconv.Atoi(matchFirst(pirRe, row))
 		fullURL := strings.TrimRight(baseHost, "/") + "/" + strings.Trim(urlPath, "/") + "/"
 		torrents = append(torrents, filedb.TorrentRecord{
-			TrackerName: trackerName,
-			Types: []string{"anime"},
-			URL: fullURL,
-			Title: title,
-			Sid: sid,
-			Pir: pir,
-			CreateTime: createTime.UTC().Format(time.RFC3339Nano),
-			UpdateTime: time.Now().UTC().Format(time.RFC3339Nano),
-			Name: name,
+			TrackerName:  trackerName,
+			Types:        []string{"anime"},
+			URL:          fullURL,
+			Title:        title,
+			Sid:          sid,
+			Pir:          pir,
+			CreateTime:   createTime.UTC().Format(time.RFC3339Nano),
+			UpdateTime:   time.Now().UTC().Format(time.RFC3339Nano),
+			Name:         name,
 			OriginalName: original,
-			Relased: relased,
-			SearchName: core.SearchName(name),
-			SearchOrig: core.SearchName(firstNonEmpty(original, name)),
+			Relased:      relased,
+			SearchName:   core.SearchName(name),
+			SearchOrig:   core.SearchName(firstNonEmpty(original, name)),
 		}.ToMap())
 	}
 	return p.saveTorrents(ctx, cookie, torrents)
@@ -480,7 +480,6 @@ func matchFirst(re *regexp.Regexp, s string) string {
 	}
 	return cleanText(m[1])
 }
-
 
 func fileTime(t filedb.TorrentDetails) time.Time {
 	for _, key := range []string{"updateTime", "createTime"} {

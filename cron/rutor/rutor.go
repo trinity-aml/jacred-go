@@ -87,15 +87,15 @@ func (t *Task) MarkToday() {
 }
 
 type Parser struct {
-	Config  app.Config
-	DB      *filedb.DB
-	DataDir string
-	Fetcher *core.Fetcher
-	mu      sync.Mutex
-	working bool
-	allWork bool
+	Config   app.Config
+	DB       *filedb.DB
+	DataDir  string
+	Fetcher  *core.Fetcher
+	mu       sync.Mutex
+	working  bool
+	allWork  bool
 	latestMu sync.Mutex
-	tasks   map[string][]Task
+	tasks    map[string][]Task
 }
 
 type ParseResult struct {
@@ -222,21 +222,21 @@ func parsePageHTML(host, cat, htmlBody string) []filedb.TorrentDetails {
 		sid, _ := strconv.Atoi(sidRaw)
 		pir, _ := strconv.Atoi(pirRaw)
 		td := filedb.TorrentRecord{
-			TrackerName: trackerName,
-			Types: types,
-			URL: strings.TrimRight(host, "/") + "/" + strings.TrimLeft(urlPath, "/"),
-			Title: title,
-			Sid: sid,
-			Pir: pir,
-			SizeName: sizeName,
-			Magnet: magnet,
-			CreateTime: createTime.UTC().Format(time.RFC3339Nano),
-			UpdateTime: now,
-			Name: name,
+			TrackerName:  trackerName,
+			Types:        types,
+			URL:          strings.TrimRight(host, "/") + "/" + strings.TrimLeft(urlPath, "/"),
+			Title:        title,
+			Sid:          sid,
+			Pir:          pir,
+			SizeName:     sizeName,
+			Magnet:       magnet,
+			CreateTime:   createTime.UTC().Format(time.RFC3339Nano),
+			UpdateTime:   now,
+			Name:         name,
 			OriginalName: original,
-			Relased: relased,
-			SearchName: core.SearchName(name),
-			SearchOrig: core.SearchName(firstNonEmpty(original, name)),
+			Relased:      relased,
+			SearchName:   core.SearchName(name),
+			SearchOrig:   core.SearchName(firstNonEmpty(original, name)),
 		}.ToMap()
 		out = append(out, td)
 	}
@@ -659,7 +659,6 @@ func typesForCategory(cat string) []string {
 		return nil
 	}
 }
-
 
 func fileTime(t filedb.TorrentDetails) time.Time {
 	for _, key := range []string{"updateTime", "createTime"} {

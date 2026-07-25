@@ -50,7 +50,7 @@ var (
 	yearAltRe    = regexp.MustCompile(`(?i)table-list__value[^>]*>[^<]*(\d{4})`)
 	tidRe        = regexp.MustCompile(`(?i)href="/(releases/download-torrent/[0-9]+)"[^>]*>скачать</a>`)
 	cleanSpaceRe = regexp.MustCompile(`[\n\r\t ]+`)
-	csrfInputRe = regexp.MustCompile(`(?i)<input[^>]+name="([^"]*CSRF[^"]*)"[^>]+value="([^"]+)"`)
+	csrfInputRe  = regexp.MustCompile(`(?i)<input[^>]+name="([^"]*CSRF[^"]*)"[^>]+value="([^"]+)"`)
 	csrfInputRe2 = regexp.MustCompile(`(?i)<input[^>]+value="([^"]+)"[^>]+name="([^"]*CSRF[^"]*)"`)
 )
 
@@ -226,19 +226,19 @@ func (p *Parser) fetchPage(ctx context.Context, host, cat string, types []string
 		relased, _ := strconv.Atoi(yearStr)
 
 		out = append(out, filedb.TorrentRecord{
-			TrackerName: trackerName,
-			Types: types,
-			URL: fullURL,
-			Title: title,
-			Sid: 1,
-			Pir: 0,
-			CreateTime: createTime.UTC().Format(time.RFC3339Nano),
-			UpdateTime: now,
-			Name: name,
+			TrackerName:  trackerName,
+			Types:        types,
+			URL:          fullURL,
+			Title:        title,
+			Sid:          1,
+			Pir:          0,
+			CreateTime:   createTime.UTC().Format(time.RFC3339Nano),
+			UpdateTime:   now,
+			Name:         name,
 			OriginalName: originalname,
-			Relased: relased,
-			SearchName: core.SearchName(name),
-			SearchOrig: core.SearchName(core.FirstNonEmpty(originalname, name)),
+			Relased:      relased,
+			SearchName:   core.SearchName(name),
+			SearchOrig:   core.SearchName(core.FirstNonEmpty(originalname, name)),
 		}.ToMap())
 	}
 	return out, nil

@@ -300,17 +300,17 @@ func (p *Parser) mapToTorrentDetails(item *apiItem) filedb.TorrentDetails {
 	createTime := time.Unix(int64(item.Torrent.Added), 0).UTC()
 	res := filedb.TorrentRecord{
 		TrackerName: "bitru",
-		Types: types,
-		URL: detailURL,
-		Title: htmlDecode(strings.TrimSpace(titlePart)),
-		Sid: int(item.Torrent.Seeders),
-		Pir: int(item.Torrent.Leechers),
-		Size: int64(item.Torrent.Size),
-		SizeName: formatSize(int64(item.Torrent.Size)),
-		CreateTime: createTime.Format(time.RFC3339Nano),
-		Name: name,
-		Relased: relased,
-		SearchName: strings.TrimSpace(item.Torrent.File),
+		Types:       types,
+		URL:         detailURL,
+		Title:       htmlDecode(strings.TrimSpace(titlePart)),
+		Sid:         int(item.Torrent.Seeders),
+		Pir:         int(item.Torrent.Leechers),
+		Size:        int64(item.Torrent.Size),
+		SizeName:    formatSize(int64(item.Torrent.Size)),
+		CreateTime:  createTime.Format(time.RFC3339Nano),
+		Name:        name,
+		Relased:     relased,
+		SearchName:  strings.TrimSpace(item.Torrent.File),
 	}.ToMap()
 	if originalname != "" {
 		res["originalname"] = originalname
@@ -511,7 +511,6 @@ func parseAnyInt64(v any) int64 {
 		return n
 	}
 }
-
 
 func fileTime(t filedb.TorrentDetails) time.Time {
 	for _, key := range []string{"updateTime", "createTime"} {

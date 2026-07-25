@@ -33,7 +33,7 @@ var (
 	newMovieRe    = regexp.MustCompile(`<a\s+class="new-movie"\s+href="(?:https?://[^"]+)?(/series/[^"]+)"[^>]*title="([^"]*)"[^>]*>([\s\S]*?)</a>`)
 	vLinkRe       = regexp.MustCompile(`href="(/V/\?[^"]+)"`)
 
-	inlineClsDateRe = regexp.MustCompile(`<div\s+class="date"[^>]*>(\d{2}\.\d{2}\.\d{4})</div>`)
+	inlineClsDateRe  = regexp.MustCompile(`<div\s+class="date"[^>]*>(\d{2}\.\d{2}\.\d{4})</div>`)
 	inlineClsTitleRe = regexp.MustCompile(`<div\s+class="title"[^>]*>\s*([^<]+)\s*</div>`)
 	inlineRe30150bRe = regexp.MustCompile(`\bSD\b`)
 	inlineRe8987e7Re = regexp.MustCompile(`PlayEpisode\s*\(\s*'(\d+)'\s*,\s*'(\d+)'\s*,\s*'(\d+)'\s*\)`)
@@ -252,18 +252,18 @@ func (p *Parser) ParseSeasonPacks(ctx context.Context, series string) (string, e
 		for _, mag := range mags {
 			q := normalizeQuality(mag.Quality)
 			torrents = append(torrents, filedb.TorrentRecord{
-				TrackerName: trackerName,
-				Types: []string{"serial"},
-				URL: vURL + "#" + q,
-				Title: fmt.Sprintf("%s / %s / %d сезон (полный сезон) [%d, %s]", name, original, seasonNum, relased, q),
-				Sid: 1,
-				CreateTime: now,
-				UpdateTime: now,
-				Name: name,
+				TrackerName:  trackerName,
+				Types:        []string{"serial"},
+				URL:          vURL + "#" + q,
+				Title:        fmt.Sprintf("%s / %s / %d сезон (полный сезон) [%d, %s]", name, original, seasonNum, relased, q),
+				Sid:          1,
+				CreateTime:   now,
+				UpdateTime:   now,
+				Name:         name,
 				OriginalName: original,
-				Relased: relased,
-				Magnet: mag.Magnet,
-				SizeName: mag.SizeName,
+				Relased:      relased,
+				Magnet:       mag.Magnet,
+				SizeName:     mag.SizeName,
 			}.ToMap())
 		}
 	}
@@ -422,16 +422,16 @@ func (p *Parser) collectFromEpisodeLinks(htmlBody, host string, nameMap map[stri
 		seen[urlPath] = struct{}{}
 		now := ct.UTC().Format(time.RFC3339Nano)
 		list = append(list, filedb.TorrentRecord{
-			TrackerName: trackerName,
-			Types: []string{"serial"},
-			URL: absURL(host, "/"+urlPath),
-			Title: fmt.Sprintf("%s / %s / %s [%d]", name, original, sinfo, relased),
-			Sid: 1,
-			CreateTime: now,
-			UpdateTime: now,
-			Name: name,
+			TrackerName:  trackerName,
+			Types:        []string{"serial"},
+			URL:          absURL(host, "/"+urlPath),
+			Title:        fmt.Sprintf("%s / %s / %s [%d]", name, original, sinfo, relased),
+			Sid:          1,
+			CreateTime:   now,
+			UpdateTime:   now,
+			Name:         name,
 			OriginalName: original,
-			Relased: relased,
+			Relased:      relased,
 		}.ToMap())
 	}
 	return list
@@ -473,16 +473,16 @@ func (p *Parser) collectFromNewMovie(htmlBody, host string, page int) []filedb.T
 		name := firstNonEmpty(shortenSeriesName(html.UnescapeString(strings.TrimSpace(m[2]))), original)
 		now := ct.UTC().Format(time.RFC3339Nano)
 		list = append(list, filedb.TorrentRecord{
-			TrackerName: trackerName,
-			Types: []string{"serial"},
-			URL: absURL(host, "/"+urlPath),
-			Title: fmt.Sprintf("%s / %s / %s [%d]", name, original, html.UnescapeString(strings.TrimSpace(titleMatch[1])), relased),
-			Sid: 1,
-			CreateTime: now,
-			UpdateTime: now,
-			Name: name,
+			TrackerName:  trackerName,
+			Types:        []string{"serial"},
+			URL:          absURL(host, "/"+urlPath),
+			Title:        fmt.Sprintf("%s / %s / %s [%d]", name, original, html.UnescapeString(strings.TrimSpace(titleMatch[1])), relased),
+			Sid:          1,
+			CreateTime:   now,
+			UpdateTime:   now,
+			Name:         name,
 			OriginalName: original,
-			Relased: relased,
+			Relased:      relased,
 		}.ToMap())
 	}
 	return list
@@ -509,16 +509,16 @@ func (p *Parser) collectFromHorBreaker(htmlBody, host string, page int) []filedb
 		relased := ct.Year()
 		now := ct.UTC().Format(time.RFC3339Nano)
 		list = append(list, filedb.TorrentRecord{
-			TrackerName: trackerName,
-			Types: []string{"serial"},
-			URL: absURL(host, "/"+urlPath),
-			Title: fmt.Sprintf("%s / %s / %s [%d]", html.UnescapeString(name), html.UnescapeString(original), sinfo, relased),
-			Sid: 1,
-			CreateTime: now,
-			UpdateTime: now,
-			Name: html.UnescapeString(name),
+			TrackerName:  trackerName,
+			Types:        []string{"serial"},
+			URL:          absURL(host, "/"+urlPath),
+			Title:        fmt.Sprintf("%s / %s / %s [%d]", html.UnescapeString(name), html.UnescapeString(original), sinfo, relased),
+			Sid:          1,
+			CreateTime:   now,
+			UpdateTime:   now,
+			Name:         html.UnescapeString(name),
 			OriginalName: html.UnescapeString(original),
-			Relased: relased,
+			Relased:      relased,
 		}.ToMap())
 	}
 	return list
@@ -563,18 +563,18 @@ func (p *Parser) collectFromMovies(ctx context.Context, htmlBody, host, cookie s
 		for _, mag := range mags {
 			q := normalizeQuality(mag.Quality)
 			list = append(list, filedb.TorrentRecord{
-				TrackerName: trackerName,
-				Types: []string{"movie"},
-				URL: movieURL + "#" + q,
-				Title: fmt.Sprintf("%s / %s [Фильм, %d, %s]", name, original, relased, q),
-				Sid: 1,
-				CreateTime: now,
-				UpdateTime: now,
-				Name: name,
+				TrackerName:  trackerName,
+				Types:        []string{"movie"},
+				URL:          movieURL + "#" + q,
+				Title:        fmt.Sprintf("%s / %s [Фильм, %d, %s]", name, original, relased, q),
+				Sid:          1,
+				CreateTime:   now,
+				UpdateTime:   now,
+				Name:         name,
 				OriginalName: original,
-				Relased: relased,
-				Magnet: mag.Magnet,
-				SizeName: mag.SizeName,
+				Relased:      relased,
+				Magnet:       mag.Magnet,
+				SizeName:     mag.SizeName,
 			}.ToMap())
 		}
 	}

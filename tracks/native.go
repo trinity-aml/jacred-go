@@ -24,10 +24,10 @@ import (
 // torrent into RAM via anacrolix/torrent and feeds it to a local ffprobe over
 // a 127.0.0.1 HTTP bridge. No bytes touch disk.
 type NativeAnalyzer struct {
-	cl           *torrent.Client
-	storage      *memStorage
-	infoWait     time.Duration
-	ffprobePath  string // absolute path to ffprobe; empty falls back to PATH lookup
+	cl          *torrent.Client
+	storage     *memStorage
+	infoWait    time.Duration
+	ffprobePath string // absolute path to ffprobe; empty falls back to PATH lookup
 }
 
 // NewNativeAnalyzer creates a single shared torrent.Client backed by an

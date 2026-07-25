@@ -33,9 +33,9 @@ type syncCollection struct {
 }
 
 type syncValue struct {
-	Time     time.Time                          `json:"time"`
-	FileTime int64                              `json:"fileTime"`
-	Torrents map[string]filedb.TorrentDetails   `json:"torrents"`
+	Time     time.Time                        `json:"time"`
+	FileTime int64                            `json:"fileTime"`
+	Torrents map[string]filedb.TorrentDetails `json:"torrents"`
 }
 
 // syncV1Root is the response from /sync/torrents (v1 protocol).

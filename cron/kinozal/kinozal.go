@@ -36,11 +36,11 @@ var (
 	movieShortRe  = regexp.MustCompile(`^([^/\(]+) / ([0-9]{4})`)
 	rusSeasonRe   = regexp.MustCompile(`^([^\(/]+) (\([^\)/]+\) )?\([0-9\-]+ сезоны?: [^\)/]+\) ([^/]+ )?/ ([0-9]{4})`)
 	rusSeriesRe   = regexp.MustCompile(`^([^\(/]+) (\([^\)/]+\) )?\([^\)/]+\) ([^/]+ )?/ ([0-9]{4})`)
-	mp1Re = regexp.MustCompile(`(?is)href="/(details.php\?id=[0-9]+)"`)
-	mp2Re = regexp.MustCompile(`(?is)class="r[0-9]+">([^<]+)</a>`)
-	mp3Re = regexp.MustCompile(`(?is)<td class='sl_s'>([0-9]+)</td>`)
-	mp4Re = regexp.MustCompile(`(?is)<td class='sl_p'>([0-9]+)</td>`)
-	mp5Re = regexp.MustCompile(`(?is)<td class='s'>([0-9\.,]+ (МБ|ГБ))</td>`)
+	mp1Re         = regexp.MustCompile(`(?is)href="/(details.php\?id=[0-9]+)"`)
+	mp2Re         = regexp.MustCompile(`(?is)class="r[0-9]+">([^<]+)</a>`)
+	mp3Re         = regexp.MustCompile(`(?is)<td class='sl_s'>([0-9]+)</td>`)
+	mp4Re         = regexp.MustCompile(`(?is)<td class='sl_p'>([0-9]+)</td>`)
+	mp5Re         = regexp.MustCompile(`(?is)<td class='s'>([0-9\.,]+ (МБ|ГБ))</td>`)
 	forSeasonRe   = regexp.MustCompile(`^([^\(/]+) (\([^\)/]+\) )?\([0-9\-]+ сезоны?: [^\)/]+\) ([^/]+ )?/ ([^\(/]+) / ([0-9]{4})`)
 	forSeriesRe   = regexp.MustCompile(`^([^\(/]+) (\([^\)/]+\) )?\([^\)/]+\) ([^/]+ )?/ ([^\(/]+) / ([0-9]{4})`)
 	forShortRe    = regexp.MustCompile(`^([^\(/]+) / ([^\(/]+) / ([0-9]{4})`)
@@ -487,20 +487,20 @@ func (p *Parser) parsePage(ctx context.Context, cat string, page int, arg string
 		sid, _ := strconv.Atoi(sidRaw)
 		pir, _ := strconv.Atoi(pirRaw)
 		out = append(out, filedb.TorrentRecord{
-			TrackerName: trackerName,
-			Types: types,
-			URL: host + "/" + strings.TrimLeft(urlPath, "/"),
-			Title: title,
-			Sid: sid,
-			Pir: pir,
-			SizeName: sizeName,
-			CreateTime: createTime.UTC().Format(time.RFC3339Nano),
-			UpdateTime: now,
-			Name: name,
+			TrackerName:  trackerName,
+			Types:        types,
+			URL:          host + "/" + strings.TrimLeft(urlPath, "/"),
+			Title:        title,
+			Sid:          sid,
+			Pir:          pir,
+			SizeName:     sizeName,
+			CreateTime:   createTime.UTC().Format(time.RFC3339Nano),
+			UpdateTime:   now,
+			Name:         name,
 			OriginalName: original,
-			Relased: relased,
-			SearchName: core.SearchName(name),
-			SearchOrig: core.SearchName(firstNonEmpty(original, name)),
+			Relased:      relased,
+			SearchName:   core.SearchName(name),
+			SearchOrig:   core.SearchName(firstNonEmpty(original, name)),
 		}.ToMap())
 	}
 	return out, nil

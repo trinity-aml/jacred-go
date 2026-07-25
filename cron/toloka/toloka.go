@@ -575,7 +575,6 @@ func fileTime(td filedb.TorrentDetails) time.Time {
 	return time.Now().UTC()
 }
 
-
 func defaultUA() string {
 	return "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
 }
@@ -614,20 +613,20 @@ func parsePageHTML(host, cat, htmlBody string) []parseItem {
 		sid, _ := strconv.Atoi(sidRaw)
 		pir, _ := strconv.Atoi(pirRaw)
 		td := filedb.TorrentRecord{
-			TrackerName: trackerName,
-			Types: types,
-			URL: host + "/" + strings.TrimLeft(urlPath, "/"),
-			Title: title,
-			Sid: sid,
-			Pir: pir,
-			SizeName: strings.TrimSpace(sizeName),
-			CreateTime: createTime.UTC().Format(time.RFC3339Nano),
-			UpdateTime: now,
-			Name: strings.TrimSpace(name),
+			TrackerName:  trackerName,
+			Types:        types,
+			URL:          host + "/" + strings.TrimLeft(urlPath, "/"),
+			Title:        title,
+			Sid:          sid,
+			Pir:          pir,
+			SizeName:     strings.TrimSpace(sizeName),
+			CreateTime:   createTime.UTC().Format(time.RFC3339Nano),
+			UpdateTime:   now,
+			Name:         strings.TrimSpace(name),
 			OriginalName: strings.TrimSpace(original),
-			Relased: relased,
-			SearchName: core.SearchName(name),
-			SearchOrig: core.SearchName(firstNonEmpty(original, name)),
+			Relased:      relased,
+			SearchName:   core.SearchName(name),
+			SearchOrig:   core.SearchName(firstNonEmpty(original, name)),
 		}.ToMap()
 		out = append(out, parseItem{Torrent: td, DownloadID: downloadID})
 	}
@@ -893,27 +892,37 @@ func parseTitle(cat, title string) (string, string, int) {
 	}
 	if isMovieCat(cat) {
 		if g := movieMainRe.FindStringSubmatch(title); len(g) > 3 {
-			name, original = strings.TrimSpace(g[1]), strings.TrimSpace(g[2]); parseYear(g[3])
+			name, original = strings.TrimSpace(g[1]), strings.TrimSpace(g[2])
+			parseYear(g[3])
 		} else if g := movieShortRe.FindStringSubmatch(title); len(g) > 3 {
-			name, original = strings.TrimSpace(g[1]), strings.TrimSpace(g[2]); parseYear(g[3])
+			name, original = strings.TrimSpace(g[1]), strings.TrimSpace(g[2])
+			parseYear(g[3])
 		} else if g := movieSeriesRe.FindStringSubmatch(title); len(g) > 2 {
-			name = strings.TrimSpace(g[1]); parseYear(g[2])
+			name = strings.TrimSpace(g[1])
+			parseYear(g[2])
 		} else if g := movieSingleRe.FindStringSubmatch(title); len(g) > 2 {
-			name = strings.TrimSpace(g[1]); parseYear(g[2])
+			name = strings.TrimSpace(g[1])
+			parseYear(g[2])
 		}
 	} else if isSerialCat(cat) {
 		if g := serialLongRe.FindStringSubmatch(title); len(g) > 3 {
-			name, original = strings.TrimSpace(g[1]), strings.TrimSpace(g[2]); parseYear(g[3])
+			name, original = strings.TrimSpace(g[1]), strings.TrimSpace(g[2])
+			parseYear(g[3])
 		} else if g := serialBasicRe.FindStringSubmatch(title); len(g) > 3 {
-			name, original = strings.TrimSpace(g[1]), strings.TrimSpace(g[2]); parseYear(g[3])
+			name, original = strings.TrimSpace(g[1]), strings.TrimSpace(g[2])
+			parseYear(g[3])
 		} else if g := serialBracketRe.FindStringSubmatch(title); len(g) > 5 {
-			name, original = strings.TrimSpace(g[1]), strings.TrimSpace(g[4]); parseYear(g[5])
+			name, original = strings.TrimSpace(g[1]), strings.TrimSpace(g[4])
+			parseYear(g[5])
 		} else if g := serialSlashRe.FindStringSubmatch(title); len(g) > 3 {
-			name, original = strings.TrimSpace(g[1]), strings.TrimSpace(g[2]); parseYear(g[3])
+			name, original = strings.TrimSpace(g[1]), strings.TrimSpace(g[2])
+			parseYear(g[3])
 		} else if g := serialTriRe.FindStringSubmatch(title); len(g) > 3 {
-			name, original = strings.TrimSpace(g[1]), strings.TrimSpace(g[2]); parseYear(g[3])
+			name, original = strings.TrimSpace(g[1]), strings.TrimSpace(g[2])
+			parseYear(g[3])
 		} else if g := serialRusOnlyRe.FindStringSubmatch(title); len(g) > 2 {
-			name = strings.TrimSpace(g[1]); parseYear(g[2])
+			name = strings.TrimSpace(g[1])
+			parseYear(g[2])
 		}
 	}
 	return strings.TrimSpace(name), strings.TrimSpace(original), relased

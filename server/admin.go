@@ -8,8 +8,8 @@ import (
 	"io"
 	"log"
 	"net"
-	"net/url"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -304,9 +304,9 @@ func (s *Server) handleSyncFdbTorrents(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeCanonicalJSON(w, http.StatusOK, map[string]any{
-		"nextread":   nextread,
-		"countread":  countread,
-		"take":       take,
+		"nextread":    nextread,
+		"countread":   countread,
+		"take":        take,
 		"collections": collections,
 	})
 }
@@ -368,7 +368,7 @@ func (s *Server) handleSyncTorrents(w http.ResponseWriter, r *http.Request) {
 		return ik < jk
 	})
 	writeCanonicalJSON(w, http.StatusOK, map[string]any{
-		"take": take,
+		"take":     take,
 		"torrents": torrents,
 	})
 }
@@ -415,7 +415,6 @@ func (s *Server) handleDevFindDuplicateKeys(w http.ResponseWriter, r *http.Reque
 func (s *Server) handleDevFindEmptySearchFields(w http.ResponseWriter, r *http.Request) {
 	writeCanonicalJSON(w, http.StatusOK, s.DB.FindEmptySearchFields(defaultInt(firstQuery(r.URL.Query(), "sampleSize", "sample", "limit"), 20)))
 }
-
 
 func sortedStrings(in []string) []string {
 	if len(in) == 0 {
@@ -730,7 +729,6 @@ func filedbKeyPath(key string) string {
 	md5key := fmt.Sprintf("%x", md5.Sum([]byte(key)))
 	return filepath.ToSlash(filepath.Join(md5key[:2], md5key[2:]))
 }
-
 
 func toStringSliceAny(v any) []string {
 	switch x := v.(type) {
@@ -1259,7 +1257,10 @@ func (s *Server) handleDevMigrateAnilibertyUrls(w http.ResponseWriter, r *http.R
 		if err != nil {
 			continue
 		}
-		type update struct{ oldURL, newURL string; t filedb.TorrentDetails }
+		type update struct {
+			oldURL, newURL string
+			t              filedb.TorrentDetails
+		}
 		var toUpdate []update
 		for url, t := range bucket {
 			if t == nil || asString(t["trackerName"]) != "aniliberty" {
@@ -1376,7 +1377,10 @@ func (s *Server) handleDevFixAnimelayerDuplicates(w http.ResponseWriter, r *http
 			continue
 		}
 		// Normalize http→https for animelayer, collect by hex ID
-		type aEntry struct{ url string; t filedb.TorrentDetails }
+		type aEntry struct {
+			url string
+			t   filedb.TorrentDetails
+		}
 		idMap := map[string][]aEntry{}
 		bucketChanged := false
 		for url, t := range bucket {

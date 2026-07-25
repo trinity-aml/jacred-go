@@ -29,29 +29,29 @@ const (
 
 var defaultCategories = []int{2000000, 2001000, 2002000, 2003000, 2004000, 2005000, 2006000, 2007000, 2008000, 3000000, 3001000, 3002000, 3003000, 3004000, 3005000, 3006000, 3007000, 3008000}
 var (
-	yearRe            = regexp.MustCompile(`[\(\[](\d{4})[\)\]]`)
-	yearStandaloneRe  = regexp.MustCompile(`\b(19|20)\d{2}\b`)
-	cleanBracketsRe   = regexp.MustCompile(`\[[^\]]*\]`)
-	seriesMatchRe     = regexp.MustCompile(`(?i)^(.+?)\s+S\d{1,2}E\d{1,2}\b`)
-	yearBracketRe     = regexp.MustCompile(`[\(\[](\d{4})[\)\]]`)
-	sxxexxRe          = regexp.MustCompile(`(?i)\b(S\d{1,2}E\d{1,2}|S\d{1,2}E?\d{0,2}|E\d{1,2}|\d{1,2}x\d{1,2})\b`)
-	seasonWordRe      = regexp.MustCompile(`(?i)(?:^|\s)(Сезон|Season)\s*\d{1,2}\b.*$`)
-	qualityWordRe     = regexp.MustCompile(`(?i)\b(2160p|1080p|720p|480p)\b`)
-	hdrWordRe         = regexp.MustCompile(`(?i)\b(HDR10?|DV|HDR|SDR|10bit)\b`)
-	sourceWordRe      = regexp.MustCompile(`(?i)\b(WEB[-\s]?DL|WEB[-\s]?Rip|WEB\b|BDRip|BDRemux|HDRip|BluRay|BRRip|DVDRip|HDTV)\b`)
-	codecWordRe       = regexp.MustCompile(`(?i)\b(x264|x265|xvid|h\.?264|h\.?265|hevc|avc|aac|ac3|dts)\b`)
-	serviceWordRe     = regexp.MustCompile(`(?i)\b(AMZN|NF|DS4K|DD\s*5\s*1|DD5\.?1|DDPA|DDP5\.?1|Atmos|DDP?\s*5\.?1|playWEB)\b`)
-	subWordRe         = regexp.MustCompile(`(?i)\b(ESub|Sub)\b`)
-	releaseGroupRe    = regexp.MustCompile(`(?i)[.\s]+-\s*[A-Za-z0-9][A-Za-z0-9.-]*$`)
-	multiSpaceRe      = regexp.MustCompile(`\s{2,}`)
-	bracketPipeRe     = regexp.MustCompile(`[\[\]|]`)
-	res2160Re         = regexp.MustCompile(`(?i)\b2160p\b`)
-	res1080Re         = regexp.MustCompile(`(?i)\b1080p\b`)
-	res720Re          = regexp.MustCompile(`(?i)\b720p\b`)
-	dotHdrRe          = regexp.MustCompile(`(?i)\.(HDR10?)\b`)
-	dolbyVisionRe     = regexp.MustCompile(`(?i)(dolby\s*vision|10-?bit)`)
-	hdrPresentRe      = regexp.MustCompile(`(?i)(\.|[\[,]| )hdr`)
-	trackerSuffixRe   = regexp.MustCompile(`\s*\|\s+[^|]+$`)
+	yearRe           = regexp.MustCompile(`[\(\[](\d{4})[\)\]]`)
+	yearStandaloneRe = regexp.MustCompile(`\b(19|20)\d{2}\b`)
+	cleanBracketsRe  = regexp.MustCompile(`\[[^\]]*\]`)
+	seriesMatchRe    = regexp.MustCompile(`(?i)^(.+?)\s+S\d{1,2}E\d{1,2}\b`)
+	yearBracketRe    = regexp.MustCompile(`[\(\[](\d{4})[\)\]]`)
+	sxxexxRe         = regexp.MustCompile(`(?i)\b(S\d{1,2}E\d{1,2}|S\d{1,2}E?\d{0,2}|E\d{1,2}|\d{1,2}x\d{1,2})\b`)
+	seasonWordRe     = regexp.MustCompile(`(?i)(?:^|\s)(Сезон|Season)\s*\d{1,2}\b.*$`)
+	qualityWordRe    = regexp.MustCompile(`(?i)\b(2160p|1080p|720p|480p)\b`)
+	hdrWordRe        = regexp.MustCompile(`(?i)\b(HDR10?|DV|HDR|SDR|10bit)\b`)
+	sourceWordRe     = regexp.MustCompile(`(?i)\b(WEB[-\s]?DL|WEB[-\s]?Rip|WEB\b|BDRip|BDRemux|HDRip|BluRay|BRRip|DVDRip|HDTV)\b`)
+	codecWordRe      = regexp.MustCompile(`(?i)\b(x264|x265|xvid|h\.?264|h\.?265|hevc|avc|aac|ac3|dts)\b`)
+	serviceWordRe    = regexp.MustCompile(`(?i)\b(AMZN|NF|DS4K|DD\s*5\s*1|DD5\.?1|DDPA|DDP5\.?1|Atmos|DDP?\s*5\.?1|playWEB)\b`)
+	subWordRe        = regexp.MustCompile(`(?i)\b(ESub|Sub)\b`)
+	releaseGroupRe   = regexp.MustCompile(`(?i)[.\s]+-\s*[A-Za-z0-9][A-Za-z0-9.-]*$`)
+	multiSpaceRe     = regexp.MustCompile(`\s{2,}`)
+	bracketPipeRe    = regexp.MustCompile(`[\[\]|]`)
+	res2160Re        = regexp.MustCompile(`(?i)\b2160p\b`)
+	res1080Re        = regexp.MustCompile(`(?i)\b1080p\b`)
+	res720Re         = regexp.MustCompile(`(?i)\b720p\b`)
+	dotHdrRe         = regexp.MustCompile(`(?i)\.(HDR10?)\b`)
+	dolbyVisionRe    = regexp.MustCompile(`(?i)(dolby\s*vision|10-?bit)`)
+	hdrPresentRe     = regexp.MustCompile(`(?i)(\.|[\[,]| )hdr`)
+	trackerSuffixRe  = regexp.MustCompile(`\s*\|\s+[^|]+$`)
 )
 
 type Parser struct {
@@ -280,7 +280,6 @@ func (p *Parser) download(ctx context.Context, rawURL, referer string) ([]byte, 
 	return data, nil
 }
 
-
 func fileTime(t filedb.TorrentDetails) time.Time {
 	for _, key := range []string{"updateTime", "createTime"} {
 		s := strings.TrimSpace(asString(t[key]))
@@ -391,6 +390,7 @@ func qualityFromCategoryID(ids []int) int {
 	}
 	return 480
 }
+
 // ParseNameAndYear is the exported version of parseNameAndYear for use by server/admin.go.
 func ParseNameAndYear(title string) (string, int) { return parseNameAndYear(title) }
 

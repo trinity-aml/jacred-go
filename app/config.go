@@ -50,8 +50,19 @@ func parseYAMLIntoConfig(text string, cfg *Config) {
 		}
 		indent := len(raw) - len(strings.TrimLeft(raw, " "))
 
-		if indent == 0 && strings.HasSuffix(trimmed, ":") {
-			section = strings.TrimSuffix(trimmed, ":")
+		// Section headers and nested-block keys can carry a trailing comment
+		// too, but they are matched on the whole line rather than on a value.
+		// Only consult the stripped form when the line holds no quoted scalar,
+		// so a value such as `p: "a: #b:"` can never be mistaken for a header.
+		structural := trimmed
+		if !strings.Contains(trimmed, `"`) {
+			if structural = stripInlineComment(trimmed); structural == "" {
+				continue
+			}
+		}
+
+		if indent == 0 && strings.HasSuffix(structural, ":") {
+			section = strings.TrimSuffix(structural, ":")
 			currentTracker = trackerByName(cfg, section)
 			currentProxy = nil
 			inTrackerLogin = false
@@ -59,6 +70,14 @@ func parseYAMLIntoConfig(text string, cfg *Config) {
 			inFlareSolverrGo = false
 			inTracksInterval = false
 			currentListTarget = ""
+			if isListKey(section) {
+				// `synctrackers:` on its own line opens a list block whose
+				// items follow as `- item`. Without this it would be taken for
+				// a section header and every item silently dropped — only the
+				// `synctrackers: []` spelling used to collect them.
+				setConfigKV(cfg, section, "")
+				currentListTarget = section
+			}
 			if section == "globalproxy" {
 				cfg.GlobalProxy = nil
 			}
@@ -70,10 +89,10 @@ func parseYAMLIntoConfig(text string, cfg *Config) {
 				cfg.GlobalProxy = append(cfg.GlobalProxy, ProxySettings{})
 				currentProxy = &cfg.GlobalProxy[len(cfg.GlobalProxy)-1]
 				currentListTarget = ""
-				rest := strings.TrimPrefix(trimmed, "- ")
+				rest := strings.TrimPrefix(structural, "- ")
 				if strings.Contains(rest, ":") {
 					k, v := splitKV(rest)
-					setProxyKV(currentProxy, k, v)
+					setProxyKV(currentProxy, "globalproxy", k, v)
 					if k == "list" {
 						currentListTarget = "proxy.list"
 					}
@@ -82,7 +101,7 @@ func parseYAMLIntoConfig(text string, cfg *Config) {
 			}
 			if currentProxy != nil && indent == 4 && strings.Contains(trimmed, ":") {
 				k, v := splitKV(trimmed)
-				setProxyKV(currentProxy, k, v)
+				setProxyKV(currentProxy, "globalproxy", k, v)
 				if k == "list" {
 					currentListTarget = "proxy.list"
 				} else {
@@ -91,20 +110,20 @@ func parseYAMLIntoConfig(text string, cfg *Config) {
 				continue
 			}
 			if currentProxy != nil && indent >= 6 && strings.HasPrefix(trimmed, "- ") && currentListTarget == "proxy.list" {
-				currentProxy.List = append(currentProxy.List, unquote(strings.TrimPrefix(trimmed, "- ")))
+				currentProxy.List = append(currentProxy.List, unquote(stripInlineComment(strings.TrimPrefix(trimmed, "- "))))
 				continue
 			}
 		}
 
 		if currentTracker != nil {
-			if indent == 2 && strings.HasSuffix(trimmed, ":") {
-				name := strings.TrimSuffix(trimmed, ":")
+			if indent == 2 && strings.HasSuffix(structural, ":") {
+				name := strings.TrimSuffix(structural, ":")
 				inTrackerLogin = name == "login"
 				continue
 			}
 			if indent == 2 && strings.Contains(trimmed, ":") {
 				k, v := splitKV(trimmed)
-				setTrackerKV(currentTracker, k, v)
+				setTrackerKV(currentTracker, section, k, v)
 				continue
 			}
 			if inTrackerLogin && indent == 4 && strings.Contains(trimmed, ":") {
@@ -124,13 +143,13 @@ func parseYAMLIntoConfig(text string, cfg *Config) {
 			k, v := splitKV(trimmed)
 			switch k {
 			case "enable":
-				cfg.Evercache.Enable = parseBool(v)
+				cfg.Evercache.Enable = parseBoolAt("evercache", k, v)
 			case "validHour":
-				cfg.Evercache.ValidHour = parseInt(v)
+				cfg.Evercache.ValidHour = parseIntAt("evercache", k, v)
 			case "maxOpenWriteTask":
-				cfg.Evercache.MaxOpenWriteTask = parseInt(v)
+				cfg.Evercache.MaxOpenWriteTask = parseIntAt("evercache", k, v)
 			case "dropCacheTake":
-				cfg.Evercache.DropCacheTake = parseInt(v)
+				cfg.Evercache.DropCacheTake = parseIntAt("evercache", k, v)
 			}
 			continue
 		}
@@ -139,9 +158,9 @@ func parseYAMLIntoConfig(text string, cfg *Config) {
 			k, v := splitKV(trimmed)
 			switch k {
 			case "task0":
-				cfg.TracksInterval.Task0 = parseInt(v)
+				cfg.TracksInterval.Task0 = parseIntAt("tracksinterval", k, v)
 			case "task1":
-				cfg.TracksInterval.Task1 = parseInt(v)
+				cfg.TracksInterval.Task1 = parseIntAt("tracksinterval", k, v)
 			}
 			continue
 		}
@@ -156,7 +175,7 @@ func parseYAMLIntoConfig(text string, cfg *Config) {
 			case "driver_path":
 				cfg.FlareSolverrGo.DriverPath = unquote(v)
 			case "headless":
-				val := parseBool(v)
+				val := parseBoolAt("flaresolverr_go", k, v)
 				cfg.FlareSolverrGo.Headless = &val
 			case "chrome_version":
 				cfg.FlareSolverrGo.ChromeVersion = unquote(v)
@@ -187,7 +206,7 @@ func parseYAMLIntoConfig(text string, cfg *Config) {
 		}
 
 		if indent == 2 && strings.HasPrefix(trimmed, "- ") {
-			val := unquote(strings.TrimPrefix(trimmed, "- "))
+			val := unquote(stripInlineComment(strings.TrimPrefix(trimmed, "- ")))
 			switch currentListTarget {
 			case "synctrackers":
 				cfg.SyncTrackers = append(cfg.SyncTrackers, val)
@@ -266,7 +285,37 @@ func splitKV(s string) (string, string) {
 	if len(parts) != 2 {
 		return strings.TrimSpace(s), ""
 	}
-	return strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1])
+	return strings.TrimSpace(parts[0]), stripInlineComment(parts[1])
+}
+
+// stripInlineComment drops a trailing YAML-style comment from a raw value and
+// trims the remainder. Following YAML, a '#' opens a comment only when it
+// starts the value or is preceded by whitespace, so hashes inside tokens —
+// passwords, URL fragments, regexes — survive untouched. Inside a
+// double-quoted scalar '#' is always literal; anything past the closing quote
+// is dropped. An unterminated quote is returned as-is for unquote to handle.
+func stripInlineComment(v string) string {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return v
+	}
+	if v[0] == '"' {
+		for i := 1; i < len(v); i++ {
+			switch v[i] {
+			case '\\':
+				i++
+			case '"':
+				return v[:i+1]
+			}
+		}
+		return v
+	}
+	for i := 0; i < len(v); i++ {
+		if v[i] == '#' && (i == 0 || v[i-1] == ' ' || v[i-1] == '\t') {
+			return strings.TrimRight(v[:i], " \t")
+		}
+	}
+	return v
 }
 
 func unquote(v string) string {
@@ -277,13 +326,57 @@ func unquote(v string) string {
 	return strings.Trim(strings.TrimSpace(v), `"`)
 }
 
-func parseBool(v string) bool { return strings.EqualFold(strings.TrimSpace(v), "true") }
-func parseInt(v string) int {
-	n, _ := strconv.Atoi(strings.Trim(strings.TrimSpace(v), `"`))
+// isBlankValue reports values that carry no information, so they are left to
+// the caller's zero value without a warning.
+func isBlankValue(s string) bool {
+	return s == "" || s == "null" || s == "~"
+}
+
+// keyPath renders the position of a key for log messages: "Rutor.parseDelay"
+// for a tracker key, plain "listenport" for a root-level one.
+func keyPath(where, k string) string {
+	if where == "" {
+		return k
+	}
+	return where + "." + k
+}
+
+// parseIntAt converts a config value to an int and warns when it cannot.
+// Config parsing is otherwise silent — an unreadable line just leaves a zero
+// behind — so without this a typo like `parseDelay: 700O` disables the delay
+// with no trace in the log.
+func parseIntAt(where, k, v string) int {
+	s := strings.Trim(strings.TrimSpace(v), `"`)
+	if isBlankValue(s) {
+		return 0
+	}
+	n, err := strconv.Atoi(s)
+	if err != nil {
+		log.Printf("config: %s: %q is not a number — using 0", keyPath(where, k), s)
+		return 0
+	}
 	return n
 }
 
-func setTrackerKV(t *TrackerSettings, k, v string) {
+// parseBoolAt accepts only true/false (any case) and warns on anything else,
+// including near-misses like yes/on/1 that other YAML parsers would accept.
+func parseBoolAt(where, k, v string) bool {
+	s := strings.Trim(strings.TrimSpace(v), `"`)
+	if isBlankValue(s) {
+		return false
+	}
+	if strings.EqualFold(s, "true") {
+		return true
+	}
+	if !strings.EqualFold(s, "false") {
+		log.Printf("config: %s: %q is not true/false — using false", keyPath(where, k), s)
+	}
+	return false
+}
+
+func setTrackerKV(t *TrackerSettings, where, k, v string) {
+	num := func() int { return parseIntAt(where, k, v) }
+	flag := func() bool { return parseBoolAt(where, k, v) }
 	switch k {
 	case "host":
 		t.Host = unquote(v)
@@ -292,28 +385,29 @@ func setTrackerKV(t *TrackerSettings, k, v string) {
 	case "cookie":
 		t.Cookie = unquote(v)
 	case "useproxy":
-		t.UseProxy = parseBool(v)
+		t.UseProxy = flag()
 	case "fetchmode":
 		t.FetchMode = unquote(v)
 	case "insecureSkipVerify":
-		t.InsecureSkipVerify = parseBool(v)
+		t.InsecureSkipVerify = flag()
 	case "reqMinute":
-		t.ReqMinute = parseInt(v)
+		t.ReqMinute = num()
 	case "parseDelay":
-		t.ParseDelay = parseInt(v)
+		t.ParseDelay = num()
 	case "log":
-		t.Log = parseBool(v)
+		t.Log = flag()
 	}
 }
 
-func setProxyKV(p *ProxySettings, k, v string) {
+func setProxyKV(p *ProxySettings, where, k, v string) {
+	flag := func() bool { return parseBoolAt(where, k, v) }
 	switch k {
 	case "pattern":
 		p.Pattern = unquote(v)
 	case "useAuth":
-		p.UseAuth = parseBool(v)
+		p.UseAuth = flag()
 	case "BypassOnLocal":
-		p.BypassOnLocal = parseBool(v)
+		p.BypassOnLocal = flag()
 	case "username":
 		p.Username = unquote(v)
 	case "password":
@@ -322,59 +416,61 @@ func setProxyKV(p *ProxySettings, k, v string) {
 }
 
 func setConfigKV(cfg *Config, k, v string) {
+	num := func() int { return parseIntAt("", k, v) }
+	flag := func() bool { return parseBoolAt("", k, v) }
 	switch k {
 	case "listenip":
 		cfg.ListenIP = unquote(v)
 	case "listenport":
-		cfg.ListenPort = parseInt(v)
+		cfg.ListenPort = num()
 	case "apikey":
 		cfg.APIKey = unquote(v)
 	case "devkey":
 		cfg.DevKey = unquote(v)
 	case "mergeduplicates":
-		cfg.MergeDuplicates = parseBool(v)
+		cfg.MergeDuplicates = flag()
 	case "mergenumduplicates":
-		cfg.MergeNumDuplicates = parseBool(v)
+		cfg.MergeNumDuplicates = flag()
 	case "log":
-		cfg.Log = parseBool(v)
+		cfg.Log = flag()
 	case "logParsers":
-		cfg.LogParsers = parseBool(v)
+		cfg.LogParsers = flag()
 	case "logFdb":
-		cfg.LogFdb = parseBool(v)
+		cfg.LogFdb = flag()
 	case "logFdbRetentionDays":
-		cfg.LogFdbRetentionDays = parseInt(v)
+		cfg.LogFdbRetentionDays = num()
 	case "logFdbMaxSizeMb":
-		cfg.LogFdbMaxSizeMb = parseInt(v)
+		cfg.LogFdbMaxSizeMb = num()
 	case "logFdbMaxFiles":
-		cfg.LogFdbMaxFiles = parseInt(v)
+		cfg.LogFdbMaxFiles = num()
 	case "fdbPathLevels":
-		cfg.FDBPathLevels = parseInt(v)
+		cfg.FDBPathLevels = num()
 	case "openstats":
-		cfg.OpenStats = parseBool(v)
+		cfg.OpenStats = flag()
 	case "opensync":
-		cfg.OpenSync = parseBool(v)
+		cfg.OpenSync = flag()
 	case "opensync_v1":
-		cfg.OpenSyncV1 = parseBool(v)
+		cfg.OpenSyncV1 = flag()
 	case "web":
-		cfg.Web = parseBool(v)
+		cfg.Web = flag()
 	case "syncapi":
 		cfg.SyncAPI = unquote(v)
 	case "syncsport":
-		cfg.SyncSport = parseBool(v)
+		cfg.SyncSport = flag()
 	case "syncspidr":
-		cfg.SyncSpidr = parseBool(v)
+		cfg.SyncSpidr = flag()
 	case "maxreadfile":
-		cfg.MaxReadFile = parseInt(v)
+		cfg.MaxReadFile = num()
 	case "memlimit":
-		cfg.MemLimitMB = parseInt(v)
+		cfg.MemLimitMB = num()
 	case "gcpercent":
-		cfg.GCPercent = parseInt(v)
+		cfg.GCPercent = num()
 	case "timeStatsUpdate":
-		cfg.TimeStatsUpdate = parseInt(v)
+		cfg.TimeStatsUpdate = num()
 	case "timeSync":
-		cfg.TimeSync = parseInt(v)
+		cfg.TimeSync = num()
 	case "timeSyncSpidr":
-		cfg.TimeSyncSpidr = parseInt(v)
+		cfg.TimeSyncSpidr = num()
 	case "flaresolverr":
 		cfg.FlareSolverr = unquote(v)
 	case "synctrackers":
@@ -382,15 +478,15 @@ func setConfigKV(cfg *Config, k, v string) {
 	case "disable_trackers":
 		cfg.DisableTrackers = []string{}
 	case "tracks":
-		cfg.Tracks = parseBool(v)
+		cfg.Tracks = flag()
 	case "tracksmod":
-		cfg.TracksMod = parseInt(v)
+		cfg.TracksMod = num()
 	case "tracksdelay":
-		cfg.TracksDelay = parseInt(v)
+		cfg.TracksDelay = num()
 	case "trackslog":
-		cfg.TracksLog = parseBool(v)
+		cfg.TracksLog = flag()
 	case "tracksatempt":
-		cfg.TracksAttempt = parseInt(v)
+		cfg.TracksAttempt = num()
 	case "trackscategory":
 		cfg.TracksCategory = unquote(v)
 	case "tsuri":

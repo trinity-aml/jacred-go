@@ -79,13 +79,15 @@ type ffprobeArtifact struct {
 
 // Pinned ffprobe artifacts.
 //
-// Linux: johnvansickle.com static builds (de-facto standard for headless Linux).
-//        Each archive has a `.md5` sidecar that rotates with the build.
+// Linux: johnvansickle.com static builds (de-facto standard for headless
+// Linux). Each archive has a `.md5` sidecar that rotates with the build.
+//
 // Windows: gyan.dev release-essentials zip; sibling `.sha256` sidecar.
+//
 // macOS: evermeet.cx ffprobe-only zip — verified against an embedded GPG
-//        public key (evermeet_signing_key.asc). Apple Silicon falls back to
-//        the same Intel binary running under Rosetta 2 — evermeet doesn't
-//        ship native arm64 macOS builds.
+// public key (evermeet_signing_key.asc). Apple Silicon falls back to the same
+// Intel binary running under Rosetta 2 — evermeet doesn't ship native arm64
+// macOS builds.
 //
 // Note on macOS URL: evermeet's filename embeds the version, so the literal
 // URL below rotates as new ffmpeg releases come out and existing one returns

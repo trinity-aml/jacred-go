@@ -59,9 +59,9 @@ type DB struct {
 	// the same slot, which is the same probability as a 1-in-256 hash
 	// collision).
 	keyShards [256]sync.Mutex
-	dirty    atomic.Bool  // true when masterDb has unsaved changes
+	dirty     atomic.Bool  // true when masterDb has unsaved changes
 	lastSaved atomic.Int64 // unix nanoseconds of last successful save
-	fdbLog   *FdbLogger   // audit logger for bucket changes (nil if disabled)
+	fdbLog    *FdbLogger   // audit logger for bucket changes (nil if disabled)
 
 	// Dirty bucket cache: modified buckets held in memory, flushed to disk periodically.
 	dirtyMu      sync.RWMutex
@@ -507,6 +507,7 @@ func matchSerialAndYear(t TorrentDetails, isSerial, year int) bool {
 	}
 	return true
 }
+
 // TorrentTime is the exported version of torrentTime.
 func TorrentTime(t TorrentDetails, key string) time.Time { return torrentTime(t, key) }
 

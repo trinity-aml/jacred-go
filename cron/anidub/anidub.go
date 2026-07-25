@@ -185,17 +185,17 @@ func parsePageHTML(host, htmlBody string, page int, now time.Time) []pendingTorr
 			original = name
 		}
 		out = append(out, pendingTorrent{Torrent: filedb.TorrentRecord{
-			TrackerName: trackerName,
-			Types: determineTypes(urlPath),
-			URL: fullURL,
-			Title: title,
-			Sid: 1,
-			CreateTime: createTime.UTC().Format(time.RFC3339Nano),
-			UpdateTime: now.UTC().Format(time.RFC3339Nano),
-			Name: name,
+			TrackerName:  trackerName,
+			Types:        determineTypes(urlPath),
+			URL:          fullURL,
+			Title:        title,
+			Sid:          1,
+			CreateTime:   createTime.UTC().Format(time.RFC3339Nano),
+			UpdateTime:   now.UTC().Format(time.RFC3339Nano),
+			Name:         name,
 			OriginalName: original,
-			SearchName: core.SearchName(name),
-			SearchOrig: core.SearchName(firstNonEmpty(original, name)),
+			SearchName:   core.SearchName(name),
+			SearchOrig:   core.SearchName(firstNonEmpty(original, name)),
 		}.ToMap(), DownloadURI: fullURL})
 	}
 	return out
@@ -448,7 +448,6 @@ func parseSizeBytes(v string) float64 {
 	}
 	return 0
 }
-
 
 func fileTime(t filedb.TorrentDetails) time.Time {
 	for _, key := range []string{"updateTime", "createTime"} {

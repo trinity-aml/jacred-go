@@ -24,18 +24,18 @@ import (
 )
 
 var (
-	inlineHrefRe = regexp.MustCompile(`<a href="[^"]+">([0-9]+)</a>[^<\n\r]+<a href="[^"]+">След\.</a>`)
-	inlineMagnetRe = regexp.MustCompile(`"(magnet:[^"]+)"`)
+	inlineHrefRe     = regexp.MustCompile(`<a href="[^"]+">([0-9]+)</a>[^<\n\r]+<a href="[^"]+">След\.</a>`)
+	inlineMagnetRe   = regexp.MustCompile(`"(magnet:[^"]+)"`)
 	inlineRe8a7a8bRe = regexp.MustCompile(`[\n\r\t\x{00A0} ]+`)
-	inlineYearRe = regexp.MustCompile(`^([^/\(\|]+) \([^\)]+\) \(([0-9]{4})(-[0-9]{4})?\)`)
-	inlineYearRe2 = regexp.MustCompile(`^([^/\(\|]+) \(([0-9]{4})(-[0-9]{4})?\)`)
-	inlineYearRe3 = regexp.MustCompile(`^([^/\(\|]+) \(([0-9]{4})\)`)
-	mp1Re = regexp.MustCompile(`(?is)\|\s*([0-9]+ [^ ]+ [0-9]{4} [0-9:]+)</span>\s*\|\s*<span class="tit"`)
-	mp2Re = regexp.MustCompile(`(?is)<a class="pgenmed" href="(viewtopic\.php[^"]+)"`)
-	mp3Re = regexp.MustCompile(`(?is)>([^<]+)</a></h2></td>`)
-	mp4Re = regexp.MustCompile(`(?is)title="Раздающих">&nbsp;([0-9]+)</span>`)
-	mp5Re = regexp.MustCompile(`(?is)title="Качают">&nbsp;([0-9]+)</span>`)
-	mp6Re = regexp.MustCompile(`(?is)<span class="pcomm bold">([^<]+)</span>`)
+	inlineYearRe     = regexp.MustCompile(`^([^/\(\|]+) \([^\)]+\) \(([0-9]{4})(-[0-9]{4})?\)`)
+	inlineYearRe2    = regexp.MustCompile(`^([^/\(\|]+) \(([0-9]{4})(-[0-9]{4})?\)`)
+	inlineYearRe3    = regexp.MustCompile(`^([^/\(\|]+) \(([0-9]{4})\)`)
+	mp1Re            = regexp.MustCompile(`(?is)\|\s*([0-9]+ [^ ]+ [0-9]{4} [0-9:]+)</span>\s*\|\s*<span class="tit"`)
+	mp2Re            = regexp.MustCompile(`(?is)<a class="pgenmed" href="(viewtopic\.php[^"]+)"`)
+	mp3Re            = regexp.MustCompile(`(?is)>([^<]+)</a></h2></td>`)
+	mp4Re            = regexp.MustCompile(`(?is)title="Раздающих">&nbsp;([0-9]+)</span>`)
+	mp5Re            = regexp.MustCompile(`(?is)title="Качают">&nbsp;([0-9]+)</span>`)
+	mp6Re            = regexp.MustCompile(`(?is)<span class="pcomm bold">([^<]+)</span>`)
 	// Trims the page HTML to the rows section. Hoisted out of parsePageHTML
 	// because it was being recompiled on every page fetch.
 	pageBodyTrimRe = regexp.MustCompile(`(?is)<td valign="top" width="[0-9]+%">(.*)<div class="paginport nav">`)
@@ -89,8 +89,8 @@ type Parser struct {
 	lastLoginAttempt time.Time
 	domain           string
 
-	throttleMu       sync.Mutex
-	throttleRemain   int // requests still owed the extra delay
+	throttleMu     sync.Mutex
+	throttleRemain int // requests still owed the extra delay
 }
 
 // rateLimitBackoff is added to parseDelay for the next throttleRemain requests
@@ -710,21 +710,21 @@ func parsePageHTML(host, cat, htmlBody string, now time.Time) []filedb.TorrentDe
 		sid, _ := strconv.Atoi(sidRaw)
 		pir, _ := strconv.Atoi(pirRaw)
 		out = append(out, filedb.TorrentRecord{
-			TrackerName: trackerName,
-			Types: types,
-			URL: strings.TrimRight(host, "/") + "/forum/" + strings.TrimLeft(urlPath, "/"),
-			Title: title,
-			Sid: sid,
-			Pir: pir,
-			SizeName: sizeName,
-			Magnet: magnet[1],
-			CreateTime: createTime.UTC().Format(time.RFC3339Nano),
-			UpdateTime: now.UTC().Format(time.RFC3339Nano),
-			Name: name,
+			TrackerName:  trackerName,
+			Types:        types,
+			URL:          strings.TrimRight(host, "/") + "/forum/" + strings.TrimLeft(urlPath, "/"),
+			Title:        title,
+			Sid:          sid,
+			Pir:          pir,
+			SizeName:     sizeName,
+			Magnet:       magnet[1],
+			CreateTime:   createTime.UTC().Format(time.RFC3339Nano),
+			UpdateTime:   now.UTC().Format(time.RFC3339Nano),
+			Name:         name,
 			OriginalName: original,
-			Relased: relased,
-			SearchName: core.SearchName(name),
-			SearchOrig: core.SearchName(firstNonEmpty(original, name)),
+			Relased:      relased,
+			SearchName:   core.SearchName(name),
+			SearchOrig:   core.SearchName(firstNonEmpty(original, name)),
 		}.ToMap())
 	}
 	return out
@@ -1086,4 +1086,3 @@ func asInt(v any) int {
 		return n
 	}
 }
-

@@ -1,4 +1,3 @@
-
 package selezen
 
 import (
@@ -235,20 +234,20 @@ func parsePageHTML(htmlBody string) []filedb.TorrentDetails {
 		sid, _ := strconv.Atoi(sidRaw)
 		pir, _ := strconv.Atoi(pirRaw)
 		out = append(out, filedb.TorrentRecord{
-			TrackerName: trackerName,
-			Types: typesForRow(row, title, urlv),
-			URL: urlv,
-			Title: title,
-			Sid: sid,
-			Pir: pir,
-			SizeName: sizeName,
-			CreateTime: createTime.UTC().Format(time.RFC3339Nano),
-			UpdateTime: now,
-			Name: strings.TrimSpace(name),
+			TrackerName:  trackerName,
+			Types:        typesForRow(row, title, urlv),
+			URL:          urlv,
+			Title:        title,
+			Sid:          sid,
+			Pir:          pir,
+			SizeName:     sizeName,
+			CreateTime:   createTime.UTC().Format(time.RFC3339Nano),
+			UpdateTime:   now,
+			Name:         strings.TrimSpace(name),
 			OriginalName: strings.TrimSpace(original),
-			Relased: relased,
-			SearchName: core.SearchName(name),
-			SearchOrig: core.SearchName(firstNonEmpty(original, name)),
+			Relased:      relased,
+			SearchName:   core.SearchName(name),
+			SearchOrig:   core.SearchName(firstNonEmpty(original, name)),
 		}.ToMap())
 	}
 	return out

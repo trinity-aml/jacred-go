@@ -29,17 +29,17 @@ var firstPageCats = []string{"549", "22", "1666", "941", "1950", "2090", "2221",
 var allTaskCats = []string{"549", "22", "1666", "941", "1950", "2090", "2221", "2091", "2092", "2093", "2200", "2540", "934", "505", "252", "124", "1213", "2343", "930", "2365", "208", "539", "209", "921", "815", "1460", "1457", "2199", "313", "312", "1247", "2201", "2339", "140", "842", "235", "242", "819", "1531", "721", "1102", "1120", "1214", "489", "387", "9", "81", "915", "1939", "119", "1803", "266", "193", "1690", "1459", "825", "1248", "1288", "325", "534", "694", "704", "1105", "2491", "1389", "709", "2109", "46", "671", "2177", "2538", "251", "98", "97", "851", "2178", "821", "2076", "56", "2123", "876", "2139", "1467", "1469", "249", "552", "500", "2112", "1327", "1468", "2168", "2160", "314", "1281", "2110", "979", "2169", "2164", "2166", "2163", "24", "1959", "939", "1481", "113", "115", "882", "1482", "393", "2537", "532", "827", "1392", "2475", "2493", "2113", "2482", "2103", "2522", "2485", "2486", "2479", "2089", "1794", "845", "2312", "343", "2111", "1527", "2069", "1323", "2009", "2000", "2010", "2006", "2007", "2005", "259", "2004", "1999", "2001", "2002", "283", "1997", "2003", "1608", "1609", "2294", "1229", "1693", "2532", "136", "592", "2533", "1952", "1621", "2075", "1668", "1613", "1614", "1623", "1615", "1630", "2425", "2514", "1616", "2014", "1442", "1491", "1987", "1617", "1620", "1998", "1343", "751", "1697", "255", "260", "261", "256", "1986", "660", "1551", "626", "262", "1326", "978", "1287", "1188", "1667", "1675", "257", "875", "263", "2073", "550", "2124", "1470", "528", "486", "854", "2079", "1336", "2171", "1339", "2455", "1434", "2350", "1472", "2068", "2016"}
 
 var (
-	rowDateRe      = regexp.MustCompile(`<p>([0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2})</p>`)
-	rowTopicIDRe   = regexp.MustCompile(`<a id="tt-([0-9]+)"`)
-	rowTitleRe     = regexp.MustCompile(`<a id="tt-[0-9]+"[^>]+>([^\n\r]+)</a>`)
-	rowSidRe       = regexp.MustCompile(`<span class="seedmed"[^>]*><b>([0-9]+)</b>`)
-	rowPirRe       = regexp.MustCompile(`<span class="leechmed"[^>]*><b>([0-9]+)</b>`)
-	rowSizeRe      = regexp.MustCompile(`dl-stub">([^<]+)</a>`)
-	topicTimeRe    = regexp.MustCompile(`<a class="p-link small" href="viewtopic\.php\?t=[^"]+">([^<]+)</a>`)
-	topicMagnetRe  = regexp.MustCompile(`href="(magnet:[^"]+)" class="(?:med )?magnet-link"`)
-	forumPagesRe   = regexp.MustCompile(`Страница <b>1</b> из <b>([0-9]+)</b>`)
-	serialWordsRe  = regexp.MustCompile(`(?i)(Сезон|Серии)`)
-	firstNamePart  = regexp.MustCompile(`(\[|/|\(|\|)`)
+	rowDateRe     = regexp.MustCompile(`<p>([0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2})</p>`)
+	rowTopicIDRe  = regexp.MustCompile(`<a id="tt-([0-9]+)"`)
+	rowTitleRe    = regexp.MustCompile(`<a id="tt-[0-9]+"[^>]+>([^\n\r]+)</a>`)
+	rowSidRe      = regexp.MustCompile(`<span class="seedmed"[^>]*><b>([0-9]+)</b>`)
+	rowPirRe      = regexp.MustCompile(`<span class="leechmed"[^>]*><b>([0-9]+)</b>`)
+	rowSizeRe     = regexp.MustCompile(`dl-stub">([^<]+)</a>`)
+	topicTimeRe   = regexp.MustCompile(`<a class="p-link small" href="viewtopic\.php\?t=[^"]+">([^<]+)</a>`)
+	topicMagnetRe = regexp.MustCompile(`href="(magnet:[^"]+)" class="(?:med )?magnet-link"`)
+	forumPagesRe  = regexp.MustCompile(`Страница <b>1</b> из <b>([0-9]+)</b>`)
+	serialWordsRe = regexp.MustCompile(`(?i)(Сезон|Серии)`)
+	firstNamePart = regexp.MustCompile(`(\[|/|\(|\|)`)
 )
 
 type Task struct {
@@ -73,15 +73,15 @@ type Parser struct {
 	SlowClient *http.Client
 	Fetcher    *core.Fetcher
 	loc        *time.Location
-	mu          sync.Mutex
-	working     bool
-	allWork     bool
-	latestMu    sync.Mutex
-	tasks       map[string][]Task
-	cookieMu sync.Mutex
-	cookie   string
-	cookieT  time.Time
-	domain   string
+	mu         sync.Mutex
+	working    bool
+	allWork    bool
+	latestMu   sync.Mutex
+	tasks      map[string][]Task
+	cookieMu   sync.Mutex
+	cookie     string
+	cookieT    time.Time
+	domain     string
 }
 
 type ParseResult struct {

@@ -49,23 +49,23 @@ var (
 	cleanupSpaceRe = regexp.MustCompile(`[\n\r\t\x{00A0} ]+`)
 	firstNamePart  = regexp.MustCompile(`(\[|/|\(|\|)`)
 
-	inlineYearRe = regexp.MustCompile(`^([^/]+) / ([^/]+) / ([^/\(]+) \(([0-9]{4})\)`)
+	inlineYearRe  = regexp.MustCompile(`^([^/]+) / ([^/]+) / ([^/\(]+) \(([0-9]{4})\)`)
 	inlineYearRe2 = regexp.MustCompile(`^([^/\(]+) / ([^/\(]+) \(([0-9]{4})\)`)
 	inlineYearRe3 = regexp.MustCompile(`^([^/\(]+) \(([0-9]{4})\)`)
 	inlineYearRe4 = regexp.MustCompile(`^([^/]+) \[[^\]]+\] \(([0-9]{4})(\)|-)`)
 	inlineYearRe5 = regexp.MustCompile(`^([^/]+) / ([^/]+) / ([^/\[]+) \[[^\]]+\] +\(([0-9]{4})(\)|-)`)
 	inlineYearRe6 = regexp.MustCompile(`^([^/]+) / ([^/\[]+) \[[^\]]+\] +\(([0-9]{4})(\)|-)`)
 	inlineYearRe7 = regexp.MustCompile(`^([^/\[]+) \[[^\]]+\] +\(([0-9]{4})(\)|-)`)
-	mp10Re = regexp.MustCompile(`(?is)href="/?download/([0-9]+)"`)
-	mp1Re = regexp.MustCompile(`(?is)<td>([0-9]+ [^ ]+ [0-9]+)</td><td[^>]*>`)
-	mp2Re = regexp.MustCompile(`(?is)href="/(torrent/[0-9]+)`)
-	mp3Re = regexp.MustCompile(`(?is)class="url"[^>]*>([^<]+)</a>`)
-	mp4Re = regexp.MustCompile(`(?is)class="url">([^<]+)</a></td>`)
-	mp5Re = regexp.MustCompile(`(?is)<td align="right">([^<\n\r]+)`)
-	mp6Re = regexp.MustCompile(`(?is)alt="S">\s*<font [^>]+>([0-9]+)</font>`)
-	mp7Re = regexp.MustCompile(`(?is)alt="S"[^>]*>\s*<font[^>]*>([0-9]+)`)
-	mp8Re = regexp.MustCompile(`(?is)alt="L">\s*<font [^>]+>([0-9]+)</font>`)
-	mp9Re = regexp.MustCompile(`(?is)alt="L"[^>]*>\s*<font[^>]*>([0-9]+)`)
+	mp10Re        = regexp.MustCompile(`(?is)href="/?download/([0-9]+)"`)
+	mp1Re         = regexp.MustCompile(`(?is)<td>([0-9]+ [^ ]+ [0-9]+)</td><td[^>]*>`)
+	mp2Re         = regexp.MustCompile(`(?is)href="/(torrent/[0-9]+)`)
+	mp3Re         = regexp.MustCompile(`(?is)class="url"[^>]*>([^<]+)</a>`)
+	mp4Re         = regexp.MustCompile(`(?is)class="url">([^<]+)</a></td>`)
+	mp5Re         = regexp.MustCompile(`(?is)<td align="right">([^<\n\r]+)`)
+	mp6Re         = regexp.MustCompile(`(?is)alt="S">\s*<font [^>]+>([0-9]+)</font>`)
+	mp7Re         = regexp.MustCompile(`(?is)alt="S"[^>]*>\s*<font[^>]*>([0-9]+)`)
+	mp8Re         = regexp.MustCompile(`(?is)alt="L">\s*<font [^>]+>([0-9]+)</font>`)
+	mp9Re         = regexp.MustCompile(`(?is)alt="L"[^>]*>\s*<font[^>]*>([0-9]+)`)
 )
 
 var categories = []string{"80", "79", "6", "5", "55", "57", "76"}
@@ -302,20 +302,20 @@ func parsePageHTML(host, cat, body string) []filedb.TorrentDetails {
 		sid, _ := strconv.Atoi(sidRaw)
 		pir, _ := strconv.Atoi(pirRaw)
 		out = append(out, filedb.TorrentRecord{
-			TrackerName: trackerName,
-			Types: types,
-			URL: strings.TrimRight(host, "/") + "/" + strings.TrimLeft(urlPath, "/"),
-			Title: title,
-			Sid: sid,
-			Pir: pir,
-			SizeName: sizeName,
-			CreateTime: createTime.UTC().Format(time.RFC3339Nano),
-			UpdateTime: now,
-			Name: name,
+			TrackerName:  trackerName,
+			Types:        types,
+			URL:          strings.TrimRight(host, "/") + "/" + strings.TrimLeft(urlPath, "/"),
+			Title:        title,
+			Sid:          sid,
+			Pir:          pir,
+			SizeName:     sizeName,
+			CreateTime:   createTime.UTC().Format(time.RFC3339Nano),
+			UpdateTime:   now,
+			Name:         name,
 			OriginalName: original,
-			Relased: relased,
-			SearchName: core.SearchName(name),
-			SearchOrig: core.SearchName(firstNonEmpty(original, name)),
+			Relased:      relased,
+			SearchName:   core.SearchName(name),
+			SearchOrig:   core.SearchName(firstNonEmpty(original, name)),
 		}.ToMap())
 	}
 	return out
@@ -531,7 +531,6 @@ func parseCreateTime(line, layout string) time.Time {
 	return tm
 }
 
-
 func fileTime(t filedb.TorrentDetails) time.Time {
 	for _, key := range []string{"updateTime", "createTime"} {
 		s := strings.TrimSpace(asString(t[key]))
@@ -580,4 +579,3 @@ func isDisabled(values []string, tracker string) bool {
 	}
 	return false
 }
-

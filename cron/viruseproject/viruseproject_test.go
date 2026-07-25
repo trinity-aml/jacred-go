@@ -9,48 +9,48 @@ import (
 
 func TestBuildRecordsFromFixtures(t *testing.T) {
 	cases := []struct {
-		name        string
-		path        string
-		cat         string
+		name            string
+		path            string
+		cat             string
 		wantTitlePrefix string
-		wantQualities  int
-		wantYear    int
-		wantVideoType string
+		wantQualities   int
+		wantYear        int
+		wantVideoType   string
 	}{
 		{
-			name: "Witcher 2025 (year in title, 2 qualities)",
-			path: "/home/trinity1980/11111/Viruse Project - Ведьмак_ Сирены глубин _ The Witcher_ Sirens of the Deep _ 2025.html",
-			cat: "cartoons",
+			name:            "Witcher 2025 (year in title, 2 qualities)",
+			path:            "/home/trinity1980/11111/Viruse Project - Ведьмак_ Сирены глубин _ The Witcher_ Sirens of the Deep _ 2025.html",
+			cat:             "cartoons",
 			wantTitlePrefix: "Ведьмак: Сирены глубин",
-			wantQualities: 2,
-			wantYear: 2025,
-			wantVideoType: "WEBRip",
+			wantQualities:   2,
+			wantYear:        2025,
+			wantVideoType:   "WEBRip",
 		},
 		{
-			name: "Apex 2026 (year in title, 2 qualities)",
-			path: "/home/trinity1980/11111/Viruse Project - Вершина _ Apex _ 2026.html",
-			cat: "movies",
+			name:            "Apex 2026 (year in title, 2 qualities)",
+			path:            "/home/trinity1980/11111/Viruse Project - Вершина _ Apex _ 2026.html",
+			cat:             "movies",
 			wantTitlePrefix: "Вершина",
-			wantQualities: 2,
-			wantYear: 2026,
-			wantVideoType: "WEB-DLRip",
+			wantQualities:   2,
+			wantYear:        2026,
+			wantVideoType:   "WEB-DLRip",
 		},
 		{
-			name: "Hell's Kitchen (no year in title)",
-			path: "/home/trinity1980/11111/Viruse Project - Адская Кухня 11 (Hell's Kitchen 11).html",
-			cat: "reality-show",
+			name:            "Hell's Kitchen (no year in title)",
+			path:            "/home/trinity1980/11111/Viruse Project - Адская Кухня 11 (Hell's Kitchen 11).html",
+			cat:             "reality-show",
 			wantTitlePrefix: "Адская Кухня 11",
-			wantQualities: 1,
-			wantYear: 2013,
-			wantVideoType: "PDTVRip",
+			wantQualities:   1,
+			wantYear:        2013,
+			wantVideoType:   "PDTVRip",
 		},
 		{
-			name: "Peaky Blinders 2026 (1 quality)",
-			path: "/home/trinity1980/11111/Viruse Project - Острые козырьки_ Бессмертный человек _ Peaky Blinders_ The Immortal Man _ 2026.html",
-			cat: "movies",
+			name:            "Peaky Blinders 2026 (1 quality)",
+			path:            "/home/trinity1980/11111/Viruse Project - Острые козырьки_ Бессмертный человек _ Peaky Blinders_ The Immortal Man _ 2026.html",
+			cat:             "movies",
 			wantTitlePrefix: "Острые козырьки: Бессмертный человек",
-			wantQualities: 1,
-			wantYear: 2026,
+			wantQualities:   1,
+			wantYear:        2026,
 		},
 	}
 	for _, tc := range cases {
@@ -89,7 +89,7 @@ func TestBuildRecordsFromFixtures(t *testing.T) {
 
 func TestParseNames(t *testing.T) {
 	cases := []struct {
-		raw  string
+		raw    string
 		wantRu string
 		wantEn string
 	}{
@@ -110,8 +110,8 @@ func TestParseNames(t *testing.T) {
 
 func TestParseRussianDate(t *testing.T) {
 	cases := []struct {
-		raw       string
-		wantYear  int
+		raw      string
+		wantYear int
 	}{
 		{"Четверг, 13 Февраль 2025 00:00", 2025},
 		{"Вторник, 12 Май 2026 00:00", 2026},

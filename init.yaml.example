@@ -1,10 +1,19 @@
 # jacred-go configuration example
 # Copy to init.yaml and fill in credentials for trackers you want to use.
 # Trackers without credentials can still be parsed for publicly available data.
+#
+# Comment style: inline comments are supported — a `#` preceded by whitespace
+# starts a comment. A `#` inside a token is kept (`u: user#1`), and to keep one
+# after a space put the value in double quotes (`p: "pa # word"`).
+# Comments are written on their own line throughout this file for readability.
+#
+# Note: parsing is NOT scheduled by jacred itself. Use the `crontab` file in the
+# repo root (system cron -> curl to /cron/<tracker>/...) to drive parse runs.
 
 # ── Server ────────────────────────────────────────────────────────────────────
 
-listenip: "127.0.0.1"     # "any" to listen on all interfaces (0.0.0.0)
+# "any" listens on all interfaces (0.0.0.0)
+listenip: "127.0.0.1"
 listenport: 9117
 
 # API key for /api/v1.0/* and /api/v2.0/* endpoints (Jackett/Sonarr/Radarr).
@@ -18,95 +27,134 @@ devkey: ""
 # ── Database ──────────────────────────────────────────────────────────────────
 
 # Directory nesting depth for bucket files under Data/fdb/
-# 2 (default) creates Data/fdb/ab/cdef…  — recommended for large databases
-# 1 creates Data/fdb/a/abcd…
+# 2 (default) creates Data/fdb/ab/cdef...  — recommended for large databases
+# 1 creates Data/fdb/a/abcd...
 fdbPathLevels: 2
 
 # Merge duplicate entries for the same title from different trackers
 mergeduplicates: true
 mergenumduplicates: true
 
+# Max number of bucket files read concurrently during a search
+maxreadfile: 200
+
 # ── Logging ───────────────────────────────────────────────────────────────────
 
-log: true           # General application log to stdout
-logParsers: false   # Verbose per-request debug log for parsers
-logFdb: false       # Log every FileDB read/write operation
+# General application log to stdout
+log: true
+# Verbose per-request debug log for parsers
+logParsers: false
+# Log every FileDB read/write operation
+logFdb: false
 
-# Per-tracker parse logs written to Data/log/<tracker>.log
-logFdbRetentionDays: 7    # Delete log files older than N days (0 = keep forever)
-logFdbMaxSizeMb: 100      # Max total size of all log files in MB (0 = unlimited)
-logFdbMaxFiles: 0         # Max number of log files per tracker (0 = unlimited)
+# Per-tracker parse logs are written to Data/log/<tracker>.log
+# Delete log files older than N days (0 = keep forever)
+logFdbRetentionDays: 7
+# Max total size of all log files in MB (0 = unlimited)
+logFdbMaxSizeMb: 100
+# Max number of log files per tracker (0 = unlimited)
+logFdbMaxFiles: 0
 
 # ── API access ────────────────────────────────────────────────────────────────
 
-openstats: true       # Enable /stats/* endpoints without API key
-opensync: true        # Enable /sync/fdb/torrents (V2 protocol) without API key
-opensync_v1: false    # Enable /sync/torrents (V1 legacy protocol) without API key
-web: true             # Serve index.html and stats.html
+# Enable /stats/* endpoints without API key
+openstats: true
+# Enable /sync/fdb/torrents (V2 protocol) without API key
+opensync: true
+# Enable /sync/torrents (V1 legacy protocol) without API key
+opensync_v1: false
+# Serve index.html and stats.html
+web: true
 
 # ── Stats ─────────────────────────────────────────────────────────────────────
 
-timeStatsUpdate: 90   # Rebuild Data/temp/stats.json every N seconds
+# Rebuild Data/temp/stats.json every N seconds
+timeStatsUpdate: 90
 
 # ── Memory ────────────────────────────────────────────────────────────────────
 # Controls Go runtime memory usage. Useful on VPS with limited RAM.
 #
-# memlimit: sets a hard cap on the Go heap in MB.
+# memlimit: hard cap on the Go heap, in MB.
 #   When the heap approaches this limit the GC runs very aggressively to stay
 #   under it — this prevents OOM-kill at the cost of more CPU for GC.
 #   Leave at 0 (disabled) if you have plenty of RAM.
 #   Recommended for 2 GB VPS: 1500  (leaves ~500 MB for the OS)
 #   Recommended for 1 GB VPS:  700
 #
-# gcpercent: controls how often the GC runs (Go's GOGC knob).
+# gcpercent: how often the GC runs (Go's GOGC knob).
 #   100 = GC when heap doubles since last collection (Go default).
 #    50 = GC when heap grows 50% — twice as frequent, lower peak usage.
 #    20 = very aggressive; suitable for very tight memory budgets.
 #   -1  = disable GC entirely (not recommended).
 
-memlimit: 0       # MB — 0 means no limit
-gcpercent: 50     # default 50 (Go's built-in default is 100)
+memlimit: 0
+gcpercent: 50
 
 # ── In-memory bucket cache (Evercache) ────────────────────────────────────────
 # Keeps recently opened buckets in memory to reduce disk reads on searches.
 # The cache is capped at maxOpenWriteTask entries; when full the oldest
 # dropCacheTake entries are evicted. Stale entries (older than validHour) are
-# swept every 10 minutes by the background evercache cron.
+# swept periodically by the background evercache cron.
+#
+#   validHour        — cache TTL in hours; entries older than this are evicted
+#   maxOpenWriteTask — max buckets held in memory (reduce to 200-300 on 1 GB VPS)
+#   dropCacheTake    — how many buckets to evict when the cap is hit
 
 evercache:
   enable: true
-  validHour: 1          # Cache TTL in hours; entries older than this are evicted
-  maxOpenWriteTask: 500 # Max buckets held in memory (reduce to 200-300 on 1 GB VPS)
-  dropCacheTake: 100    # How many buckets to evict when the cap is hit
+  validHour: 1
+  maxOpenWriteTask: 500
+  dropCacheTake: 100
 
 # ── CloudFlare bypass (flaresolverr-go) ──────────────────────────────────────
 # Built-in CF challenge solver — no external Docker service needed.
-# Embedded browser solves CF challenges, cookies cached 60 min and reused via
-# standard HTTP where possible.
+# An embedded browser solves CF challenges; cookies are cached per domain in
+# Data/cookie/<domain>.json and reused via standard HTTP where possible.
 #
 # Auto-detect: any tracker that returns a CF challenge during a standard
-# request is automatically promoted to flaresolverr routing for future calls;
-# the registry persists in Data/temp/cf_auto.json (30-day TTL). Setting
-# fetchmode: "flaresolverr" below is now an optional hint that skips the very
-# first detection roundtrip for known CF sites (megapeer, bitru, anistar,
-# anifilm, mazepa, torrentby).
+# request is automatically promoted to flaresolverr routing for future calls.
+# The registry persists in Data/temp/cf_auto.json (30-day TTL, refreshed on
+# each successful solve, ages out if the site stops challenging).
+#
+# So `fetchmode: "flaresolverr"` below is only a hint that skips the very first
+# detection roundtrip — it is NOT the authority on how a tracker is routed.
+# To see what is actually going through the browser: GET /admin/cf-domains.
+# Currently hinted: megapeer, nnmclub, bitru, toloka, mazepa, selezen,
+# anistar, anifilm.
+#
 # Requires Xvfb on headless servers: apt install xvfb
+#
+#   headless        — true = headless, false = visible (needs Xvfb on servers)
+#   browser_backend — geckodriver (Camoufox, recommended for CF)
+#                     or chromedriver (Chrome for Testing)
+#   browser_path    — browser binary. Empty + geckodriver = auto-download
+#                     Camoufox (~680 MB, one-time) to ~/.cache.
+#                     Empty + chromedriver = use system Chrome.
+#   driver_path     — custom geckodriver/chromedriver path.
+#                     Empty = auto-download a matching driver.
+#   chrome_version  — pin Chrome for Testing to a major (e.g. "146").
+#                     Only used with browser_backend: chromedriver.
 
 flaresolverr_go:
-  headless: true              # true = headless mode, false = visible (needs Xvfb on servers)
-  browser_backend: geckodriver # geckodriver (Camoufox, recommended for CF) | chromedriver (Chrome for Testing)
-  browser_path: ""            # Browser binary. Empty + geckodriver = auto-download Camoufox (~680 MB, one-time) to ~/.cache. Empty + chromedriver = use system Chrome.
-  driver_path: ""             # Custom geckodriver/chromedriver path. Empty = library auto-downloads a matching driver.
-  chrome_version: ""          # Pin Chrome for Testing to a major (e.g. "146") — only used with browser_backend: chromedriver. Empty = use system Chrome.
+  headless: true
+  browser_backend: geckodriver
+  browser_path: ""
+  driver_path: ""
+  chrome_version: ""
 
 # ── Multi-instance sync ───────────────────────────────────────────────────────
 # Pull torrent data from another jacred instance running elsewhere.
 
-syncapi: ""           # URL of remote instance, e.g. "http://192.168.1.10:9117"
-timeSync: 60          # Sync interval in seconds
-timeSyncSpidr: 60     # Spider (metadata-only) sync interval in seconds
-syncsport: true       # Include sport torrents in sync
-syncspidr: true       # Enable spider mode (only url/sid/pir, lighter payload)
+# URL of the remote instance, e.g. "http://192.168.1.10:9117"
+syncapi: ""
+# Sync interval in seconds
+timeSync: 60
+# Spider (metadata-only) sync interval in seconds
+timeSyncSpidr: 60
+# Include sport torrents in sync
+syncsport: true
+# Enable spider mode (only url/sid/pir, lighter payload)
+syncspidr: true
 
 # Sync only these trackers from the remote (empty list = sync all)
 synctrackers: []
@@ -118,48 +166,91 @@ synctrackers: []
 disable_trackers: []
 #  - "Mazepa"
 
+# ── Media tracks (ffprobe enrichment) ─────────────────────────────────────────
+# When enabled, jacred downloads a static ffprobe into Data/ and inspects
+# torrent contents to record audio/subtitle track info on each record.
+# Disabled by default — it costs bandwidth and CPU.
+#
+#   tracksmod    — 0 = default mode
+#   tracksdelay  — ms between analysis attempts
+#   tracksatempt — retries per torrent before giving up
+#   trackslog    — verbose per-torrent analysis log
+
+tracks: false
+tracksmod: 0
+tracksdelay: 20000
+tracksatempt: 5
+trackslog: false
+
+# Minutes between passes for the primary (task0) and secondary (task1) tasks
+tracksinterval:
+  task0: 180
+  task1: 60
+
+# Deprecated, kept for init.yaml back-compat — unused since the native ffprobe
+# analyzer replaced the TorrServer round-trip:
+# trackscategory: "jacred"
+# tsuri:
+#   - "http://127.0.0.1:8090"
+
 # ── Tracker sections ──────────────────────────────────────────────────────────
 # Each section is optional — defaults are used if omitted.
-# parseDelay: milliseconds between requests within a single parse call.
-#   For trackers with many categories (Rutor=11, Kinozal=25, Rutracker=64+)
-#   this prevents rate-limit bans. Set to 0 to disable.
-# reqMinute: soft limit on requests per minute (0 = no limit).
+#
+# Common keys for every tracker:
+#   host               — base URL; change if the tracker moves domain
+#   parseDelay         — ms between requests within a single parse call.
+#                        For trackers with many categories (Rutor=11,
+#                        Kinozal=25, Rutracker=64+) this prevents rate-limit
+#                        bans. Set to 0 to disable.
+#   reqMinute          — soft limit on requests per minute (0 = no limit)
+#   fetchmode          — "flaresolverr" to skip CF auto-detection (see above)
+#   insecureSkipVerify — accept invalid/expired TLS certificates
+#   useproxy           — route through a matching globalproxy entry
+#   log                — per-tracker verbose log
+#   cookie             — static session cookie (alternative to login: u/p)
+#   login: {u, p}      — credentials; the parser logs in and persists the
+#                        session to Data/cookie/<domain>.json, re-logging in
+#                        automatically when the cookie expires
 
 # ── Rutor ─────────────────────────────────────────────────────────────────────
-# Client: standard HTTP  |  Auth: not required
-# Parses 11 categories per page call. parseDelay applies between categories.
+# Auth: not required
+# Parses 11 categories per page call; parseDelay applies between categories.
 # Supports: parse?page=N, updatetasksparse, parsealltask, parselatest?pages=N
 
 Rutor:
   host: "https://rutor.is"
-  parseDelay: 7000    # ms between category requests (11 categories per parse)
+  parseDelay: 7000
   reqMinute: 8
 
 # ── Megapeer ──────────────────────────────────────────────────────────────────
-# Client: standard or flaresolverr  |  Auth: not required
+# Auth: not required  |  CF-protected
 # Supports: parse?maxpage=N
 
 Megapeer:
   host: "https://megapeer.vip"
-  fetchmode: "flaresolverr"   # CF-protected, uses flaresolverr-go
+  fetchmode: "flaresolverr"
   parseDelay: 3000
   reqMinute: 10
 
 # ── TorrentBy ─────────────────────────────────────────────────────────────────
-# Client: standard or flaresolverr  |  Auth: not required
+# Auth: login supported (session persisted, auto-renewed on expiry)
+# Uses a certificate from an unknown CA — keep insecureSkipVerify: true.
 # Supports: parse?page=N, updatetasksparse, parsealltask, parselatest?pages=N
 
 TorrentBy:
   host: "https://torrent.by"
-  fetchmode: "flaresolverr"   # CF-protected, uses flaresolverr-go
-  insecureSkipVerify: true    # torrent.by uses certificate from unknown CA
+  insecureSkipVerify: true
   parseDelay: 5000
   reqMinute: 8
+  login:
+    u: ""
+    p: ""
 
 # ── Kinozal ───────────────────────────────────────────────────────────────────
-# Client: standard HTTP  |  Auth: LOGIN REQUIRED for magnet links
+# Auth: LOGIN REQUIRED for magnet links
 # Without credentials torrents are fetched but magnets won't be resolved.
-# Parses 25 categories × year range. parseDelay critical to avoid bans.
+# A static `cookie:` may be used instead of login: u/p.
+# Parses 25 categories x year range; parseDelay is critical to avoid bans.
 # Supports: parse?page=N, updatetasksparse, parsealltask, parselatest?pages=N
 
 Kinozal:
@@ -167,84 +258,91 @@ Kinozal:
   parseDelay: 7000
   reqMinute: 6
   login:
-    u: ""   # your kinozal.tv username
-    p: ""   # your kinozal.tv password
+    u: ""
+    p: ""
 
 # ── NNMClub ───────────────────────────────────────────────────────────────────
-# Client: standard HTTP  |  Auth: COOKIE REQUIRED for magnet links
-# Without cookie only metadata is available (no magnet).
-# Parses 10 categories. Supports task-based parsing.
+# Auth: REQUIRED for magnet links  |  CF-protected
+# Either set login: u/p (preferred — the session is renewed automatically),
+# or paste a static cookie ("bb_session=...; bb_data=...").
+# Without either, only metadata is available.
+# Supports: parse?page=N, updatetasksparse, parsealltask, parselatest?pages=N
 
 NNMClub:
   host: "https://nnmclub.to"
-  cookie: ""    # Paste full cookie string from browser: "bb_session=…; bb_data=…"
+  fetchmode: "flaresolverr"
+  cookie: ""
   parseDelay: 5000
   reqMinute: 8
+  login:
+    u: ""
+    p: ""
 
 # ── Bitru ─────────────────────────────────────────────────────────────────────
-# Client: standard or flaresolverr  |  Auth: not required
+# Auth: not required  |  CF-protected
 # Supports: parse?page=N, updatetasksparse, parsealltask, parselatest?pages=N
+#
+# The bitruapi parser (/cron/bitruapi/parse?limit=N and
+# /cron/bitruapi/parsefromdate?lastnewtor=YYYY-MM-DD) is a separate public-API
+# parser for the same site. It has NO config section of its own — it reads the
+# Bitru settings below. A "Bitruapi:" section in init.yaml is ignored.
 
 Bitru:
   host: "https://bitru.org"
-  fetchmode: "flaresolverr"   # CF-protected, uses flaresolverr-go
+  fetchmode: "flaresolverr"
   parseDelay: 3000
   reqMinute: 10
 
-# ── BitruAPI ──────────────────────────────────────────────────────────────────
-# Client: standard HTTP  |  Auth: not required (public API)
-# API-based, no page scraping. parse?limit=N or parsefromdate?lastnewtor=YYYY-MM-DD
-
-Bitruapi:
-  host: "https://bitru.org"
-  parseDelay: 0
-  reqMinute: 30
-
 # ── Toloka ────────────────────────────────────────────────────────────────────
-# Client: standard HTTP  |  Auth: login recommended (required for full access)
-# Supports task-based parsing.
+# Auth: login recommended (required for full access)  |  CF-protected
+# Supports: parse?page=N, updatetasksparse, parsealltask, parselatest?pages=N
 
 Toloka:
   host: "https://toloka.to"
+  fetchmode: "flaresolverr"
   parseDelay: 5000
   reqMinute: 6
   login:
-    u: ""   # your toloka.to username
-    p: ""   # your toloka.to password
+    u: ""
+    p: ""
 
 # ── Mazepa ────────────────────────────────────────────────────────────────────
-# Client: standard or flaresolverr  |  Auth: login optional
-# Parses 47+ categories. High parseDelay recommended.
+# Auth: login optional  |  CF-protected
+# Parses 47+ categories — a high parseDelay is recommended.
+# Supports: parse?page=N, updatetasksparse, parsealltask, parselatest?pages=N
 
 Mazepa:
   host: "https://mazepa.to"
-  fetchmode: "flaresolverr"   # CF-protected, uses flaresolverr-go
-  parseDelay: 10000   # many categories — be conservative
+  parseDelay: 10000
+  fetchmode: "flaresolverr"
   reqMinute: 6
   login:
     u: ""
     p: ""
 
 # ── Rutracker ─────────────────────────────────────────────────────────────────
-# Client: standard HTTP  |  Auth: LOGIN REQUIRED
-# Without login the site returns nothing useful.
-# Parses 64+ categories × year range. Very long full parse — use parselatest daily.
+# Auth: LOGIN REQUIRED — without login the site returns nothing useful.
+# Parses 64+ categories x year range. A full parse is very long — use
+# parselatest daily. Strict rate limits: do not lower parseDelay.
 # Supports: parse?page=N, updatetasksparse, parsealltask, parselatest?pages=N
 
 Rutracker:
   host: "https://rutracker.org"
-  parseDelay: 8000    # strict rate limits — do not lower this
+  parseDelay: 8000
   reqMinute: 6
   login:
-    u: ""   # your rutracker.org username
-    p: ""   # your rutracker.org password
+    u: ""
+    p: ""
 
 # ── Selezen ───────────────────────────────────────────────────────────────────
-# Client: standard HTTP  |  Auth: login optional
-# Supports: parse?parseFrom=N&parseTo=M
+# Auth: login optional  |  CF-protected
+# The host below is the built-in default; the site has also been reachable as
+# https://selezen.top — set whichever currently resolves.
+# Supports: parse?page=N, updatetasksparse, parsealltask, parselatest?pages=N
 
 Selezen:
   host: "https://use.selezen.club"
+  fetchmode: "flaresolverr"
   parseDelay: 3000
   reqMinute: 10
   login:
@@ -252,17 +350,18 @@ Selezen:
     p: ""
 
 # ── Lostfilm ──────────────────────────────────────────────────────────────────
-# Client: standard HTTP  |  Auth: cookie optional (required for HD quality links)
-# Multiple parse modes: parse, parsepages, parseseasonpacks, verifypage
+# Auth: cookie optional (required for HD quality links); no login: u/p support.
+# Cookie format: "lf_session=..."
+# Supports: parse, parsepages?pageTo=N, parseseasonpacks, verifypage, stats
 
 Lostfilm:
   host: "https://www.lostfilm.tv"
-  cookie: ""    # optional: "lf_session=…"
+  cookie: ""
   parseDelay: 3000
   reqMinute: 10
 
 # ── Animelayer ────────────────────────────────────────────────────────────────
-# Client: standard HTTP  |  Auth: login optional
+# Auth: login optional
 # Supports: parse?maxpage=N
 
 Animelayer:
@@ -274,7 +373,7 @@ Animelayer:
     p: ""
 
 # ── Anidub ────────────────────────────────────────────────────────────────────
-# Client: standard HTTP  |  Auth: not required
+# Auth: not required
 # Supports: parse?parseFrom=N&parseTo=M
 
 Anidub:
@@ -283,9 +382,9 @@ Anidub:
   reqMinute: 15
 
 # ── Aniliberty ────────────────────────────────────────────────────────────────
-# Client: standard HTTP  |  Auth: not required (public RSS/API)
+# Auth: not required (public RSS/API)
 # Supports: parse?parseFrom=N&parseTo=M  (response includes lastPage)
-# Note: section key is "Aniliberty" but "Anilibria" is also accepted
+# Note: the section key is "Aniliberty", but "Anilibria" is also accepted.
 
 Aniliberty:
   host: "https://aniliberty.top"
@@ -293,9 +392,9 @@ Aniliberty:
   reqMinute: 20
 
 # ── Knaben ────────────────────────────────────────────────────────────────────
-# Client: standard HTTP  |  Auth: not required (public JSON API)
-# API-based search — parseDelay not used between requests.
-# parse?from=0&size=300&pages=1&query=…&hours=24&orderBy=date&categories=…
+# Auth: not required (public JSON API)
+# API-based search — parseDelay is not used between requests.
+# parse?from=0&size=300&pages=1&query=...&hours=24&orderBy=date&categories=...
 
 Knaben:
   host: "https://api.knaben.org"
@@ -303,27 +402,30 @@ Knaben:
   reqMinute: 30
 
 # ── Anistar ───────────────────────────────────────────────────────────────────
-# Client: standard or flaresolverr  |  Auth: not required
+# Auth: not required  |  CF-protected
 # Supports: parse?limit_page=N  (0 = all pages, default 0)
 
 Anistar:
   host: "https://anistar.org"
-  fetchmode: "flaresolverr"   # CF-protected, uses flaresolverr-go
+  fetchmode: "flaresolverr"
   parseDelay: 3000
   reqMinute: 10
 
 # ── Anifilm ───────────────────────────────────────────────────────────────────
-# Client: standard or flaresolverr  |  Auth: not required
+# Auth: login optional (a static cookie is also accepted)  |  CF-protected
 # Supports: parse?fullparse=false (incremental) or fullparse=true (all pages)
 
 Anifilm:
   host: "https://anifilm.pro"
-  fetchmode: "flaresolverr"   # CF-protected, uses flaresolverr-go
+  fetchmode: "flaresolverr"
   parseDelay: 3000
   reqMinute: 10
+  login:
+    u: ""
+    p: ""
 
 # ── Leproduction ──────────────────────────────────────────────────────────────
-# Client: standard HTTP  |  Auth: not required
+# Auth: not required
 # Supports: parse?limit_page=N  (0 = all pages, default 0)
 
 Leproduction:
@@ -331,23 +433,9 @@ Leproduction:
   parseDelay: 3000
   reqMinute: 10
 
-# ── Baibako ───────────────────────────────────────────────────────────────────
-# Client: standard HTTP  |  Auth: LOGIN REQUIRED
-# Without credentials returns no useful data.
-# Supports: parse?maxpage=N  (default 10)
-
-Baibako:
-  host: "http://baibako.tv"
-  parseDelay: 5000
-  reqMinute: 8
-  login:
-    u: ""   # your baibako.tv username
-    p: ""   # your baibako.tv password
-
 # ── Korsars ───────────────────────────────────────────────────────────────────
-# Client: standard HTTP  |  Auth: LOGIN REQUIRED
+# Auth: LOGIN REQUIRED — without credentials the site shows no torrent metadata.
 # phpBB-mod tracker (films/series/cartoons), magnets inline in listings.
-# Without credentials the site won't show torrent metadata.
 # 24 categories: 6 films + 12 series + 6 cartoons (forum IDs hardcoded).
 # Supports: parse?page=N, updatetasksparse, parsealltask, parselatest?pages=N
 
@@ -356,16 +444,17 @@ Korsars:
   parseDelay: 5000
   reqMinute: 8
   login:
-    u: ""   # your korsars.pro username
-    p: ""   # your korsars.pro password
+    u: ""
+    p: ""
 
 # ── Ultradox ──────────────────────────────────────────────────────────────────
-# Client: standard HTTP  |  Auth: not required
-# Listing → detail magnet pull. Each detail page exposes 1–3 quality variants;
-# the parser stores one record per variant (sid=1, pir=1 placeholders).
+# Auth: not required
+# Listing -> detail magnet pull. Listing rows carry placeholder magnets (empty
+# btih), so the parser follows each detail URL; a detail page exposes 1-3
+# quality variants and one record is stored per variant (sid=1, pir=1).
 # 6 sections: serial-hd, hd, rufilm, camrip, webrips, anime.
-# TLS certificate is currently expired upstream — keep insecureSkipVerify: true
-# until they renew.
+# The TLS certificate is currently expired upstream — keep
+# insecureSkipVerify: true until they renew it.
 # Supports: parse?page=N, updatetasksparse, parsealltask, parselatest?pages=N
 
 Ultradox:
@@ -374,13 +463,23 @@ Ultradox:
   parseDelay: 5000
   reqMinute: 8
 
+# ── Viruseproject ─────────────────────────────────────────────────────────────
+# Auth: not required
+# Replaced the removed Baibako parser (same niche: series with translations).
+# Supports: parse?limit_page=N  (1 = first page only, 0 = all pages)
+
+Viruseproject:
+  host: "https://viruseproject.tv"
+  parseDelay: 7000
+  reqMinute: 8
+
 # ── Proxy ─────────────────────────────────────────────────────────────────────
 # Route specific tracker requests through a proxy.
 # Set useproxy: true on the tracker section to activate.
 # "pattern" is a regex matched against the tracker host URL.
 
 # globalproxy:
-#   - pattern: "\.onion"
+#   - pattern: \.onion
 #     list:
 #       - "socks5://127.0.0.1:9050"
 #     useAuth: false
