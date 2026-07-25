@@ -1,0 +1,83 @@
+name: release
+
+# Runs only when a version tag is pushed. There is deliberately no trigger on
+# branch pushes or pull requests, and no workflow_dispatch: tagging is the one
+# action that publishes a release.
+#
+#   git tag -a v1.2.3 -m "..." && git push origin v1.2.3
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write # required to create the release and upload assets
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      # A go.work in the tree would silently swap a pinned dependency for a
+      # local checkout. It is gitignored, so this is belt-and-braces.
+      GOWORK: off
+      CGO_ENABLED: '0'
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # build_all.sh derives the version from `git describe --tags`, which
+          # needs full history and the tag objects.
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Download dependencies
+        run: go mod download
+
+      # go.mod/go.sum must already be consistent: a release should build from
+      # exactly what was tagged, never from a graph resolved at build time.
+      - name: Verify go.mod and go.sum are tidy
+        run: |
+          cp go.mod go.mod.orig
+          cp go.sum go.sum.orig
+          go mod tidy
+          if ! diff -q go.mod go.mod.orig >/dev/null || ! diff -q go.sum go.sum.orig >/dev/null; then
+            echo "::error::go.mod/go.sum are not tidy — run 'go mod tidy' and commit the result before tagging"
+            diff -u go.mod.orig go.mod || true
+            diff -u go.sum.orig go.sum || true
+            exit 1
+          fi
+          rm -f go.mod.orig go.sum.orig
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test ./...
+
+      - name: Cross-compile all targets
+        env:
+          SKIP_ARCHIVE: '1' # binaries are published individually
+        run: ./build_all.sh
+
+      - name: Checksums
+        working-directory: Dist
+        run: |
+          sha256sum jacred-* > SHA256SUMS
+          cat SHA256SUMS
+
+      # gh is preinstalled on GitHub-hosted runners, so no third-party action is
+      # needed to cut the release.
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            --title "${GITHUB_REF_NAME}" \
+            --generate-notes \
+            Dist/jacred-* \
+            Dist/SHA256SUMS \
+            init.yaml.example

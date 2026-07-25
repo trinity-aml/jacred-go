@@ -112,7 +112,3 @@ require (
 	modernc.org/sqlite v1.21.1 // indirect
 	zombiezen.com/go/sqlite v0.13.1 // indirect
 )
-
-// Local development: use working copy of flaresolverr-go.
-// TODO: remove before release once upstream is tagged.
-replace github.com/trinity-aml/flaresolverr-go => /home/trinity1980/flaresolverr-go

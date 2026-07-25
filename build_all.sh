@@ -38,7 +38,14 @@ mkdir -p "${OUT}"
 OK=0
 FAIL=0
 
-go mod tidy
+# `go mod tidy` rewrites go.mod/go.sum, which must not happen in CI: a release
+# has to build from exactly the dependency graph that was tagged. Locally it
+# stays useful, so it only runs outside CI.
+if [[ -z "${CI:-}" ]]; then
+  go mod tidy
+else
+  go mod download
+fi
 
 for TARGET in "${TARGETS[@]}"; do
   GOOS="${TARGET%/*}"
@@ -68,13 +75,24 @@ echo "done: ${OK} ok, ${FAIL} failed  →  ${OUT}/"
 ls -lh "${OUT}"/
 
 # ── Archive ───────────────────────────────────────────────────────────────────
+# Set SKIP_ARCHIVE=1 to leave only the bare binaries in ${OUT} — the release
+# workflow publishes those individually and does not want a combined tarball.
+
+if [[ -n "${SKIP_ARCHIVE:-}" ]]; then
+  echo ""
+  echo "SKIP_ARCHIVE set — not creating a tarball"
+  exit 0
+fi
 
 ARCHIVE="jacred-${VERSION}-${GIT_SHA}.tar.gz"
 
 echo ""
 echo "creating ${ARCHIVE} ..."
 
+# Only the example config is bundled. init.yaml is a live deployment file that
+# holds tracker credentials and local paths, and this archive is published on
+# the releases page.
 tar -czf "${ARCHIVE}" \
   -C "${OUT}" . \
-  -C "$(pwd)" init.yaml init.yaml.example
+  -C "$(pwd)" init.yaml.example
 mv -f ${ARCHIVE} ${OUT}/${ARCHIVE}

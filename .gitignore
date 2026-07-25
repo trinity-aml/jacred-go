@@ -2,3 +2,8 @@ Dist
 CLAUDE.md
 Data
 init.yaml
+
+# Local module overrides (see go.work) — must never reach CI,
+# which builds against the versions pinned in go.mod.
+go.work
+go.work.sum

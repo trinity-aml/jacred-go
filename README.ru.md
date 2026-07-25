@@ -1253,3 +1253,31 @@ GET /                → index.html (если web: true)
 GET /stats           → stats.html (если web: true)
 GET /settings        → settings.html (если web: true)
 ```
+
+---
+
+## Релизы (CI)
+
+Релизы собирает GitHub Actions (`.github/workflows/release.yml`). У workflow
+единственный триггер — пуш тега версии:
+
+```bash
+git tag -a v1.2.3 -m "release 1.2.3"
+git push origin v1.2.3
+```
+
+При обычных пушах в ветку и в pull request'ах ничего не запускается. Job
+проверяет, что `go.mod`/`go.sum` приведены в порядок, прогоняет `go vet` и
+`go test`, кросс-компилирует все платформы через `build_all.sh` и публикует
+релиз с бинарниками, `SHA256SUMS` и `init.yaml.example`.
+
+Замечания:
+
+- Версия, которую отдаёт `/version`, берётся из `git describe --tags`, поэтому
+  checkout выполняется с `fetch-depth: 0`.
+- CI собирает с `GOWORK=off` — строго по версиям, закреплённым в `go.mod`.
+  Локальные подмены модулей живут в `go.work`, который в gitignore.
+- `build_all.sh` пропускает `go mod tidy`, когда выставлен `CI`, чтобы сборка
+  тега не могла разрешить другой граф зависимостей.
+- В архив релиза попадает только `init.yaml.example`. `init.yaml` — рабочий
+  файл развёртывания с учётными данными трекеров, публиковать его нельзя.

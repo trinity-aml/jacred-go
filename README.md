@@ -21,6 +21,7 @@ Collects torrent metadata from 20 Russian/Ukrainian trackers into a unified flat
 - [Parser Logging](#parser-logging)
 - [Cron Examples](#cron-examples)
 - [Database Structure](#database-structure)
+- [Releases (CI)](#releases-ci)
 
 ---
 
@@ -65,7 +66,7 @@ Dist/
   jacred-freebsd-amd64
   jacred-freebsd-arm64
 
-jacred-{version}-{gitSHA}.tar.gz   ← binaries + init.yaml + init.yaml.example
+jacred-{version}-{gitSHA}.tar.gz   ← binaries + init.yaml.example
                                      (the web UI is embedded into each binary via //go:embed)
 ```
 
@@ -1254,3 +1255,32 @@ GET /                → index.html (if web: true)
 GET /stats           → stats.html (if web: true)
 GET /settings        → settings.html (if web: true)
 ```
+
+---
+
+## Releases (CI)
+
+Releases are cut by GitHub Actions (`.github/workflows/release.yml`). The
+workflow has a single trigger — pushing a version tag:
+
+```bash
+git tag -a v1.2.3 -m "release 1.2.3"
+git push origin v1.2.3
+```
+
+Nothing runs on ordinary branch pushes or pull requests. The job verifies
+`go.mod`/`go.sum` are tidy, runs `go vet` and `go test`, cross-compiles every
+target via `build_all.sh`, then publishes a release containing each binary,
+`SHA256SUMS` and `init.yaml.example`.
+
+Notes:
+
+- The version baked into `/version` comes from `git describe --tags`, so the
+  checkout uses `fetch-depth: 0`.
+- CI builds with `GOWORK=off` against the dependency versions pinned in
+  `go.mod`. Local module overrides belong in `go.work`, which is gitignored —
+  see the comment at the top of that file.
+- `build_all.sh` skips `go mod tidy` when `CI` is set, so a tagged build can
+  never resolve a different dependency graph than the one that was tagged.
+- The release archive bundles only `init.yaml.example`. `init.yaml` is a live
+  deployment file holding tracker credentials and must not be published.
