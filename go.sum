@@ -373,8 +373,8 @@ github.com/tidwall/btree v1.8.1/go.mod h1:jBbTdUWhSZClZWoDg54VnvV7/54modSOzDN7VX
 github.com/tinylib/msgp v1.0.2/go.mod h1:+d+yLhGm8mzTaHzB+wgMYrodPfmZrzkirds8fDWklFE=
 github.com/tinylib/msgp v1.1.0/go.mod h1:+d+yLhGm8mzTaHzB+wgMYrodPfmZrzkirds8fDWklFE=
 github.com/tinylib/msgp v1.1.2/go.mod h1:+d+yLhGm8mzTaHzB+wgMYrodPfmZrzkirds8fDWklFE=
-github.com/trinity-aml/flaresolverr-go v0.0.0-20260516062756-1dc8b072a17a h1:HKGSWzMX1iJBVkFqmx7JtQGHWPxMMUuDZw+J6fPMttw=
-github.com/trinity-aml/flaresolverr-go v0.0.0-20260516062756-1dc8b072a17a/go.mod h1:+wZWP5QyUDcDcJpU35+jKoDYcFiXlC9F4tQLHQYuWcs=
+github.com/trinity-aml/flaresolverr-go v0.0.0-20260516080307-580ee4f4ad4c h1:BWewZTKhXsvAPlPJCMSHw2yZkEklzPhCp+BrSaRnRlI=
+github.com/trinity-aml/flaresolverr-go v0.0.0-20260516080307-580ee4f4ad4c/go.mod h1:+wZWP5QyUDcDcJpU35+jKoDYcFiXlC9F4tQLHQYuWcs=
 github.com/ulikunitz/xz v0.5.15 h1:9DNdB5s+SgV3bQ2ApL10xRc35ck0DuIX/isZvIk+ubY=
 github.com/ulikunitz/xz v0.5.15/go.mod h1:nbz6k7qbPmH4IRqmfOplQw/tblSgqTqBwxkY0oWt/14=
 github.com/willf/bitset v1.1.9/go.mod h1:RjeCKbqT1RxIR/KWY6phxZiaY1IyutSBfGjNPySAYV4=
