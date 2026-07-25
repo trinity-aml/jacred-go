@@ -237,6 +237,7 @@ Kinozal:
 | Korsars | `https://korsars.pro` |
 | Ultradox | `https://ultradox.top` |
 | Viruseproject | `https://viruseproject.tv` |
+| Anibelka | `https://anibelka.com` |
 
 ### Proxy
 
@@ -279,7 +280,7 @@ There are five distinct parsing strategies across the 21 trackers:
 
 Parse exactly one page. Default is page 0 (most recent) for most trackers; Bitru defaults to page 1.
 
-**Trackers:** Rutor, Selezen, Bitru, Kinozal, NNMClub, RuTracker, TorrentBy, Toloka, Korsars, Ultradox
+**Trackers:** Rutor, Selezen, Bitru, Kinozal, NNMClub, RuTracker, TorrentBy, Toloka, Korsars, Ultradox, Anibelka
 
 > Note: Rutor, Bitru, Kinozal, NNMClub, RuTracker, TorrentBy, Toloka also support task-based parsing (see §4 below). The `parse?page=N` endpoint is available as a single-page fallback.
 
@@ -337,7 +338,7 @@ For large trackers with hundreds of category pages. Works in three steps:
 2. **Parse all** discovered tasks (can be interrupted and resumed)
 3. **Parse latest** — shortcut to parse only the most recent N pages
 
-**Trackers:** Rutor, Selezen, Bitru, Kinozal, NNMClub, RuTracker, TorrentBy, Toloka, Korsars, Ultradox
+**Trackers:** Rutor, Selezen, Bitru, Kinozal, NNMClub, RuTracker, TorrentBy, Toloka, Korsars, Ultradox, Anibelka
 
 ```bash
 # Step 1: Discover all pages and build task list (run once or periodically)

@@ -267,6 +267,16 @@ Viruseproject:
     u: ""
     p: ""
 
+Anibelka:
+  host: "https://anibelka.com"
+  useproxy: false
+  reqMinute: 10
+  parseDelay: 3000
+  log: false
+  login:
+    u: ""
+    p: ""
+
 globalproxy:
   - pattern: \\.onion
     useAuth: false

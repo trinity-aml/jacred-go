@@ -235,6 +235,7 @@ Kinozal:
 | Korsars | `https://korsars.pro` |
 | Ultradox | `https://ultradox.top` |
 | Viruseproject | `https://viruseproject.tv` |
+| Anibelka | `https://anibelka.com` |
 
 ### Прокси
 
@@ -277,7 +278,7 @@ globalproxy:
 
 Парсит ровно одну страницу. По умолчанию — страница 0 (самая свежая) для большинства трекеров; Bitru по умолчанию страница 1.
 
-**Трекеры:** Rutor, Selezen, Bitru, Kinozal, NNMClub, RuTracker, TorrentBy, Toloka, Korsars, Ultradox
+**Трекеры:** Rutor, Selezen, Bitru, Kinozal, NNMClub, RuTracker, TorrentBy, Toloka, Korsars, Ultradox, Anibelka
 
 > Примечание: Rutor, Bitru, Kinozal, NNMClub, RuTracker, TorrentBy, Toloka, Korsars также поддерживают task-based парсинг (см. §4 ниже). Эндпоинт `parse?page=N` доступен как альтернатива для одной страницы.
 
@@ -335,7 +336,7 @@ curl "http://127.0.0.1:9117/cron/aniliberty/parse?parseFrom=1&parseTo=3"
 2. **Парсинг всех** обнаруженных задач (можно прервать и возобновить)
 3. **Парсинг последних** — ярлык для парсинга только N последних страниц
 
-**Трекеры:** Rutor, Selezen, Bitru, Kinozal, NNMClub, RuTracker, TorrentBy, Toloka, Korsars, Ultradox
+**Трекеры:** Rutor, Selezen, Bitru, Kinozal, NNMClub, RuTracker, TorrentBy, Toloka, Korsars, Ultradox, Anibelka
 
 ```bash
 # Шаг 1: Обнаружить все страницы и построить список задач (запустить однократно или периодически)

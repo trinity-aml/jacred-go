@@ -108,6 +108,7 @@ type Config struct {
 	Korsars             TrackerSettings      `json:"Korsars"`
 	Ultradox            TrackerSettings      `json:"Ultradox"`
 	Viruseproject       TrackerSettings      `json:"Viruseproject"`
+	Anibelka            TrackerSettings      `json:"Anibelka"`
 	GlobalProxy         []ProxySettings      `json:"globalproxy"`
 }
 
@@ -159,6 +160,7 @@ func DefaultConfig() Config {
 		Korsars:             TrackerSettings{Host: "https://korsars.pro", ReqMinute: 8, ParseDelay: 7000},
 		Ultradox:            TrackerSettings{Host: "https://ultradox.onl", ReqMinute: 8, ParseDelay: 7000},
 		Viruseproject:       TrackerSettings{Host: "https://viruseproject.tv", ReqMinute: 8, ParseDelay: 7000},
+		Anibelka:            TrackerSettings{Host: "https://anibelka.com", ReqMinute: 8, ParseDelay: 7000},
 		GlobalProxy:         []ProxySettings{{Pattern: `\.onion`, List: []string{"socks5://127.0.0.1:9050"}}},
 	}
 }

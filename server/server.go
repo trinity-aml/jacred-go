@@ -19,6 +19,7 @@ import (
 	"runtime"
 
 	"jacred/app"
+	"jacred/cron/anibelka"
 	"jacred/cron/anidub"
 	"jacred/cron/anifilm"
 	"jacred/cron/aniliberty"
@@ -82,6 +83,7 @@ type Server struct {
 	KorsarsParser       *korsars.Parser
 	UltradoxParser      *ultradox.Parser
 	ViruseprojectParser *viruseproject.Parser
+	AnibelkaParser      *anibelka.Parser
 	TracksDB            *tracks.DB
 	cache               *searchCache // search result cache (5 min TTL)
 
@@ -113,7 +115,7 @@ func New(cfg app.Config, db *filedb.DB, tracksDB *tracks.DB, wwwroot string) *Se
 		tracksDB = tracks.New("Data")
 		_ = tracksDB.Load()
 	}
-	return &Server{Config: cfg, DB: db, WWWRoot: wwwroot, Version: VersionInfo{Version: "dev", GitSha: "unknown", GitBranch: "unknown", BuildDate: time.Now().UTC().Format("2006-01-02 15:04:05 UTC")}, KnabenParser: knaben.New(cfg, db), AnidubParser: anidub.New(cfg, db), AnilibertyParser: aniliberty.New(cfg, db), AnimelayerParser: animelayer.New(cfg, db), AnistarParser: anistar.New(cfg, db, "Data"), AnifilmParser: anifilm.New(cfg, db, "Data"), BitruParser: bitru.New(cfg, db, "Data"), BitruAPIParser: bitruapi.New(cfg, db, "Data"), RutorParser: rutor.New(cfg, db, "Data"), MegapeerParser: megapeer.New(cfg, db), TorrentByParser: torrentby.New(cfg, db, "Data"), NNMClubParser: nnmclub.New(cfg, db, "Data"), LostfilmParser: lostfilm.New(cfg, db), RutrackerParser: rutracker.New(cfg, db, "Data"), KinozalParser: kinozal.New(cfg, db, "Data"), TolokaParser: toloka.New(cfg, db, "Data"), SelezenParser: selezen.New(cfg, db, "Data"), LeproductionParser: leproduction.New(cfg, db, "Data"), MazepaParser: mazepa.New(cfg, db, "Data"), KorsarsParser: korsars.New(cfg, db, "Data"), UltradoxParser: ultradox.New(cfg, db, "Data"), ViruseprojectParser: viruseproject.New(cfg, db, "Data"), TracksDB: tracksDB, cache: newSearchCache(5*time.Minute, 10000)}
+	return &Server{Config: cfg, DB: db, WWWRoot: wwwroot, Version: VersionInfo{Version: "dev", GitSha: "unknown", GitBranch: "unknown", BuildDate: time.Now().UTC().Format("2006-01-02 15:04:05 UTC")}, KnabenParser: knaben.New(cfg, db), AnidubParser: anidub.New(cfg, db), AnilibertyParser: aniliberty.New(cfg, db), AnimelayerParser: animelayer.New(cfg, db), AnistarParser: anistar.New(cfg, db, "Data"), AnifilmParser: anifilm.New(cfg, db, "Data"), BitruParser: bitru.New(cfg, db, "Data"), BitruAPIParser: bitruapi.New(cfg, db, "Data"), RutorParser: rutor.New(cfg, db, "Data"), MegapeerParser: megapeer.New(cfg, db), TorrentByParser: torrentby.New(cfg, db, "Data"), NNMClubParser: nnmclub.New(cfg, db, "Data"), LostfilmParser: lostfilm.New(cfg, db), RutrackerParser: rutracker.New(cfg, db, "Data"), KinozalParser: kinozal.New(cfg, db, "Data"), TolokaParser: toloka.New(cfg, db, "Data"), SelezenParser: selezen.New(cfg, db, "Data"), LeproductionParser: leproduction.New(cfg, db, "Data"), MazepaParser: mazepa.New(cfg, db, "Data"), KorsarsParser: korsars.New(cfg, db, "Data"), UltradoxParser: ultradox.New(cfg, db, "Data"), ViruseprojectParser: viruseproject.New(cfg, db, "Data"), AnibelkaParser: anibelka.New(cfg, db, "Data"), TracksDB: tracksDB, cache: newSearchCache(5*time.Minute, 10000)}
 }
 
 // GetConfig returns a thread-safe copy of the current config.
@@ -176,6 +178,8 @@ func (s *Server) UpdateConfig(cfg app.Config) {
 	s.UltradoxParser.Fetcher.UpdateConfig(cfg)
 	s.ViruseprojectParser.Config = cfg
 	s.ViruseprojectParser.Fetcher.UpdateConfig(cfg)
+	s.AnibelkaParser.Config = cfg
+	s.AnibelkaParser.Fetcher.UpdateConfig(cfg)
 
 	s.cache.Invalidate()
 	log.Printf("config: updated server, db and all 22 parsers")
@@ -299,6 +303,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/cron/mazepa/parsealltask", s.handleCronMazepaParseAllTask)
 	mux.HandleFunc("/cron/mazepa/parselatest", s.handleCronMazepaParseLatest)
 	mux.HandleFunc("/cron/viruseproject/parse", s.handleCronViruseprojectParse)
+	mux.HandleFunc("/cron/anibelka/parse", s.handleCronAnibelkaParse)
+	mux.HandleFunc("/cron/anibelka/updatetasksparse", s.handleCronAnibelkaUpdateTasksParse)
+	mux.HandleFunc("/cron/anibelka/parsealltask", s.handleCronAnibelkaParseAllTask)
+	mux.HandleFunc("/cron/anibelka/parselatest", s.handleCronAnibelkaParseLatest)
 	return s.middleware(mux)
 }
 
@@ -1142,6 +1150,62 @@ func (s *Server) handleCronViruseprojectParse(w http.ResponseWriter, r *http.Req
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": res.Status, "fetched": res.Fetched, "added": res.Added, "updated": res.Updated, "skipped": res.Skipped, "failed": res.Failed, "text": fmt.Sprintf("fetched=%d +%d ~%d =%d failed=%d", res.Fetched, res.Added, res.Updated, res.Skipped, res.Failed)})
+}
+
+func (s *Server) handleCronAnibelkaParse(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	res, err := s.AnibelkaParser.Parse(context.Background(), parseOptionalInt(r.URL.Query(), "page", 0))
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": res.Status})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": res.Status, "fetched": res.Fetched, "added": res.Added, "updated": res.Updated, "skipped": res.Skipped, "failed": res.Failed, "text": fmt.Sprintf("fetched=%d +%d ~%d =%d failed=%d", res.Fetched, res.Added, res.Updated, res.Skipped, res.Failed)})
+}
+
+func (s *Server) handleCronAnibelkaUpdateTasksParse(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	tasks, err := s.AnibelkaParser.UpdateTasksParse(context.Background())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	total := 0
+	for _, list := range tasks {
+		total += len(list)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "sections": len(tasks), "pages": total})
+}
+
+func (s *Server) handleCronAnibelkaParseAllTask(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	res, err := s.AnibelkaParser.ParseAllTask(context.Background(), parseBool(r.URL.Query().Get("force")))
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": res})
+}
+
+func (s *Server) handleCronAnibelkaParseLatest(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	res, err := s.AnibelkaParser.ParseLatest(context.Background(), parseOptionalInt(r.URL.Query(), "pages", 1))
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": res})
 }
 
 func (s *Server) handleCronMazepaParse(w http.ResponseWriter, r *http.Request) {

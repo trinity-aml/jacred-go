@@ -71,3 +71,7 @@
 
 */40 *   *   *   *    curl -s "http://127.0.0.1:9117/cron/lostfilm/parsepages"
 20   */6 *   *   *    curl -s "http://127.0.0.1:9117/cron/lostfilm/parsepages?pageTo=100"
+
+*/20 *   *   *   *    curl -s "http://127.0.0.1:9117/cron/anibelka/parselatest?pages=1"
+40   */6 *   *   *    curl -s "http://127.0.0.1:9117/cron/anibelka/UpdateTasksParse"
+*/10 *   *   *   *    curl -s "http://127.0.0.1:9117/cron/anibelka/ParseAllTask"

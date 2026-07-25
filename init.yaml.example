@@ -476,6 +476,27 @@ Viruseproject:
   parseDelay: 7000
   reqMinute: 8
 
+# ── Anibelka ──────────────────────────────────────────────────────────────────
+# Auth: not required — and deliberately not used.
+# Anime-only phpBB tracker. 5 forums under its "Скачать аниме" menu:
+# 32 Универсальные, 33 С озвучкой, 34 С субтитрами, 36 Полнометражки, 37 PSP.
+# 15 topics per listing page; each topic holds exactly one .torrent attachment
+# and no magnet, so the parser downloads the file and derives the magnet from
+# its info dict.
+#
+# Do not add credentials here: a logged-in .torrent download embeds the
+# account's personal passkey in the announce URL, and that passkey would then
+# be copied into every magnet this instance serves over the search API and
+# /sync. Anonymous downloads yield the same info hash.
+#
+# Two requests per topic (page + torrent), so keep parseDelay conservative.
+# Supports: parse?page=N, updatetasksparse, parsealltask, parselatest?pages=N
+
+Anibelka:
+  host: "https://anibelka.com"
+  parseDelay: 3000
+  reqMinute: 10
+
 # ── Proxy ─────────────────────────────────────────────────────────────────────
 # Route specific tracker requests through a proxy.
 # Set useproxy: true on the tracker section to activate.

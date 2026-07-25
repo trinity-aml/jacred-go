@@ -116,6 +116,7 @@ func MarshalYAML(cfg Config) string {
 	writeTracker(&b, "Korsars", cfg.Korsars)
 	writeTracker(&b, "Ultradox", cfg.Ultradox)
 	writeTracker(&b, "Viruseproject", cfg.Viruseproject)
+	writeTracker(&b, "Anibelka", cfg.Anibelka)
 
 	// Proxies
 	b.WriteString("globalproxy:\n")
