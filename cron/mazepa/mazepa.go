@@ -49,9 +49,12 @@ var categories = map[string][]string{
 }
 
 var (
-	rowRe       = regexp.MustCompile(`(?is)<tr id="tr-(\d+)".*?</tr>`)
-	titleRe     = regexp.MustCompile(`(?i)class="torTopic[^"]*"><b>([^<]+)</b>`)
-	magnetRe    = regexp.MustCompile(`(?i)href="(magnet:\?[^"]+)"`)
+	rowRe    = regexp.MustCompile(`(?is)<tr id="tr-(\d+)".*?</tr>`)
+	titleRe  = regexp.MustCompile(`(?i)class="torTopic[^"]*"><b>([^<]+)</b>`)
+	magnetRe = regexp.MustCompile(`(?i)href="(magnet:\?[^"]+)"`)
+	// The listing stopped carrying magnets; each row now links its .torrent
+	// attachment instead. The id here is the attachment's, not the topic's.
+	dlRe        = regexp.MustCompile(`(?i)href="\.?/?dl\.php\?id=(\d+)"`)
 	seedRe      = regexp.MustCompile(`(?i)seedmed[^>]*><b>(\d+)</b>`)
 	leechRe     = regexp.MustCompile(`(?i)leechmed[^>]*><b>(\d+)</b>`)
 	sizeRe      = regexp.MustCompile(`(?i)>([0-9.,]+)\s*&nbsp;(GB|MB|TB)<`)
@@ -302,11 +305,24 @@ func (p *Parser) parseForumPage(ctx context.Context, pageURL string, types []str
 		}
 		title := strings.TrimSpace(html.UnescapeString(titleM[1]))
 
-		magnetM := magnetRe.FindStringSubmatch(block)
-		if len(magnetM) < 2 || strings.TrimSpace(magnetM[1]) == "" {
-			continue
+		name, original, year := parseNamesAdvanced(title)
+		topicURL := fmt.Sprintf("%s/viewtopic.php?t=%s", host, tid)
+
+		// Magnet resolution, cheapest source first. mazepa used to publish
+		// magnets straight in the listing; it now ships only a .torrent per
+		// row, so the fallback costs one download each.
+		magnet := ""
+		if m := magnetRe.FindStringSubmatch(block); len(m) > 1 {
+			magnet = normalizeMagnet(html.UnescapeString(m[1]))
 		}
-		magnet := normalizeMagnet(html.UnescapeString(magnetM[1]))
+		if magnet == "" {
+			magnet = p.storedMagnet(name, original, topicURL)
+		}
+		if magnet == "" {
+			if m := dlRe.FindStringSubmatch(block); len(m) > 1 {
+				magnet = p.magnetFromAttachment(ctx, host, m[1])
+			}
+		}
 		if magnet == "" {
 			continue
 		}
@@ -329,7 +345,6 @@ func (p *Parser) parseForumPage(ctx context.Context, pageURL string, types []str
 			}
 		}
 
-		name, original, year := parseNamesAdvanced(title)
 		quality := 480
 		if qualityRe.MatchString(title) {
 			quality = 2160
@@ -346,7 +361,7 @@ func (p *Parser) parseForumPage(ctx context.Context, pageURL string, types []str
 		out = append(out, filedb.TorrentRecord{
 			TrackerName:  trackerName,
 			Types:        types,
-			URL:          fmt.Sprintf("%s/viewtopic.php?t=%s", host, tid),
+			URL:          topicURL,
 			Title:        title,
 			Name:         name,
 			OriginalName: core.FirstNonEmpty(original, name),
@@ -731,6 +746,82 @@ func (p *Parser) saveTorrents(torrents []filedb.TorrentDetails) (int, int, int, 
 		}
 	}
 	return added, updated, skipped, failed, nil
+}
+
+// storedMagnet returns the magnet already held for this topic, so re-parsing a
+// page we have seen before costs no downloads at all. Steady state is what
+// matters here: the cron re-reads the same first pages every run, and without
+// this every pass would re-fetch every .torrent on them.
+func (p *Parser) storedMagnet(name, original, topicURL string) string {
+	if p.DB == nil {
+		return ""
+	}
+	key := p.DB.KeyDb(name, core.FirstNonEmpty(original, name))
+	if key == ":" || strings.TrimSpace(key) == "" {
+		return ""
+	}
+	bucket, err := p.DB.OpenReadOrEmpty(key)
+	if err != nil {
+		return ""
+	}
+	rec, ok := bucket[topicURL]
+	if !ok {
+		return ""
+	}
+	return normalizeMagnet(asString(rec["magnet"]))
+}
+
+// magnetFromAttachment downloads a row's .torrent and derives the magnet from
+// its info dict.
+//
+// The announce list is deliberately discarded: mazepa serves attachments only
+// to logged-in users and stamps the account's personal passkey into the
+// announce URL (uk=<key>, verified identical across every torrent this account
+// downloads). Magnets are republished through the search API, torznab and
+// /sync, so keeping the trackers would hand that passkey to every consumer of
+// this instance. Peers resolve via DHT/PEX instead.
+func (p *Parser) magnetFromAttachment(ctx context.Context, host, attachmentID string) string {
+	if p.Fetcher == nil || strings.TrimSpace(attachmentID) == "" {
+		return ""
+	}
+	ts := p.Config.Mazepa
+	if c := p.getCookie(); c != "" {
+		ts.Cookie = c
+	}
+	dlURL := fmt.Sprintf("%s/dl.php?id=%s", strings.TrimRight(host, "/"), attachmentID)
+	data, status, err := p.Fetcher.Download(dlURL, ts)
+	if err != nil || status != http.StatusOK || len(data) == 0 {
+		log.Printf("mazepa: attachment %s fetch failed status=%d err=%v", attachmentID, status, err)
+		return ""
+	}
+	// dl.php answers 200 with an HTML page instead of a 403 or 404, so the
+	// payload is the only thing worth trusting. Two very different causes look
+	// identical at the status line: an attachment deleted from disk (common on
+	// old topics) and a dropped session. Naming the wrong one sends whoever
+	// reads this log hunting the wrong bug, so distinguish them.
+	if data[0] != 'd' {
+		page := string(data)
+		switch {
+		case strings.Contains(page, "login.php") && !strings.Contains(page, "Вийти"):
+			log.Printf("mazepa: attachment %s — not logged in, invalidating session", attachmentID)
+			p.invalidateCookie()
+		case strings.Contains(page, "Файл відсутній") || strings.Contains(page, "більше не існує"):
+			log.Printf("mazepa: attachment %s no longer on the server — skipping", attachmentID)
+		default:
+			log.Printf("mazepa: attachment %s returned HTML, not a torrent (%d bytes)", attachmentID, len(data))
+		}
+		return ""
+	}
+	magnet, err := core.TorrentBytesToMagnetNoTrackersErr(data)
+	if err != nil {
+		log.Printf("mazepa: attachment %s decode failed: %v", attachmentID, err)
+		return ""
+	}
+	select {
+	case <-ctx.Done():
+	case <-time.After(300 * time.Millisecond):
+	}
+	return magnet
 }
 
 func (p *Parser) httpGet(ctx context.Context, rawURL string) (string, error) {

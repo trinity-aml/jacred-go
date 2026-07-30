@@ -37,6 +37,27 @@ func TorrentBytesToMagnetErr(data []byte) (string, error) {
 	return buildTorrentMagnet(hex.EncodeToString(h[:]), name, announces), nil
 }
 
+// TorrentBytesToMagnetNoTrackersErr derives the magnet from the info dict but
+// drops the announce list, yielding a bare `xt`+`dn` link.
+//
+// Use this whenever the .torrent could only be obtained while logged in: many
+// trackers mint the announce URL per account (mazepa embeds `uk=<passkey>`,
+// identical across every torrent the account downloads). Those URLs must never
+// reach a magnet, because magnets are republished through the search API,
+// torznab and /sync — one parse would hand the operator's passkey to every
+// consumer of this instance. Peers still resolve via DHT/PEX.
+func TorrentBytesToMagnetNoTrackersErr(data []byte) (string, error) {
+	infoRaw, name, _, err := parseTorrentMeta(data)
+	if err != nil {
+		return "", err
+	}
+	if len(infoRaw) == 0 {
+		return "", errors.New("no info dict found")
+	}
+	h := sha1.Sum(infoRaw)
+	return buildTorrentMagnet(hex.EncodeToString(h[:]), name, nil), nil
+}
+
 func buildTorrentMagnet(hexHash, name string, announces []string) string {
 	if strings.TrimSpace(hexHash) == "" {
 		return ""

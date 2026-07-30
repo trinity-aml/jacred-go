@@ -1,0 +1,2465 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>Фільми HD - Мазепа Торент - Українське озвучення</title>
+<meta name="description" content="Дивитися фільми серіали мультики в HD та 4К якості. Завантажити безкоштовно з українським озвученням." />
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta http-equiv="Content-Style-Type" content="text/css" />
+<meta name="application-name" content="Мазепа Торент"/>
+<meta property="og:site_name" content="Мазепа Торент">
+<meta property="og:image" content="https://mazepa.to/styles/images/logo/logo.png" />
+<meta property="twitter:image" content="https://mazepa.to/styles/images/logo/logo.png">
+<meta property="og:title" content="Фільми HD :: Мазепа Торент">
+<meta property="twitter:title" content="Фільми HD :: Мазепа Торент">	  
+<link rel="canonical" href="https://mazepa.to/forum-filmy-hd-f=12.html" /><link rel="stylesheet" href="https://mazepa.to/styles/js/fontawesome/css/font-awesome.min.css">
+<link rel="stylesheet" href="https://mazepa.to/styles/templates/default/css/main.css?v=1" type="text/css">
+<link rel="stylesheet" href="https://mazepa.to/styles/templates/default/css/style.css" type="text/css">
+<link rel="shortcut icon" href="https://mazepa.to/favicon.ico" type="image/x-icon">
+<link rel="search" type="application/opensearchdescription+xml" href="https://mazepa.to/opensearch_desc.xml" title="Мазепа Торент (Forum)" />
+<link rel="search" type="application/opensearchdescription+xml" href="https://mazepa.to/opensearch_desc_bt.xml" title="Мазепа Торент (Tracker)" />
+
+<script type="62994f3e33b2402b3ce732d5-text/javascript" src="https://mazepa.to/styles/js/snapshot/jquery.min.js?v=1"></script>
+<script type="62994f3e33b2402b3ce732d5-text/javascript" src="https://mazepa.to/styles/js/snapshot/cookie.js?v=1"></script>
+<script type="62994f3e33b2402b3ce732d5-text/javascript" src="https://mazepa.to/styles/js/snapshot/forumskins.js?v=1"></script>
+
+<script type="62994f3e33b2402b3ce732d5-text/javascript" src="https://mazepa.to/styles/js/jquery.pack.js?v=1"></script>
+<script type="62994f3e33b2402b3ce732d5-text/javascript" src="https://mazepa.to/styles/js/main.js?v=1"></script>
+
+<script type="62994f3e33b2402b3ce732d5-text/javascript" src="https://mazepa.to/styles/js/bbcode.js?v=1"></script>
+<script type="62994f3e33b2402b3ce732d5-text/javascript">
+	window.BB = {};
+	window.encURL = encodeURIComponent;
+</script>
+<script type="62994f3e33b2402b3ce732d5-text/javascript">
+var bb_url      = 'https://mazepa.to/';
+var bbl = { "code": "Код", "wrote": "написав (-ла)", "quote": "Цитата", "quoted_post": "Перейти до цитованого повідомлення", "loading": "Завантаження...", "spoiler_head": "прихований текст", "spoiler_close": "згорнути", "links_are": "Посилання заборонені", "scr_rules": "Прочитайте правила розміщення знятків!", "play_on": "Почати відтворення на цій сторінці" };
+
+var postImg_MaxWidth = Math.round(screen.width/5);
+var postImgAligned_MaxWidth = Math.round(screen.width/5);
+var attachImg_MaxWidth = screen.width - 280;
+var ExternalLinks_InNewWindow = '1';
+var hidePostImg = false;
+</script>
+<script type="62994f3e33b2402b3ce732d5-text/javascript">
+var BB_ROOT      = "./";
+var cookieDomain = ".mazepa.to";
+var cookiePath   = "/";
+var cookiePrefix = "bb_";
+var cookieSecure = "1";
+var LOGGED_IN    = 1;
+var IWP          = 'HEIGHT=510,WIDTH=780,resizable=yes';
+var IWP_US       = 'HEIGHT=250,WIDTH=400,resizable=yes';
+var IWP_SM       = 'HEIGHT=420,WIDTH=470,resizable=yes,scrollbars=yes';
+
+var user = {
+	opt_js: {"only_new":0,"h_av":0,"h_rnk_i":0,"h_post_i":0,"h_smile":0,"h_sig":0,"sp_op":0,"tr_t_ax":0,"tr_t_t":0,"hl_tr":1,"i_aft_l":0,"h_tsp":0,"poster":1},
+
+	set: function (opt, val, days, reload) {
+		this.opt_js[opt] = val;
+		setCookie('opt_js', $.toJSON(this.opt_js), days);
+		if (reload) {
+			window.location.reload();
+		}
+	}
+};
+
+$(document).ready(function(){
+	$("div.jumpbox").html('\
+		<span id="jumpbox-container"> \
+		<select id="jumpbox"> \
+			<option id="jumpbox-title" value="-1">&nbsp;&raquo;&raquo; Обрати форум &nbsp;</option> \
+		</select> \
+		</span> \
+		<input id="jumpbox-submit" type="button" class="lite" value="Перейти" /> \
+	');
+	$('#jumpbox-container').one('click', function(){
+		$('#jumpbox-title').html('&nbsp;&nbsp; Завантаження... ... &nbsp;');
+		var jumpbox_src = '/internal_data/ajax_html' + (1 ? '/jumpbox_user.html' : '/jumpbox_guest.html');
+		$(this).load(jumpbox_src);
+		$('#jumpbox-submit').click(function(){ window.location.href='./viewforum.php?f='+$('#jumpbox').val(); });
+	});
+});
+
+var ajax = new Ajax('https://mazepa.to/ajax.php', 'POST', 'json');
+
+function getElText (e)
+{
+	var t = '';
+	if (e.textContent !== undefined) { t = e.textContent; } else if (e.innerText !== undefined) { t = e.innerText; } else { t = jQuery(e).text(); }
+	return t;
+}
+function escHTML (txt)
+{
+	return txt.replace(/</g, '&lt;');
+}
+
+function cfm (txt)
+{
+	return window.confirm(txt);
+}
+function post2url (url, params) {
+	params = params || {};
+	var f = document.createElement('form');
+	f.setAttribute('method', 'post');
+	f.setAttribute('action', url);
+	params['form_token'] = '';
+	for (var k in params) {
+		var h = document.createElement('input');
+		h.setAttribute('type', 'hidden');
+		h.setAttribute('name', k);
+		h.setAttribute('value', params[k]);
+		f.appendChild(h);
+	}
+	document.body.appendChild(f);
+	f.submit();
+	return false;
+}
+</script>
+
+<!--[if gte IE 7]><style type="text/css">
+input[type="checkbox"] { margin-bottom: -1px; }
+</style><![endif]-->
+
+<!--[if IE]><style type="text/css">
+.post-hr { margin: 2px auto; }
+.fieldsets div > p { margin-bottom: 0; }
+</style><![endif]-->
+
+<style type="text/css">
+	.menu-sub, #ajax-loading, #ajax-error, var.ajax-params, .sp-title, .q-post { display: none; }
+</style>
+<style type="text/css" id="styleBackground"></style>
+
+</head>
+
+<body id="ipboard_body" class="cbe">
+
+<div class="menu-sub" id="pg-jump">
+	<table cellspacing="1" cellpadding="4">
+	<tr><th>Перейти на сторінку...</th></tr>
+	<tr><td>
+		<form method="get" onsubmit="if (!window.__cfRLUnblockHandlers) return false; return go_to_page();" data-cf-modified-62994f3e33b2402b3ce732d5-="">
+			<input id="pg-page" type="text" size="5" maxlength="4" />
+			<input type="submit" value="Перейти"/>
+		</form>
+	</td></tr>
+	</table>
+</div>
+<script type="62994f3e33b2402b3ce732d5-text/javascript">
+function go_to_page ()
+{
+	var page_num = (parseInt( $('#pg-page').val() ) > 1) ? $('#pg-page').val() : 1;
+	var pg_start = (page_num - 1) * 50;
+	window.location = 'viewforum.php?f=12&start=' + pg_start;
+	return false;
+}
+</script>
+
+<div id="ajax-loading"></div><div id="ajax-error"></div>
+<div id="preload" style="position: absolute; overflow: hidden; top: 0; left: 0; height: 1px; width: 1px;"></div>
+
+<!--******************-->
+<!--======-->
+
+<!--page_container-->
+<div id="ipbwrapper" class="wrapper">
+<a name="top"></a>
+
+<div id="old-browser-warn" style="background: #FFF227; padding: 8px 0 10px; text-align: center; font-size: 14px; display: none; ">
+	<b>Ви використовуєте застарілий браузер. Сайт може відображатися некоректно.</b>
+</div>
+<script type="62994f3e33b2402b3ce732d5-text/javascript">
+if ( (typeof(window.opera) != "undefined" && window.opera.version() < 12) || (window.attachEvent && !window.addEventListener) /* IE < 9 */ ) {
+	document.getElementById('old-browser-warn').style.display = '';
+}
+</script>	
+<style>
+    .scale {
+     transition: 1s;
+	 display: inline-block; 
+     overflow: hidden;
+    }
+    .scale:hover {
+     transform: scale(1.2);
+    }
+	.scale1 {
+     transition: 0.3s;
+	 border-radius: 1px;
+    }
+	.scale1:hover {
+     transform: scale(1.03);
+    }
+	.scale2 {
+	 border: 0.5px solid #000;
+	 border-radius: 2px;
+    }
+	
+	@keyframes animate {
+    0% {
+        transform: translate3d(0, 0,0);
+    }
+    100% {
+        transform: translate3d(-100%, 0, 0);
+    }
+}
+@-webkit-keyframes animate {
+    0% {
+        transform: translate3d(0, 0,0);
+    }
+    100% {
+        transform: translate3d(-100%, 0, 0);
+    }
+}
+
+.brand-parent {
+    display: flex;
+    display: -webkit-flex;
+    flex-wrap: nowrap;
+    -webkit-flex-wrap: nowrap;
+    align-items: center;
+    -webkit-align-items: center;
+}
+.brands-carousel {
+    height: 110px;
+    display: flex;
+    display: -webkit-flex;
+    flex-wrap: nowrap;
+    align-items: center;
+    -webkit-align-items: center;
+    animation: animate 65s linear infinite;
+}
+.brands-carousel .slide-content {
+    height: 100%;
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 80px;
+}
+.brands-carousel .slide-content a {
+    height: 100%;
+    display: flex;
+    display: -webkit-flex;
+    align-items: center;
+    -webkit-align-items: center;
+    justify-content: center;
+    -webkit-justify-content: center;
+    white-space: nowrap;
+    color: #808080;
+    text-transform: uppercase;
+    padding: 5px;
+    width: 100%;
+    transition: all .3s ease-in-out 0s;
+}
+.brands-carousel .slide-content a:hover, .brands-carousel .slide-content a:active {
+    box-shadow: 0 0 25px rgba(0,0,0,.15);
+}
+.brand-parent:hover .brands-carousel {
+    -webkit-animation-play-state: paused;
+    -moz-animation-play-state: paused;
+    -ms-animation-play-state: paused;
+    -o-animation-play-state: paused;
+    animation-play-state: paused;
+}
+.shop{
+    max-width: 250px;
+    max-height: 250px;
+    width: 100%;
+    height: 100%;
+    border-top: 200px;
+    border-width: 250px;
+    overflow: hidden;
+}
+    </style>
+<!--logo-->
+    <div class="spacer_4"></div>
+	<div class="blurBox">
+		<!--<h1>Мазепа Торент</h1>
+		<h6></h6> -->
+		<a href="./index.php"><img style="width:40%;margin-left:25px;" src="styles/images/logo/logo.png" title="Мазепа Торент" alt="Мазепа Торент" /></a>
+	</div>
+<!--/logo-->	
+<div id="branding">
+    <span id="nav_background"><img src="styles/templates/default/images/snapshot/backgroundChanger.png"></span>	<div id="primary_nav" class="clearfix">
+	    <ul style="text-transform:uppercase" class="ipsList_inline" id="community_app_menu">
+            <li class="left"><a href="./index.php">Головна</a></li>
+			<li class="left"><a href="portals.php">Фільми</a></li>
+			<li class="left"><a href="serial.php">Серіали</a></li>
+			<li class="left"><a href="tracker.php">Трекер</a></li>
+			<!--<li class="left"><a href="/gallery.php">Галерея</a></li>-->
+			<li class="left"><a href="search.php">Пошук</a></li>
+			<li class="left"><a href="terms.php">Правила</a></li>
+			<li class="left"><a href="group.php">Групи</a></li>
+			<!--<li class="left"><a href="memberlist.php">Користувачі</a></li>-->
+			<li class="left"><a href="donate.php">Донат</a></li>
+			<li class="left"><a href="newrelease.php">Додати торент</a></li>		</ul>
+		<script type="62994f3e33b2402b3ce732d5-text/javascript">
+		$(document).ready(function() {
+		 $('#community_app_menu li a').each(function () {
+		  var position = window.location.href;
+		  var thisTab = this.href;
+		  var thisTabHahs = window.location.hash;
+		  
+		  if(position == thisTab || position == thisTab + thisTabHahs){$(this).addClass('active');}
+		  });
+		});
+		</script>
+	</div>
+</div>
+
+<div id="toggle_background"><div id="custom_background" class="clearfix"><div>
+    <span data-backgroundImage='background1' data-backgroundColor='#211d1b' data-blurBackgroundColor='#908e8d' style="background-image: url(https://mazepa.to/styles/templates/default/images/snapshot/background1.jpg);"></span>
+    <span data-backgroundImage='background2' data-backgroundColor='#c6cdd6' data-blurBackgroundColor='#e3e6eb' style="background-image: url(https://mazepa.to/styles/templates/default/images/snapshot/background2.jpg);"></span>
+    <span data-backgroundImage='background3' data-backgroundColor='#e5dccb' data-blurBackgroundColor='#f2eee5' style="background-image: url(https://mazepa.to/styles/templates/default/images/snapshot/background3.jpg);"></span>
+    <span data-backgroundImage='background4' data-backgroundColor='#1f5168' data-blurBackgroundColor='#8fa8b4' style="background-image: url(https://mazepa.to/styles/templates/default/images/snapshot/background4.jpg);"></span>
+</div></div></div>
+
+<div class="clearfix" id="user_bar">
+    <div id="user_navigation">
+				<ul class="ipsList_inline">
+			<li><a title="Ваш профіль" class="user_photo" href="profile.php?mode=viewprofile&amp;u=100000"><img src="https://mazepa.to/data/avatars/gallery/noavatar.png" alt="100000" height="" width="" /></a></li>
+			<li><a class="menu-root menu-alt1" href="#dls-menu">Привіт,<b> testuser</b> &#9660;</a></li>
+			
+			                <li><a href="privmsg.php?folder=inbox&mode=read&p=43025">Приватні повідомлення  
+						<strong title="У Вас є нові повідомлення" class="itemCount">
+							<span class="Total"><b>1</b> нове повідомлення</span>
+							<span class="arrow"></span>
+						</strong>
+					</a>
+				</li>   
+            
+			<li><a href="./login.php?logout=1" onclick="if (!window.__cfRLUnblockHandlers) return false; return confirm('Ви справді бажаєте вийти?');" data-cf-modified-62994f3e33b2402b3ce732d5-="">Вийти</a></li>
+		</ul>
+		
+				
+	</div>
+
+    <div class="right" id="search">
+		<script type="62994f3e33b2402b3ce732d5-text/javascript">
+			$(function(){$("#search_wrap #main_search")
+				.focus(function(){$("#search")
+					.addClass('active');});
+			});
+		</script>
+		<form id="search-box" action="" method="post" onsubmit="if (!window.__cfRLUnblockHandlers) return false; $(this).attr('action', $('#search-action').val()); if($('#search-action option:selected').attr('class') == 'hash') $('#main_search').attr('name', 'hash');" data-cf-modified-62994f3e33b2402b3ce732d5-="">
+			<span id="search_wrap" class="right">
+				<input type="hidden" name="max" value="1" />
+				<input type="hidden" name="to" value="1" />
+				<input id="main_search" type="text" name="nm" placeholder="Що шукаємо?" />
+				<select id="search-action">
+					<option value="tracker.php#results" selected="selected"> на трекері </option>
+					<option value="search.php"> на форумі </option>
+					<option value="tracker.php" class="hash"> за info_hash </option>
+				</select>
+				<input type="submit" class="submit_input clickable" value="Пошук" />
+			</span>
+		</form>
+	</div>
+</div>
+
+<script type="62994f3e33b2402b3ce732d5-text/javascript">
+ajax.index_data = function(tz) {
+	ajax.exec({
+		action  : 'index_data',
+		mode    : 'change_tz',
+		tz      : tz
+	});
+};
+ajax.callback.index_data = function(data) {};
+$(document).ready(function() {
+	x = new Date();
+	tz = -x.getTimezoneOffset()/60;
+	if (tz != 3.00)
+	{
+		ajax.index_data(tz);
+	}
+});
+</script>
+
+<div class="menu-sub" id="dls-menu" style="display: none;">
+	<div class="menu-a nowrap">   
+		<div class="menu-tab">Привіт,<b> testuser</b> &#9660;</div>
+	        <div class="profile">
+                <a class="med" href="profile.php?mode=viewprofile&amp;u=100000">Профіль</a>
+                <a class="med" href="profile.php?mode=editprofile"><b>Налаштування</b></a>
+				<a class="med" href="tracker.php?rid=100000#results">Поточні роздачі</a>
+		        <a class="med" href="search.php?dlu=100000&dlc=1">Завершені завантаження</a>
+		        <a class="med" href="search.php?dlu=100000&dlw=1">Заплановані завантаження</a>
+		        <a class="med" href="profile.php?mode=watch">Відстежувані теми</a>
+	        </div>
+    </div>
+</div>
+
+<!--menus-->
+
+<div class="menu-sub" id="only-new-options">
+	<table cellspacing="1" cellpadding="4">
+	<tr>
+		<th>Параметри відображення</th>
+	</tr>
+	<tr>
+		<td>
+			<fieldset id="show-only">
+			<legend>Показувати тільки</legend>
+			<div class="pad_4">
+				<label>
+					<input id="only_new_posts" type="checkbox" onclick="if (!window.__cfRLUnblockHandlers) return false; 
+							user.set('only_new', ( this.checked ? 1 : 0 ), 365, true);
+							$('#only_new_topics').attr('checked', false);
+						" data-cf-modified-62994f3e33b2402b3ce732d5-="" />тільки нові повідомлення				</label>
+				<label>
+					<input id="only_new_topics" type="checkbox" onclick="if (!window.__cfRLUnblockHandlers) return false; 
+							user.set('only_new', ( this.checked ? 2 : 0 ), 365, true);
+							$('#only_new_posts').attr('checked', false);
+						" data-cf-modified-62994f3e33b2402b3ce732d5-="" />тільки нові теми				</label>
+			</div>
+			</fieldset>
+					</td>
+	</tr>
+	
+	</table>
+</div><!--/only-new-options-->
+<!--/menus-->
+<div class="spacer_4"></div>
+
+<!--page_content-->
+<div id="content" class="clearfix">
+<table cellspacing="0" cellpadding="0" border="0" style="width: 100%;">
+ <tr>
+<!--main_content-->
+
+<td id="main_content">
+    <div id="main_content_wrap">
+    <!--***********************-->
+
+
+<script type='text/javascript' data-cfasync='false'>
+(function(){
+	var script = document.createElement('script');
+	script.type = 'text/javascript';
+	script.charset = 'utf-8';
+	script.async = 'true';
+	script.src = '/styles/js/ed3083cdd5.js' + '?' + Math.random();
+	document.body.appendChild(script);
+})();
+</script>
+
+<!-- page_header.tpl END -->
+
+<!-- module_xx.tpl START --><meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<div id="secondary_navigation" class="clearfix">
+    <ol class="breadcrumb top ipsList_inline left" id="breadcrumb">
+        <li class="first">
+            <a href="./index.php"><span>Головна</span></a>
+        </li>
+		<li>
+			<a href="index.php?c=5"><span>Озвучений контент</span></a>
+		</li>	
+        		<li>
+            <a href="forum-filmy-f=148.html"><span>Фільми</span></a>
+        </li>
+		        <li>
+            <a href="forum-filmy-hd-f=12.html"><span>Фільми HD</span></a>
+        </li>
+    </ol>
+</div>												
+<div class="ipbfs_titlebox">
+	<span class="right"><a class="mark_button" title="Позначити всі теми як прочитані" href="forum-filmy-hd-f=12&amp;mark=topics.html"><img src="/styles/templates/default/images/snapshot/icon_check.png">&nbsp; &nbsp;Позначити всі теми як прочитані</a><a class="ipsButton_secondary" href="posting.php?mode=new_rel&amp;f=12">Створити новий реліз</a></span>	<h1 class="ipsType_pagetitle">Фільми HD</h1>
+							
+<table width="100%">
+	<tr>
+		<td>
+
+
+			<p class="small" id="moderators"><a style="text-decoration: none;" href="#">Модератори</a></p>
+			<script type="62994f3e33b2402b3ce732d5-text/javascript">
+				$(document).ready(function(){
+					$("#moderators a").one('click', function(){
+						$('#moderators').html($('#moderators').text());
+						ajax.index_data();
+						return false;
+					});
+				});
+				ajax.index_data = function() {
+					ajax.exec({
+						action   : 'index_data',
+						mode     : 'get_forum_mods',
+						forum_id : 12					});
+				};
+				ajax.callback.index_data = function(data) {
+					$('#moderators').append(data.html);
+				};
+			</script>
+
+					</td> 
+		<!--
+		<td class="tRight"><div class="pagination clearfix right pag"><a class="menu-root" href="#pg-jump">Перейти на сторінку</a> &nbsp;&nbsp;<b>1</b> <a href="forum-filmy-hd-f=12&amp;start=50.html">2</a> <a href="forum-filmy-hd-f=12&amp;start=100.html">3</a>&nbsp;...&nbsp;<a href="forum-filmy-hd-f=12&amp;start=18750.html">376</a> <a href="forum-filmy-hd-f=12&amp;start=18800.html">377</a> <a href="forum-filmy-hd-f=12&amp;start=18850.html">378</a>&nbsp;&nbsp;<a href="forum-filmy-hd-f=12&amp;start=50.html">Наступ.</a></div></td> 
+		-->
+	</tr>
+</table>
+
+
+
+<div class="blurBox">
+<div class="ipsFilterbar maintitle" style="padding: 0 0 8px;">
+<table class="w100">
+<tr>
+
+		
+		<td class="small bold nowrap tRight w100">
+			&nbsp;
+						<a class="small" href="search.php?uid=100000&f=12">Мої повідомлення</a>&nbsp;&#0183;
+			<a class="menu-root" href="#only-new-options">Параметри відображення</a>
+					</td>
+	</tr>
+
+</table>
+</div>   
+
+<div class="border"><div class="ipsBox removeDefault"><div class="ipsBox_container">
+	<table id="forum_table" class="ipb_table topic_list hover_rows ">
+		<tr id="tr-101803">
+		                <td class="col_f_icon"><img class="light_img" src="https://mazepa.to/data/thumbnails/201128205818824178-f0-0.jpg"></td>	  
+			<td class="col_f_content tt">
+				<h4>
+					<span id="status-101803" title="не перевірено"><span class="tor-icon tor-not-approved">*</span></span>&#0183;																					<a id="tt-101803" href="topic-tenet-tenet-2020-bdremux-1080p-ukr-eng-imax-edition-t=101803.html" class="torTopic tt-text"><b>Тенет / Tenet (2020) BDRemux 1080p Ukr/Eng [IMAX Edition]</b></a>									</h4>
+				<br><br>
+				<span class="desc lighter">
+					Автор: <a href="profile-okremo-mode=viewprofile&amp;u=105854.html"><span title="Модератор" class="">Okremo</span></a>				</span>
+								<br>
+							</td>
+			<td class="col_f_viewst desc blend_links">
+								<ul title="Завантажити торент">
+					<li><span class="seedmed" title="Seeders"><b>0</b></span><span class="med"> | </span>  
+					<span class="leechmed" title="Leechers"><b>0</b></span>
+					<br><a href="./dl.php?id=101968" class="small tr-dl" style="text-decoration: none">37.24&nbsp;GB</a> </li>
+				</ul>
+							</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+					<li><a title="Повідомлень">0</a></li>
+				</ul>
+			</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+					<li class="desc"><a title="Переглядів">70</a></li>
+				</ul>
+			</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+									</ul>
+			</td>
+			<td class="col_f_post">
+				<ul class="last_post ipsType_small">
+					<li class="desc lighter blend_links"><a title="До непрочитаного повідомлення" href="topic-tenet-tenet-2020-bdremux-1080p-ukr-eng-imax-edition-p=113655.html#113655">Сьогодні 13:28</a></li>			<li><a href="profile-okremo-mode=viewprofile&amp;u=105854.html"><span title="Модератор" class="">Okremo</span></a></li>	
+				</ul>
+			</td>
+		</tr>
+				<tr id="tr-101802">
+		                <td class="col_f_icon"><img class="light_img" src="https://mazepa.to/data/thumbnails/201128205818824178-f0-0.jpg"></td>	  
+			<td class="col_f_content tt">
+				<h4>
+					<span id="status-101802" title="не перевірено"><span class="tor-icon tor-not-approved">*</span></span>&#0183;																					<a id="tt-101802" href="topic-tenet-tenet-2020-bdrip-1080p-ukr-eng-imax-edition-t=101802.html" class="torTopic tt-text"><b>Тенет / Tenet (2020) BDRip 1080p Ukr/Eng [IMAX Edition]</b></a>									</h4>
+				<br><br>
+				<span class="desc lighter">
+					Автор: <a href="profile-okremo-mode=viewprofile&amp;u=105854.html"><span title="Модератор" class="">Okremo</span></a>				</span>
+								<br>
+							</td>
+			<td class="col_f_viewst desc blend_links">
+								<ul title="Завантажити торент">
+					<li><span class="seedmed" title="Seeders"><b>1</b></span><span class="med"> | </span>  
+					<span class="leechmed" title="Leechers"><b>1</b></span>
+					<br><a href="./dl.php?id=101967" class="small tr-dl" style="text-decoration: none">20.91&nbsp;GB</a> </li>
+				</ul>
+							</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+					<li><a title="Повідомлень">0</a></li>
+				</ul>
+			</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+					<li class="desc"><a title="Переглядів">66</a></li>
+				</ul>
+			</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+									</ul>
+			</td>
+			<td class="col_f_post">
+				<ul class="last_post ipsType_small">
+					<li class="desc lighter blend_links"><a title="До непрочитаного повідомлення" href="topic-tenet-tenet-2020-bdrip-1080p-ukr-eng-imax-edition-p=113654.html#113654">Сьогодні 13:25</a></li>			<li><a href="profile-okremo-mode=viewprofile&amp;u=105854.html"><span title="Модератор" class="">Okremo</span></a></li>	
+				</ul>
+			</td>
+		</tr>
+				<tr id="tr-101800">
+		                <td class="col_f_icon"><img class="light_img" src="https://mazepa.to/data/thumbnails/2607282124061264827-f0-0.jpg"></td>	  
+			<td class="col_f_content tt">
+				<h4>
+					<span id="status-101800" title="перевірено"><span class="tor-icon tor-approved">&radic;</span></span>&#0183;																					<a id="tt-101800" href="topic-ekskalibur-excalibur-1981-bdrip-1080p-ukr-eng-t=101800.html" class="torTopic tt-text"><b>Екскалібур / Excalibur (1981) BDRip 1080p Ukr/Eng</b></a>									</h4>
+				<br><br>
+				<span class="desc lighter">
+					Автор: <a href="profile-okremo-mode=viewprofile&amp;u=105854.html"><span title="Модератор" class="">Okremo</span></a>				</span>
+								<br>
+							</td>
+			<td class="col_f_viewst desc blend_links">
+								<ul title="Завантажити торент">
+					<li><span class="seedmed" title="Seeders"><b>4</b></span><span class="med"> | </span>  
+					<span class="leechmed" title="Leechers"><b>0</b></span>
+					<br><a href="./dl.php?id=101965" class="small tr-dl" style="text-decoration: none">11.8&nbsp;GB</a> </li>
+				</ul>
+							</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+					<li><a title="Повідомлень">0</a></li>
+				</ul>
+			</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+					<li class="desc"><a title="Переглядів">98</a></li>
+				</ul>
+			</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+									</ul>
+			</td>
+			<td class="col_f_post">
+				<ul class="last_post ipsType_small">
+					<li class="desc lighter blend_links"><a title="До непрочитаного повідомлення" href="topic-ekskalibur-excalibur-1981-bdrip-1080p-ukr-eng-p=113649.html#113649">Сьогодні 08:35</a></li>			<li><a href="profile-okremo-mode=viewprofile&amp;u=105854.html"><span title="Модератор" class="">Okremo</span></a></li>	
+				</ul>
+			</td>
+		</tr>
+				<tr id="tr-101798">
+		                <td class="col_f_icon"><img class="light_img" src="https://mazepa.to/data/thumbnails/2607282124061264827-f0-0.jpg"></td>	  
+			<td class="col_f_content tt">
+				<h4>
+					<span id="status-101798" title="не перевірено"><span class="tor-icon tor-not-approved">*</span></span>&#0183;																					<a id="tt-101798" href="topic-ekskalibur-excalibur-1981-bdremux-1080p-ukr-eng-t=101798.html" class="torTopic tt-text"><b>Екскалібур / Excalibur (1981) BDRemux 1080p Ukr/Eng</b></a>									</h4>
+				<br><br>
+				<span class="desc lighter">
+					Автор: <a href="profile-okremo-mode=viewprofile&amp;u=105854.html"><span title="Модератор" class="">Okremo</span></a>				</span>
+								<br>
+							</td>
+			<td class="col_f_viewst desc blend_links">
+								<ul title="Завантажити торент">
+					<li><span class="seedmed" title="Seeders"><b>0</b></span><span class="med"> | </span>  
+					<span class="leechmed" title="Leechers"><b>1</b></span>
+					<br><a href="./dl.php?id=101963" class="small tr-dl" style="text-decoration: none">26.95&nbsp;GB</a> </li>
+				</ul>
+							</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+					<li><a title="Повідомлень">0</a></li>
+				</ul>
+			</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+					<li class="desc"><a title="Переглядів">50</a></li>
+				</ul>
+			</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+									</ul>
+			</td>
+			<td class="col_f_post">
+				<ul class="last_post ipsType_small">
+					<li class="desc lighter blend_links"><a title="До непрочитаного повідомлення" href="topic-ekskalibur-excalibur-1981-bdremux-1080p-ukr-eng-p=113647.html#113647">Сьогодні 08:31</a></li>			<li><a href="profile-okremo-mode=viewprofile&amp;u=105854.html"><span title="Модератор" class="">Okremo</span></a></li>	
+				</ul>
+			</td>
+		</tr>
+				<tr id="tr-101797">
+		                <td class="col_f_icon"><img class="light_img" src="https://mazepa.to/data/thumbnails/260728030316174873-f0-0.jpg"></td>	  
+			<td class="col_f_content tt">
+				<h4>
+					<span id="status-101797" title="перевірено"><span class="tor-icon tor-approved">&radic;</span></span>&#0183;																					<a id="tt-101797" href="topic-pogovory-zi-mnoju-govory-do-mene-talk-to-me-2022-bdrip-1080p-ukr-eng-t=101797.html" class="torTopic tt-text"><b>Поговори зі мною / Говори до мене / Talk to Me (2022) BDRip 1080p Ukr/Eng</b></a>									</h4>
+				<br><br>
+				<span class="desc lighter">
+					Автор: <a href="profile-okremo-mode=viewprofile&amp;u=105854.html"><span title="Модератор" class="">Okremo</span></a>				</span>
+								<br>
+							</td>
+			<td class="col_f_viewst desc blend_links">
+								<ul title="Завантажити торент">
+					<li><span class="seedmed" title="Seeders"><b>1</b></span><span class="med"> | </span>  
+					<span class="leechmed" title="Leechers"><b>2</b></span>
+					<br><a href="./dl.php?id=101962" class="small tr-dl" style="text-decoration: none">9.53&nbsp;GB</a> </li>
+				</ul>
+							</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+					<li><a title="Повідомлень">0</a></li>
+				</ul>
+			</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+					<li class="desc"><a title="Переглядів">79</a></li>
+				</ul>
+			</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+									</ul>
+			</td>
+			<td class="col_f_post">
+				<ul class="last_post ipsType_small">
+					<li class="desc lighter blend_links"><a title="До непрочитаного повідомлення" href="topic-pogovory-zi-mnoju-govory-do-mene-talk-to-me-2022-bdrip-1080p-ukr-eng-p=113646.html#113646">Сьогодні 08:25</a></li>			<li><a href="profile-okremo-mode=viewprofile&amp;u=105854.html"><span title="Модератор" class="">Okremo</span></a></li>	
+				</ul>
+			</td>
+		</tr>
+				<tr id="tr-101789">
+		                <td class="col_f_icon"><img class="light_img" src="https://mazepa.to/data/thumbnails/2607281802017128-f0-0.jpg"></td>	  
+			<td class="col_f_content tt">
+				<h4>
+					<span id="status-101789" title="не перевірено"><span class="tor-icon tor-not-approved">*</span></span>&#0183;																					<a id="tt-101789" href="topic-gitler-shodzhennja-dyjavola-hitler-the-rise-of-evil-mini-serial-2003-bdrip-1080p-ukr-eng-t=101789.html" class="torTopic tt-text"><b>Гітлер: Сходження диявола / Hitler: The Rise of Evil (Міні серіал) (2003) BDRip 1080p Ukr/Eng</b></a>									</h4>
+				<br><br>
+				<span class="desc lighter">
+					Автор: <a href="profile-okremo-mode=viewprofile&amp;u=105854.html"><span title="Модератор" class="">Okremo</span></a>				</span>
+								<br>
+							</td>
+			<td class="col_f_viewst desc blend_links">
+								<ul title="Завантажити торент">
+					<li><span class="seedmed" title="Seeders"><b>6</b></span><span class="med"> | </span>  
+					<span class="leechmed" title="Leechers"><b>0</b></span>
+					<br><a href="./dl.php?id=101955" class="small tr-dl" style="text-decoration: none">19.71&nbsp;GB</a> </li>
+				</ul>
+							</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+					<li><a title="Повідомлень">0</a></li>
+				</ul>
+			</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+					<li class="desc"><a title="Переглядів">273</a></li>
+				</ul>
+			</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+									</ul>
+			</td>
+			<td class="col_f_post">
+				<ul class="last_post ipsType_small">
+					<li class="desc lighter blend_links"><a title="До непрочитаного повідомлення" href="topic-gitler-shodzhennja-dyjavola-hitler-the-rise-of-evil-mini-serial-2003-bdrip-1080p-ukr-eng-p=113632.html#113632">28 Лип 2026, 18:39</a></li>			<li><a href="profile-okremo-mode=viewprofile&amp;u=105854.html"><span title="Модератор" class="">Okremo</span></a></li>	
+				</ul>
+			</td>
+		</tr>
+				<tr id="tr-101788">
+		                <td class="col_f_icon"><img class="light_img" src="https://mazepa.to/data/thumbnails/2607281802017128-f0-0.jpg"></td>	  
+			<td class="col_f_content tt">
+				<h4>
+					<span id="status-101788" title="не перевірено"><span class="tor-icon tor-not-approved">*</span></span>&#0183;																					<a id="tt-101788" href="topic-gitler-shodzhennja-dyjavola-hitler-the-rise-of-evil-mini-serial-2003-bdremux-1080iukr-eng-t=101788.html" class="torTopic tt-text"><b>Гітлер: Сходження диявола / Hitler: The Rise of Evil (Міні серіал) (2003) BDRemux 1080i Ukr/Eng</b></a>									</h4>
+				<br><br>
+				<span class="desc lighter">
+					Автор: <a href="profile-okremo-mode=viewprofile&amp;u=105854.html"><span title="Модератор" class="">Okremo</span></a>				</span>
+								<br>
+							</td>
+			<td class="col_f_viewst desc blend_links">
+								<ul title="Завантажити торент">
+					<li><span class="seedmed" title="Seeders"><b>2</b></span><span class="med"> | </span>  
+					<span class="leechmed" title="Leechers"><b>0</b></span>
+					<br><a href="./dl.php?id=101954" class="small tr-dl" style="text-decoration: none">44.19&nbsp;GB</a> </li>
+				</ul>
+							</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+					<li><a title="Повідомлень">0</a></li>
+				</ul>
+			</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+					<li class="desc"><a title="Переглядів">147</a></li>
+				</ul>
+			</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+									</ul>
+			</td>
+			<td class="col_f_post">
+				<ul class="last_post ipsType_small">
+					<li class="desc lighter blend_links"><a title="До непрочитаного повідомлення" href="topic-gitler-shodzhennja-dyjavola-hitler-the-rise-of-evil-mini-serial-2003-bdremux-1080iukr-eng-p=113631.html#113631">28 Лип 2026, 18:37</a></li>			<li><a href="profile-okremo-mode=viewprofile&amp;u=105854.html"><span title="Модератор" class="">Okremo</span></a></li>	
+				</ul>
+			</td>
+		</tr>
+				<tr id="tr-94749">
+		                <td class="col_f_icon"><img class="light_img" src="https://mazepa.to/data/thumbnails/240714130940730949-f0-0.jpg"></td>	  
+			<td class="col_f_content tt">
+				<h4>
+					<span id="status-94749" title="перевірено"><span class="tor-icon tor-approved">&radic;</span></span>&#0183;																					<a id="tt-94749" href="topic-nagljadachi-the-watchers-2024-bdrip-1080p-h265-2xukr-eng-t=94749.html" class="torTopic tt-text"><b>Наглядачі / The Watchers (2024) BDRip 1080p H265 2xUkr/Eng</b></a>									</h4>
+				<br><br>
+				<span class="desc lighter">
+					Автор: <a href="profile-resko-mode=viewprofile&amp;u=76370.html"><span title="Модератор" class="">Resko</span></a>				</span>
+								<br>
+							</td>
+			<td class="col_f_viewst desc blend_links">
+								<ul title="Завантажити торент">
+					<li><span class="seedmed" title="Seeders"><b>0</b></span><span class="med"> | </span>  
+					<span class="leechmed" title="Leechers"><b>0</b></span>
+					<br><a href="./dl.php?id=95240" class="small tr-dl" style="text-decoration: none">3.57&nbsp;GB</a> </li>
+				</ul>
+							</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+					<li><a title="Повідомлень">1</a></li>
+				</ul>
+			</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+					<li class="desc"><a title="Переглядів">1054</a></li>
+				</ul>
+			</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+									</ul>
+			</td>
+			<td class="col_f_post">
+				<ul class="last_post ipsType_small">
+					<li class="desc lighter blend_links"><a title="До непрочитаного повідомлення" href="topic-nagljadachi-the-watchers-2024-bdrip-1080p-h265-2xukr-eng-p=113630.html#113630">28 Лип 2026, 18:22</a></li>			<li><a href="profile-okremo-mode=viewprofile&amp;u=105854.html"><span title="Модератор" class="">Okremo</span></a></li>	
+				</ul>
+			</td>
+		</tr>
+				<tr id="tr-101785">
+		                <td class="col_f_icon"><img class="light_img" src="https://mazepa.to/data/thumbnails/2401091138231206518-f0-0.jpg"></td>	  
+			<td class="col_f_content tt">
+				<h4>
+					<span id="status-101785" title="не перевірено"><span class="tor-icon tor-not-approved">*</span></span>&#0183;																					<a id="tt-101785" href="topic-vonka-wonka-2023-bdremux-1080p-ukr-eng-t=101785.html" class="torTopic tt-text"><b>Вонка / Wonka (2023) BDRemux 1080p Ukr/Eng</b></a>									</h4>
+				<br><br>
+				<span class="desc lighter">
+					Автор: <a href="profile-okremo-mode=viewprofile&amp;u=105854.html"><span title="Модератор" class="">Okremo</span></a>				</span>
+								<br>
+							</td>
+			<td class="col_f_viewst desc blend_links">
+								<ul title="Завантажити торент">
+					<li><span class="seedmed" title="Seeders"><b>0</b></span><span class="med"> | </span>  
+					<span class="leechmed" title="Leechers"><b>0</b></span>
+					<br><a href="./dl.php?id=101951" class="small tr-dl" style="text-decoration: none">24.65&nbsp;GB</a> </li>
+				</ul>
+							</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+					<li><a title="Повідомлень">0</a></li>
+				</ul>
+			</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+					<li class="desc"><a title="Переглядів">78</a></li>
+				</ul>
+			</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+									</ul>
+			</td>
+			<td class="col_f_post">
+				<ul class="last_post ipsType_small">
+					<li class="desc lighter blend_links"><a title="До непрочитаного повідомлення" href="topic-vonka-wonka-2023-bdremux-1080p-ukr-eng-p=113626.html#113626">28 Лип 2026, 14:58</a></li>			<li><a href="profile-okremo-mode=viewprofile&amp;u=105854.html"><span title="Модератор" class="">Okremo</span></a></li>	
+				</ul>
+			</td>
+		</tr>
+				<tr id="tr-4176">
+		                <td class="col_f_icon"><img class="light_img" src="https://mazepa.to/data/thumbnails/happy-death-day-2u-2019-550.jpg"></td>	  
+			<td class="col_f_content tt">
+				<h4>
+					<span id="status-4176" title="не перевірено"><span class="tor-icon tor-not-approved">*</span></span>&#0183;																					<a id="tt-4176" href="topic-schaslyvyj-den-smerti-2-happy-death-day-2u-2019-bdremux-1080p-ukr-eng-t=4176.html" class="torTopic tt-text"><b>Щасливий день смерті 2 / Happy Death Day 2U (2019) BDRemux 1080p Ukr/Eng</b></a>									</h4>
+				<br><br>
+				<span class="desc lighter">
+					Автор: <a href="profile-gljuk4-mode=viewprofile&amp;u=57.html"><span title="Користувач" class="">Gljuk4</span></a>				</span>
+								<br>
+							</td>
+			<td class="col_f_viewst desc blend_links">
+								<ul title="Завантажити торент">
+					<li><span class="seedmed" title="Seeders"><b>0</b></span><span class="med"> | </span>  
+					<span class="leechmed" title="Leechers"><b>0</b></span>
+					<br><a href="./dl.php?id=4188" class="small tr-dl" style="text-decoration: none">21.65&nbsp;GB</a> </li>
+				</ul>
+							</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+					<li><a title="Повідомлень">2</a></li>
+				</ul>
+			</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+					<li class="desc"><a title="Переглядів">1044</a></li>
+				</ul>
+			</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+									</ul>
+			</td>
+			<td class="col_f_post">
+				<ul class="last_post ipsType_small">
+					<li class="desc lighter blend_links"><a title="До непрочитаного повідомлення" href="topic-schaslyvyj-den-smerti-2-happy-death-day-2u-2019-bdremux-1080p-ukr-eng-p=113624.html#113624">28 Лип 2026, 11:06</a></li>			<li><a href="profile-okremo-mode=viewprofile&amp;u=105854.html"><span title="Модератор" class="">Okremo</span></a></li>	
+				</ul>
+			</td>
+		</tr>
+				<tr id="tr-101783">
+		                <td class="col_f_icon"><img class="light_img" src="https://mazepa.to/data/thumbnails/260728030316174873-f0-0.jpg"></td>	  
+			<td class="col_f_content tt">
+				<h4>
+					<span id="status-101783" title="перевірено"><span class="tor-icon tor-approved">&radic;</span></span>&#0183;																					<a id="tt-101783" href="topic-pogovory-zi-mnoju-govory-do-mene-talk-to-me-2022-bdremux-1080p-ukr-eng-t=101783.html" class="torTopic tt-text"><b>Поговори зі мною / Говори до мене / Talk to Me (2022) BDRemux 1080p Ukr/Eng</b></a>									</h4>
+				<br><br>
+				<span class="desc lighter">
+					Автор: <a href="profile-okremo-mode=viewprofile&amp;u=105854.html"><span title="Модератор" class="">Okremo</span></a>				</span>
+								<br>
+							</td>
+			<td class="col_f_viewst desc blend_links">
+								<ul title="Завантажити торент">
+					<li><span class="seedmed" title="Seeders"><b>0</b></span><span class="med"> | </span>  
+					<span class="leechmed" title="Leechers"><b>0</b></span>
+					<br><a href="./dl.php?id=101949" class="small tr-dl" style="text-decoration: none">19.01&nbsp;GB</a> </li>
+				</ul>
+							</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+					<li><a title="Повідомлень">0</a></li>
+				</ul>
+			</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+					<li class="desc"><a title="Переглядів">191</a></li>
+				</ul>
+			</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+									</ul>
+			</td>
+			<td class="col_f_post">
+				<ul class="last_post ipsType_small">
+					<li class="desc lighter blend_links"><a title="До непрочитаного повідомлення" href="topic-pogovory-zi-mnoju-govory-do-mene-talk-to-me-2022-bdremux-1080p-ukr-eng-p=113622.html#113622">28 Лип 2026, 09:39</a></li>			<li><a href="profile-okremo-mode=viewprofile&amp;u=105854.html"><span title="Модератор" class="">Okremo</span></a></li>	
+				</ul>
+			</td>
+		</tr>
+				<tr id="tr-101779">
+		                <td class="col_f_icon"><img class="light_img" src="https://mazepa.to/data/thumbnails/26072719093651686-f0-0.jpg"></td>	  
+			<td class="col_f_content tt">
+				<h4>
+					<span id="status-101779" title="не перевірено"><span class="tor-icon tor-not-approved">*</span></span>&#0183;																					<a id="tt-101779" href="topic-volodar-moriv-na-kraju-zemli-volodar-moriv-na-kraju-svitu-master-and-commander-the-far-side-of-the-world-2003-bdrip-1080p-h265-2hukr-eng-t=101779.html" class="torTopic tt-text"><b>Володар морів: На краю Землі / Володар морів: На краю світу / Master and Commander: The Far Side of the World (2003) BDRip 1080p H.265 2хUkr/Eng</b></a>									</h4>
+				<br><br>
+				<span class="desc lighter">
+					Автор: <a href="profile-okremo-mode=viewprofile&amp;u=105854.html"><span title="Модератор" class="">Okremo</span></a>				</span>
+								<br>
+							</td>
+			<td class="col_f_viewst desc blend_links">
+								<ul title="Завантажити торент">
+					<li><span class="seedmed" title="Seeders"><b>6</b></span><span class="med"> | </span>  
+					<span class="leechmed" title="Leechers"><b>0</b></span>
+					<br><a href="./dl.php?id=101945" class="small tr-dl" style="text-decoration: none">9.73&nbsp;GB</a> </li>
+				</ul>
+							</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+					<li><a title="Повідомлень">0</a></li>
+				</ul>
+			</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+					<li class="desc"><a title="Переглядів">201</a></li>
+				</ul>
+			</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+									</ul>
+			</td>
+			<td class="col_f_post">
+				<ul class="last_post ipsType_small">
+					<li class="desc lighter blend_links"><a title="До непрочитаного повідомлення" href="topic-volodar-moriv-na-kraju-zemli-volodar-moriv-na-kraju-svitu-master-and-commander-the-far-side-of-the-world-2003-bdrip-1080p-h265-2hukr-eng-p=113617.html#113617">27 Лип 2026, 23:05</a></li>			<li><a href="profile-okremo-mode=viewprofile&amp;u=105854.html"><span title="Модератор" class="">Okremo</span></a></li>	
+				</ul>
+			</td>
+		</tr>
+				<tr id="tr-101743">
+		                <td class="col_f_icon"><img class="light_img" src="https://mazepa.to/data/thumbnails/26072321041451686-f0-0.jpg"></td>	  
+			<td class="col_f_content tt">
+				<h4>
+					<span id="status-101743" title="не перевірено"><span class="tor-icon tor-not-approved">*</span></span>&#0183;																					<a id="tt-101743" href="topic-stezhennja-2-another-stakeout-1993-bdrip-1080p-h265-ukr-eng-t=101743.html" class="torTopic tt-text"><b>Стеження 2 / Another Stakeout (1993) BDRip 1080p H.265 Ukr/Eng</b></a>									</h4>
+				<br><br>
+				<span class="desc lighter">
+					Автор: <a href="profile-okremo-mode=viewprofile&amp;u=105854.html"><span title="Модератор" class="">Okremo</span></a>				</span>
+								<br>
+							</td>
+			<td class="col_f_viewst desc blend_links">
+								<ul title="Завантажити торент">
+					<li><span class="seedmed" title="Seeders"><b>0</b></span><span class="med"> | </span>  
+					<span class="leechmed" title="Leechers"><b>0</b></span>
+					<br><a href="./dl.php?id=101909" class="small tr-dl" style="text-decoration: none">4.15&nbsp;GB</a> </li>
+				</ul>
+							</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+					<li><a title="Повідомлень">0</a></li>
+				</ul>
+			</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+					<li class="desc"><a title="Переглядів">100</a></li>
+				</ul>
+			</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+									</ul>
+			</td>
+			<td class="col_f_post">
+				<ul class="last_post ipsType_small">
+					<li class="desc lighter blend_links"><a title="До непрочитаного повідомлення" href="topic-stezhennja-2-another-stakeout-1993-bdrip-1080p-h265-ukr-eng-p=113550.html#113550">26 Лип 2026, 13:43</a></li>			<li><a href="profile-okremo-mode=viewprofile&amp;u=105854.html"><span title="Модератор" class="">Okremo</span></a></li>	
+				</ul>
+			</td>
+		</tr>
+				<tr id="tr-101742">
+		                <td class="col_f_icon"><img class="light_img" src="https://mazepa.to/data/thumbnails/28-days-later-2002-179-550.jpg"></td>	  
+			<td class="col_f_content tt">
+				<h4>
+					<span id="status-101742" title="не перевірено"><span class="tor-icon tor-not-approved">*</span></span>&#0183;																					<a id="tt-101742" href="topic-28-dniv-potomu-28-days-later-2002-bdremux-1080p-ukr-eng-t=101742.html" class="torTopic tt-text"><b>28 днів потому / 28 Days Later... (2002) BDRemux 1080p Ukr/Eng</b></a>									</h4>
+				<br><br>
+				<span class="desc lighter">
+					Автор: <a href="profile-okremo-mode=viewprofile&amp;u=105854.html"><span title="Модератор" class="">Okremo</span></a>				</span>
+								<br>
+							</td>
+			<td class="col_f_viewst desc blend_links">
+								<ul title="Завантажити торент">
+					<li><span class="seedmed" title="Seeders"><b>0</b></span><span class="med"> | </span>  
+					<span class="leechmed" title="Leechers"><b>0</b></span>
+					<br><a href="./dl.php?id=101908" class="small tr-dl" style="text-decoration: none">27.17&nbsp;GB</a> </li>
+				</ul>
+							</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+					<li><a title="Повідомлень">0</a></li>
+				</ul>
+			</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+					<li class="desc"><a title="Переглядів">134</a></li>
+				</ul>
+			</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+									</ul>
+			</td>
+			<td class="col_f_post">
+				<ul class="last_post ipsType_small">
+					<li class="desc lighter blend_links"><a title="До непрочитаного повідомлення" href="topic-28-dniv-potomu-28-days-later-2002-bdremux-1080p-ukr-eng-p=113549.html#113549">26 Лип 2026, 13:40</a></li>			<li><a href="profile-okremo-mode=viewprofile&amp;u=105854.html"><span title="Модератор" class="">Okremo</span></a></li>	
+				</ul>
+			</td>
+		</tr>
+				<tr id="tr-101741">
+		                <td class="col_f_icon"><img class="light_img" src="https://mazepa.to/data/thumbnails/2403210141522760-f0-0.jpg"></td>	  
+			<td class="col_f_content tt">
+				<h4>
+					<span id="status-101741" title="не перевірено"><span class="tor-icon tor-not-approved">*</span></span>&#0183;																					<a id="tt-101741" href="topic-nestacha-zlist-vice-2008-web-dl-1080p-ukr-eng-t=101741.html" class="torTopic tt-text"><b>Нестача / Злість / Vice (2008) WEB-DL 1080p Ukr/Eng</b></a>									</h4>
+				<br><br>
+				<span class="desc lighter">
+					Автор: <a href="profile-okremo-mode=viewprofile&amp;u=105854.html"><span title="Модератор" class="">Okremo</span></a>				</span>
+								<br>
+							</td>
+			<td class="col_f_viewst desc blend_links">
+								<ul title="Завантажити торент">
+					<li><span class="seedmed" title="Seeders"><b>2</b></span><span class="med"> | </span>  
+					<span class="leechmed" title="Leechers"><b>0</b></span>
+					<br><a href="./dl.php?id=101907" class="small tr-dl" style="text-decoration: none">6.38&nbsp;GB</a> </li>
+				</ul>
+							</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+					<li><a title="Повідомлень">0</a></li>
+				</ul>
+			</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+					<li class="desc"><a title="Переглядів">135</a></li>
+				</ul>
+			</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+									</ul>
+			</td>
+			<td class="col_f_post">
+				<ul class="last_post ipsType_small">
+					<li class="desc lighter blend_links"><a title="До непрочитаного повідомлення" href="topic-nestacha-zlist-vice-2008-web-dl-1080p-ukr-eng-p=113548.html#113548">26 Лип 2026, 12:30</a></li>			<li><a href="profile-okremo-mode=viewprofile&amp;u=105854.html"><span title="Модератор" class="">Okremo</span></a></li>	
+				</ul>
+			</td>
+		</tr>
+				<tr id="tr-101739">
+		                <td class="col_f_icon"><img class="light_img" src="https://mazepa.to/data/thumbnails/260601195604730949-f0-0.jpg"></td>	  
+			<td class="col_f_content tt">
+				<h4>
+					<span id="status-101739" title="не перевірено"><span class="tor-icon tor-not-approved">*</span></span>&#0183;																					<a id="tt-101739" href="topic-imperija-piskiv-desert-warrior-2025-bdrip-720p-ukr-eng-t=101739.html" class="torTopic tt-text"><b>Імперія пісків / Desert Warrior (2025) BDRip 720p Ukr/Eng</b></a>									</h4>
+				<br><br>
+				<span class="desc lighter">
+					Автор: <a href="profile-okremo-mode=viewprofile&amp;u=105854.html"><span title="Модератор" class="">Okremo</span></a>				</span>
+								<br>
+							</td>
+			<td class="col_f_viewst desc blend_links">
+								<ul title="Завантажити торент">
+					<li><span class="seedmed" title="Seeders"><b>0</b></span><span class="med"> | </span>  
+					<span class="leechmed" title="Leechers"><b>0</b></span>
+					<br><a href="./dl.php?id=101905" class="small tr-dl" style="text-decoration: none">6.27&nbsp;GB</a> </li>
+				</ul>
+							</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+					<li><a title="Повідомлень">0</a></li>
+				</ul>
+			</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+					<li class="desc"><a title="Переглядів">201</a></li>
+				</ul>
+			</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+									</ul>
+			</td>
+			<td class="col_f_post">
+				<ul class="last_post ipsType_small">
+					<li class="desc lighter blend_links"><a title="До непрочитаного повідомлення" href="topic-imperija-piskiv-desert-warrior-2025-bdrip-720p-ukr-eng-p=113546.html#113546">26 Лип 2026, 09:55</a></li>			<li><a href="profile-okremo-mode=viewprofile&amp;u=105854.html"><span title="Модератор" class="">Okremo</span></a></li>	
+				</ul>
+			</td>
+		</tr>
+				<tr id="tr-101738">
+		                <td class="col_f_icon"><img class="light_img" src="https://mazepa.to/data/thumbnails/260601195604730949-f0-0.jpg"></td>	  
+			<td class="col_f_content tt">
+				<h4>
+					<span id="status-101738" title="не перевірено"><span class="tor-icon tor-not-approved">*</span></span>&#0183;																					<a id="tt-101738" href="topic-imperija-piskiv-desert-warrior-2025-bdrip-1080p-ukr-eng-t=101738.html" class="torTopic tt-text"><b>Імперія пісків / Desert Warrior (2025) BDRip 1080p Ukr/Eng</b></a>									</h4>
+				<br><br>
+				<span class="desc lighter">
+					Автор: <a href="profile-okremo-mode=viewprofile&amp;u=105854.html"><span title="Модератор" class="">Okremo</span></a>				</span>
+								<br>
+							</td>
+			<td class="col_f_viewst desc blend_links">
+								<ul title="Завантажити торент">
+					<li><span class="seedmed" title="Seeders"><b>0</b></span><span class="med"> | </span>  
+					<span class="leechmed" title="Leechers"><b>0</b></span>
+					<br><a href="./dl.php?id=101904" class="small tr-dl" style="text-decoration: none">11.47&nbsp;GB</a> </li>
+				</ul>
+							</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+					<li><a title="Повідомлень">0</a></li>
+				</ul>
+			</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+					<li class="desc"><a title="Переглядів">129</a></li>
+				</ul>
+			</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+									</ul>
+			</td>
+			<td class="col_f_post">
+				<ul class="last_post ipsType_small">
+					<li class="desc lighter blend_links"><a title="До непрочитаного повідомлення" href="topic-imperija-piskiv-desert-warrior-2025-bdrip-1080p-ukr-eng-p=113545.html#113545">26 Лип 2026, 09:54</a></li>			<li><a href="profile-okremo-mode=viewprofile&amp;u=105854.html"><span title="Модератор" class="">Okremo</span></a></li>	
+				</ul>
+			</td>
+		</tr>
+				<tr id="tr-101733">
+		                <td class="col_f_icon"><img class="light_img" src="https://mazepa.to/data/thumbnails/26072520505751686-f0-0.jpg"></td>	  
+			<td class="col_f_content tt">
+				<h4>
+					<span id="status-101733" title="перевірено"><span class="tor-icon tor-approved">&radic;</span></span>&#0183;																					<a id="tt-101733" href="topic-oblychchja-jangola-the-face-of-an-angel-2014-web-dl-1080p-ukr-eng-t=101733.html" class="torTopic tt-text"><b>Обличчя янгола / The Face of an Angel (2014) WEB-DL 1080p Ukr/Eng</b></a>									</h4>
+				<br><br>
+				<span class="desc lighter">
+					Автор: <a href="profile-okremo-mode=viewprofile&amp;u=105854.html"><span title="Модератор" class="">Okremo</span></a>				</span>
+								<br>
+							</td>
+			<td class="col_f_viewst desc blend_links">
+								<ul title="Завантажити торент">
+					<li><span class="seedmed" title="Seeders"><b>1</b></span><span class="med"> | </span>  
+					<span class="leechmed" title="Leechers"><b>0</b></span>
+					<br><a href="./dl.php?id=101899" class="small tr-dl" style="text-decoration: none">6.36&nbsp;GB</a> </li>
+				</ul>
+							</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+					<li><a title="Повідомлень">0</a></li>
+				</ul>
+			</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+					<li class="desc"><a title="Переглядів">234</a></li>
+				</ul>
+			</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+									</ul>
+			</td>
+			<td class="col_f_post">
+				<ul class="last_post ipsType_small">
+					<li class="desc lighter blend_links"><a title="До непрочитаного повідомлення" href="topic-oblychchja-jangola-the-face-of-an-angel-2014-web-dl-1080p-ukr-eng-p=113540.html#113540">25 Лип 2026, 21:41</a></li>			<li><a href="profile-okremo-mode=viewprofile&amp;u=105854.html"><span title="Модератор" class="">Okremo</span></a></li>	
+				</ul>
+			</td>
+		</tr>
+				<tr id="tr-58763">
+		                <td class="col_f_icon"><img class="light_img" src="https://mazepa.to/data/thumbnails/201229152910959065_f0_0.png"></td>	  
+			<td class="col_f_content tt">
+				<h4>
+					<span id="status-58763" title="не перевірено"><span class="tor-icon tor-not-approved">*</span></span>&#0183;																					<a id="tt-58763" href="topic-kristofer-nolan-kolekcija-christopher-nolan-collection-1998-2020-bdrip-1080p-h265-ukr-eng-sub-eng-t=58763.html" class="torTopic tt-text"><b>Крістофер Нолан. Колекція / Christopher Nolan. Collection (1998-2020) BDRip 1080p H.265 Ukr/Eng | Sub Eng</b></a>									</h4>
+				<br><br>
+				<span class="desc lighter">
+					Автор: <span title="Користувач" class="">Гість</span>				</span>
+								<br>
+							</td>
+			<td class="col_f_viewst desc blend_links">
+								<ul title="Завантажити торент">
+					<li><span class="seedmed" title="Seeders"><b>1</b></span><span class="med"> | </span>  
+					<span class="leechmed" title="Leechers"><b>4</b></span>
+					<br><a href="./dl.php?id=58754" class="small tr-dl" style="text-decoration: none">149.76&nbsp;GB</a> </li>
+				</ul>
+							</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+					<li><a title="Повідомлень">0</a></li>
+				</ul>
+			</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+					<li class="desc"><a title="Переглядів">767</a></li>
+				</ul>
+			</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+									</ul>
+			</td>
+			<td class="col_f_post">
+				<ul class="last_post ipsType_small">
+					<li class="desc lighter blend_links"><a title="До непрочитаного повідомлення" href="topic-kristofer-nolan-kolekcija-christopher-nolan-collection-1998-2020-bdrip-1080p-h265-ukr-eng-sub-eng-p=58765.html#58765">25 Лип 2026, 20:26</a></li>			<li><span title="Користувач" class="">Гість</span></li>	
+				</ul>
+			</td>
+		</tr>
+				<tr id="tr-72935">
+		                <td class="col_f_icon"><img class="light_img" src="https://mazepa.to/data/thumbnails/2206241235552760-f0-0.jpg"></td>	  
+			<td class="col_f_content tt">
+				<h4>
+					<span id="status-72935" title="не перевірено"><span class="tor-icon tor-not-approved">*</span></span>&#0183;																					<a id="tt-72935" href="topic-fantastychni-zviri-kolekcija-fantastic-beasts-collection-2016-2022-bdrip-1080p-h265-ukr-eng-t=72935.html" class="torTopic tt-text"><b>Фантастичні звірі. Колекція / Fantastic Beasts. Collection (2016-2022) BDRip 1080p H.265 Ukr/Eng</b></a>									</h4>
+				<br><br>
+				<span class="desc lighter">
+					Автор: <span title="Користувач" class="">Гість</span>				</span>
+								<br>
+							</td>
+			<td class="col_f_viewst desc blend_links">
+								<ul title="Завантажити торент">
+					<li><span class="seedmed" title="Seeders"><b>2</b></span><span class="med"> | </span>  
+					<span class="leechmed" title="Leechers"><b>0</b></span>
+					<br><a href="./dl.php?id=72925" class="small tr-dl" style="text-decoration: none">18.15&nbsp;GB</a> </li>
+				</ul>
+							</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+					<li><a title="Повідомлень">0</a></li>
+				</ul>
+			</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+					<li class="desc"><a title="Переглядів">1888</a></li>
+				</ul>
+			</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+									</ul>
+			</td>
+			<td class="col_f_post">
+				<ul class="last_post ipsType_small">
+					<li class="desc lighter blend_links"><a title="До непрочитаного повідомлення" href="topic-fantastychni-zviri-kolekcija-fantastic-beasts-collection-2016-2022-bdrip-1080p-h265-ukr-eng-p=72937.html#72937">25 Лип 2026, 18:28</a></li>			<li><span title="Користувач" class="">Гість</span></li>	
+				</ul>
+			</td>
+		</tr>
+				<tr id="tr-2807">
+		                <td class="col_f_icon"><img class="light_img" src="https://mazepa.to/data/thumbnails/2201270002102760-f0-0.jpg"></td>	  
+			<td class="col_f_content tt">
+				<h4>
+					<span id="status-2807" title="не перевірено"><span class="tor-icon tor-not-approved">*</span></span>&#0183;																					<a id="tt-2807" href="topic-garri-potter-kolekcija-harry-potter-collection-2001-2011-bdrip-1080p-h265-ukr-eng-sub-ukr-eng-t=2807.html" class="torTopic tt-text"><b>Гаррі Поттер. Колекція / Harry Potter. Collection (2001-2011) BDRip 1080p H.265 Ukr/Eng | Sub Ukr/Eng</b></a>									</h4>
+				<br><br>
+				<span class="desc lighter">
+					Автор: <a href="profile-petro-mode=viewprofile&amp;u=463.html"><span title="Релізер" class="">петро</span></a>				</span>
+								<br>
+							</td>
+			<td class="col_f_viewst desc blend_links">
+								<ul title="Завантажити торент">
+					<li><span class="seedmed" title="Seeders"><b>0</b></span><span class="med"> | </span>  
+					<span class="leechmed" title="Leechers"><b>1</b></span>
+					<br><a href="./dl.php?id=2792" class="small tr-dl" style="text-decoration: none">91.02&nbsp;GB</a> </li>
+				</ul>
+							</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+					<li><a title="Повідомлень">0</a></li>
+				</ul>
+			</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+					<li class="desc"><a title="Переглядів">6890</a></li>
+				</ul>
+			</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+									</ul>
+			</td>
+			<td class="col_f_post">
+				<ul class="last_post ipsType_small">
+					<li class="desc lighter blend_links"><a title="До непрочитаного повідомлення" href="topic-garri-potter-kolekcija-harry-potter-collection-2001-2011-bdrip-1080p-h265-ukr-eng-sub-ukr-eng-p=6199.html#6199">25 Лип 2026, 18:26</a></li>			<li><a href="profile-petro-mode=viewprofile&amp;u=463.html"><span title="Релізер" class="">петро</span></a></li>	
+				</ul>
+			</td>
+		</tr>
+				<tr id="tr-101724">
+		                <td class="col_f_icon"><img class="light_img" src="https://mazepa.to/data/thumbnails/25102512025551686-f0-0.jpg"></td>	  
+			<td class="col_f_content tt">
+				<h4>
+					<span id="status-101724" title="не перевірено"><span class="tor-icon tor-not-approved">*</span></span>&#0183;																					<a id="tt-101724" href="topic-muza-the-muse-1999-web-dl-1080p-3xukr-eng-t=101724.html" class="torTopic tt-text"><b>Муза / The Muse (1999) WEB-DL 1080p 3xUkr/Eng</b></a>									</h4>
+				<br><br>
+				<span class="desc lighter">
+					Автор: <a href="profile-okremo-mode=viewprofile&amp;u=105854.html"><span title="Модератор" class="">Okremo</span></a>				</span>
+								<br>
+							</td>
+			<td class="col_f_viewst desc blend_links">
+								<ul title="Завантажити торент">
+					<li><span class="seedmed" title="Seeders"><b>1</b></span><span class="med"> | </span>  
+					<span class="leechmed" title="Leechers"><b>0</b></span>
+					<br><a href="./dl.php?id=101890" class="small tr-dl" style="text-decoration: none">10.23&nbsp;GB</a> </li>
+				</ul>
+							</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+					<li><a title="Повідомлень">0</a></li>
+				</ul>
+			</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+					<li class="desc"><a title="Переглядів">119</a></li>
+				</ul>
+			</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+									</ul>
+			</td>
+			<td class="col_f_post">
+				<ul class="last_post ipsType_small">
+					<li class="desc lighter blend_links"><a title="До непрочитаного повідомлення" href="topic-muza-the-muse-1999-web-dl-1080p-3xukr-eng-p=113526.html#113526">25 Лип 2026, 16:02</a></li>			<li><a href="profile-okremo-mode=viewprofile&amp;u=105854.html"><span title="Модератор" class="">Okremo</span></a></li>	
+				</ul>
+			</td>
+		</tr>
+				<tr id="tr-101722">
+		                <td class="col_f_icon"><img class="light_img" src="https://mazepa.to/data/thumbnails/26072514271251686-f0-0.jpg"></td>	  
+			<td class="col_f_content tt">
+				<h4>
+					<span id="status-101722" title="не перевірено"><span class="tor-icon tor-not-approved">*</span></span>&#0183;																					<a id="tt-101722" href="topic-dity-bez-nagljadu-unaccompanied-minors-2006-web-dl-1080p-ukr-eng-ukr-eng-t=101722.html" class="torTopic tt-text"><b>Діти без нагляду / Unaccompanie<wbr>d Minors (2006) WEB-DL 1080p Ukr/Eng | Ukr/Eng</b></a>									</h4>
+				<br><br>
+				<span class="desc lighter">
+					Автор: <a href="profile-okremo-mode=viewprofile&amp;u=105854.html"><span title="Модератор" class="">Okremo</span></a>				</span>
+								<br>
+							</td>
+			<td class="col_f_viewst desc blend_links">
+								<ul title="Завантажити торент">
+					<li><span class="seedmed" title="Seeders"><b>0</b></span><span class="med"> | </span>  
+					<span class="leechmed" title="Leechers"><b>0</b></span>
+					<br><a href="./dl.php?id=101888" class="small tr-dl" style="text-decoration: none">9.07&nbsp;GB</a> </li>
+				</ul>
+							</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+					<li><a title="Повідомлень">0</a></li>
+				</ul>
+			</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+					<li class="desc"><a title="Переглядів">187</a></li>
+				</ul>
+			</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+									</ul>
+			</td>
+			<td class="col_f_post">
+				<ul class="last_post ipsType_small">
+					<li class="desc lighter blend_links"><a title="До непрочитаного повідомлення" href="topic-dity-bez-nagljadu-unaccompanied-minors-2006-web-dl-1080p-ukr-eng-ukr-eng-p=113523.html#113523">25 Лип 2026, 14:58</a></li>			<li><a href="profile-okremo-mode=viewprofile&amp;u=105854.html"><span title="Модератор" class="">Okremo</span></a></li>	
+				</ul>
+			</td>
+		</tr>
+				<tr id="tr-101721">
+		                <td class="col_f_icon"><img class="light_img" src="https://mazepa.to/data/thumbnails/260601195604730949-f0-0.jpg"></td>	  
+			<td class="col_f_content tt">
+				<h4>
+					<span id="status-101721" title="не перевірено"><span class="tor-icon tor-not-approved">*</span></span>&#0183;																					<a id="tt-101721" href="topic-imperija-piskiv-desert-warrior-2025-bdremux-1080p-ukr-eng-t=101721.html" class="torTopic tt-text"><b>Імперія пісків / Desert Warrior (2025) BDRemux 1080p Ukr/Eng</b></a>									</h4>
+				<br><br>
+				<span class="desc lighter">
+					Автор: <a href="profile-okremo-mode=viewprofile&amp;u=105854.html"><span title="Модератор" class="">Okremo</span></a>				</span>
+								<br>
+							</td>
+			<td class="col_f_viewst desc blend_links">
+								<ul title="Завантажити торент">
+					<li><span class="seedmed" title="Seeders"><b>0</b></span><span class="med"> | </span>  
+					<span class="leechmed" title="Leechers"><b>0</b></span>
+					<br><a href="./dl.php?id=101887" class="small tr-dl" style="text-decoration: none">29.11&nbsp;GB</a> </li>
+				</ul>
+							</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+					<li><a title="Повідомлень">0</a></li>
+				</ul>
+			</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+					<li class="desc"><a title="Переглядів">235</a></li>
+				</ul>
+			</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+									</ul>
+			</td>
+			<td class="col_f_post">
+				<ul class="last_post ipsType_small">
+					<li class="desc lighter blend_links"><a title="До непрочитаного повідомлення" href="topic-imperija-piskiv-desert-warrior-2025-bdremux-1080p-ukr-eng-p=113520.html#113520">25 Лип 2026, 13:15</a></li>			<li><a href="profile-okremo-mode=viewprofile&amp;u=105854.html"><span title="Модератор" class="">Okremo</span></a></li>	
+				</ul>
+			</td>
+		</tr>
+				<tr id="tr-101720">
+		                <td class="col_f_icon"><img class="light_img" src="https://mazepa.to/data/thumbnails/2607250320371221995-f0-0.jpg"></td>	  
+			<td class="col_f_content tt">
+				<h4>
+					<span id="status-101720" title="перевірено"><span class="tor-icon tor-approved">&radic;</span></span>&#0183;																					<a id="tt-101720" href="topic-antropojid-anthropoid-2016-bdremux-1080p-ukr-eng-t=101720.html" class="torTopic tt-text"><b>Антропоїд / Anthropoid (2016) BDRemux 1080p Ukr/Eng</b></a>									</h4>
+				<br><br>
+				<span class="desc lighter">
+					Автор: <a href="profile-okremo-mode=viewprofile&amp;u=105854.html"><span title="Модератор" class="">Okremo</span></a>				</span>
+								<br>
+							</td>
+			<td class="col_f_viewst desc blend_links">
+								<ul title="Завантажити торент">
+					<li><span class="seedmed" title="Seeders"><b>3</b></span><span class="med"> | </span>  
+					<span class="leechmed" title="Leechers"><b>0</b></span>
+					<br><a href="./dl.php?id=101886" class="small tr-dl" style="text-decoration: none">35.43&nbsp;GB</a> </li>
+				</ul>
+							</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+					<li><a title="Повідомлень">0</a></li>
+				</ul>
+			</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+					<li class="desc"><a title="Переглядів">236</a></li>
+				</ul>
+			</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+									</ul>
+			</td>
+			<td class="col_f_post">
+				<ul class="last_post ipsType_small">
+					<li class="desc lighter blend_links"><a title="До непрочитаного повідомлення" href="topic-antropojid-anthropoid-2016-bdremux-1080p-ukr-eng-p=113516.html#113516">25 Лип 2026, 08:43</a></li>			<li><a href="profile-okremo-mode=viewprofile&amp;u=105854.html"><span title="Модератор" class="">Okremo</span></a></li>	
+				</ul>
+			</td>
+		</tr>
+				<tr id="tr-101719">
+		                <td class="col_f_icon"><img class="light_img" src="https://mazepa.to/data/thumbnails/250406155006730949-f0-0.jpg"></td>	  
+			<td class="col_f_content tt">
+				<h4>
+					<span id="status-101719" title="перевірено"><span class="tor-icon tor-approved">&radic;</span></span>&#0183;																					<a id="tt-101719" href="topic-miki-17-mickey-17-2025-bdrip-720p-ukr-eng-t=101719.html" class="torTopic tt-text"><b>Мікі 17 / Mickey 17 (2025) BDRip 720p Ukr/Eng</b></a>									</h4>
+				<br><br>
+				<span class="desc lighter">
+					Автор: <a href="profile-okremo-mode=viewprofile&amp;u=105854.html"><span title="Модератор" class="">Okremo</span></a>				</span>
+								<br>
+							</td>
+			<td class="col_f_viewst desc blend_links">
+								<ul title="Завантажити торент">
+					<li><span class="seedmed" title="Seeders"><b>2</b></span><span class="med"> | </span>  
+					<span class="leechmed" title="Leechers"><b>0</b></span>
+					<br><a href="./dl.php?id=101885" class="small tr-dl" style="text-decoration: none">7.4&nbsp;GB</a> </li>
+				</ul>
+							</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+					<li><a title="Повідомлень">0</a></li>
+				</ul>
+			</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+					<li class="desc"><a title="Переглядів">139</a></li>
+				</ul>
+			</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+									</ul>
+			</td>
+			<td class="col_f_post">
+				<ul class="last_post ipsType_small">
+					<li class="desc lighter blend_links"><a title="До непрочитаного повідомлення" href="topic-miki-17-mickey-17-2025-bdrip-720p-ukr-eng-p=113515.html#113515">25 Лип 2026, 08:38</a></li>			<li><a href="profile-okremo-mode=viewprofile&amp;u=105854.html"><span title="Модератор" class="">Okremo</span></a></li>	
+				</ul>
+			</td>
+		</tr>
+				<tr id="tr-101717">
+		                <td class="col_f_icon"><img class="light_img" src="https://mazepa.to/data/thumbnails/26072423310551686-f0-0.jpg"></td>	  
+			<td class="col_f_content tt">
+				<h4>
+					<span id="status-101717" title="перевірено"><span class="tor-icon tor-approved">&radic;</span></span>&#0183;																					<a id="tt-101717" href="topic-vytivky-bivera-leave-it-to-beaver-1997-web-dl-1080p-ukr-eng-t=101717.html" class="torTopic tt-text"><b>Витівки Бівера / Leave It to Beaver (1997) WEB-DL 1080p Ukr/Eng</b></a>									</h4>
+				<br><br>
+				<span class="desc lighter">
+					Автор: <a href="profile-okremo-mode=viewprofile&amp;u=105854.html"><span title="Модератор" class="">Okremo</span></a>				</span>
+								<br>
+							</td>
+			<td class="col_f_viewst desc blend_links">
+								<ul title="Завантажити торент">
+					<li><span class="seedmed" title="Seeders"><b>0</b></span><span class="med"> | </span>  
+					<span class="leechmed" title="Leechers"><b>0</b></span>
+					<br><a href="./dl.php?id=101883" class="small tr-dl" style="text-decoration: none">9.11&nbsp;GB</a> </li>
+				</ul>
+							</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+					<li><a title="Повідомлень">0</a></li>
+				</ul>
+			</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+					<li class="desc"><a title="Переглядів">87</a></li>
+				</ul>
+			</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+									</ul>
+			</td>
+			<td class="col_f_post">
+				<ul class="last_post ipsType_small">
+					<li class="desc lighter blend_links"><a title="До непрочитаного повідомлення" href="topic-vytivky-bivera-leave-it-to-beaver-1997-web-dl-1080p-ukr-eng-p=113513.html#113513">25 Лип 2026, 08:13</a></li>			<li><a href="profile-okremo-mode=viewprofile&amp;u=105854.html"><span title="Модератор" class="">Okremo</span></a></li>	
+				</ul>
+			</td>
+		</tr>
+				<tr id="tr-101715">
+		                <td class="col_f_icon"><img class="light_img" src="https://mazepa.to/data/thumbnails/26072423171851686-f0-0.jpg"></td>	  
+			<td class="col_f_content tt">
+				<h4>
+					<span id="status-101715" title="перевірено"><span class="tor-icon tor-approved">&radic;</span></span>&#0183;																					<a id="tt-101715" href="topic-kolett-colette-2018-bdrip-1080p-h265-ukr-eng-t=101715.html" class="torTopic tt-text"><b>Колетт / Colette (2018) BDRip 1080p H.265 Ukr/Eng</b></a>									</h4>
+				<br><br>
+				<span class="desc lighter">
+					Автор: <a href="profile-okremo-mode=viewprofile&amp;u=105854.html"><span title="Модератор" class="">Okremo</span></a>				</span>
+								<br>
+							</td>
+			<td class="col_f_viewst desc blend_links">
+								<ul title="Завантажити торент">
+					<li><span class="seedmed" title="Seeders"><b>1</b></span><span class="med"> | </span>  
+					<span class="leechmed" title="Leechers"><b>0</b></span>
+					<br><a href="./dl.php?id=101881" class="small tr-dl" style="text-decoration: none">6.41&nbsp;GB</a> </li>
+				</ul>
+							</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+					<li><a title="Повідомлень">0</a></li>
+				</ul>
+			</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+					<li class="desc"><a title="Переглядів">182</a></li>
+				</ul>
+			</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+									</ul>
+			</td>
+			<td class="col_f_post">
+				<ul class="last_post ipsType_small">
+					<li class="desc lighter blend_links"><a title="До непрочитаного повідомлення" href="topic-kolett-colette-2018-bdrip-1080p-h265-ukr-eng-p=113509.html#113509">24 Лип 2026, 23:33</a></li>			<li><a href="profile-okremo-mode=viewprofile&amp;u=105854.html"><span title="Модератор" class="">Okremo</span></a></li>	
+				</ul>
+			</td>
+		</tr>
+				<tr id="tr-101714">
+		                <td class="col_f_icon"><img class="light_img" src="https://mazepa.to/data/thumbnails/26072422531751686-f0-0.jpg"></td>	  
+			<td class="col_f_content tt">
+				<h4>
+					<span id="status-101714" title="перевірено"><span class="tor-icon tor-approved">&radic;</span></span>&#0183;																					<a id="tt-101714" href="topic-zodiak-zodiac-2007-bdrip-1080p-h265-ukr-eng-directors-cut-t=101714.html" class="torTopic tt-text"><b>Зодіак / Zodiac (2007) BDRip 1080p H.265 Ukr/Eng [Director&#039;s Cut]</b></a>									</h4>
+				<br><br>
+				<span class="desc lighter">
+					Автор: <a href="profile-okremo-mode=viewprofile&amp;u=105854.html"><span title="Модератор" class="">Okremo</span></a>				</span>
+								<br>
+							</td>
+			<td class="col_f_viewst desc blend_links">
+								<ul title="Завантажити торент">
+					<li><span class="seedmed" title="Seeders"><b>2</b></span><span class="med"> | </span>  
+					<span class="leechmed" title="Leechers"><b>0</b></span>
+					<br><a href="./dl.php?id=101880" class="small tr-dl" style="text-decoration: none">13.77&nbsp;GB</a> </li>
+				</ul>
+							</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+					<li><a title="Повідомлень">0</a></li>
+				</ul>
+			</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+					<li class="desc"><a title="Переглядів">169</a></li>
+				</ul>
+			</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+									</ul>
+			</td>
+			<td class="col_f_post">
+				<ul class="last_post ipsType_small">
+					<li class="desc lighter blend_links"><a title="До непрочитаного повідомлення" href="topic-zodiak-zodiac-2007-bdrip-1080p-h265-ukr-eng-directors-cut-p=113508.html#113508">24 Лип 2026, 23:29</a></li>			<li><a href="profile-okremo-mode=viewprofile&amp;u=105854.html"><span title="Модератор" class="">Okremo</span></a></li>	
+				</ul>
+			</td>
+		</tr>
+				<tr id="tr-101713">
+		                <td class="col_f_icon"><img class="light_img" src="https://mazepa.to/data/thumbnails/26072320485151686-f0-0.jpg"></td>	  
+			<td class="col_f_content tt">
+				<h4>
+					<span id="status-101713" title="перевірено"><span class="tor-icon tor-approved">&radic;</span></span>&#0183;																					<a id="tt-101713" href="topic-povitrjanyj-udar-air-strike-da-hong-zha-2018-bdremux-1080p-ukr-eng-international-cut-fra-t=101713.html" class="torTopic tt-text"><b>Повітряний удар / Air Strike / Da Hong Zha (2018) BDRemux 1080p Ukr/Eng [Internationa<wbr>l Cut, FRA]</b></a>									</h4>
+				<br><br>
+				<span class="desc lighter">
+					Автор: <a href="profile-okremo-mode=viewprofile&amp;u=105854.html"><span title="Модератор" class="">Okremo</span></a>				</span>
+								<br>
+							</td>
+			<td class="col_f_viewst desc blend_links">
+								<ul title="Завантажити торент">
+					<li><span class="seedmed" title="Seeders"><b>0</b></span><span class="med"> | </span>  
+					<span class="leechmed" title="Leechers"><b>0</b></span>
+					<br><a href="./dl.php?id=101879" class="small tr-dl" style="text-decoration: none">25.01&nbsp;GB</a> </li>
+				</ul>
+							</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+					<li><a title="Повідомлень">0</a></li>
+				</ul>
+			</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+					<li class="desc"><a title="Переглядів">149</a></li>
+				</ul>
+			</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+									</ul>
+			</td>
+			<td class="col_f_post">
+				<ul class="last_post ipsType_small">
+					<li class="desc lighter blend_links"><a title="До непрочитаного повідомлення" href="topic-povitrjanyj-udar-air-strike-da-hong-zha-2018-bdremux-1080p-ukr-eng-international-cut-fra-p=113507.html#113507">24 Лип 2026, 23:25</a></li>			<li><a href="profile-okremo-mode=viewprofile&amp;u=105854.html"><span title="Модератор" class="">Okremo</span></a></li>	
+				</ul>
+			</td>
+		</tr>
+				<tr id="tr-101712">
+		                <td class="col_f_icon"><img class="light_img" src="https://mazepa.to/data/thumbnails/26072422235051686-f0-0.jpg"></td>	  
+			<td class="col_f_content tt">
+				<h4>
+					<span id="status-101712" title="перевірено"><span class="tor-icon tor-approved">&radic;</span></span>&#0183;																					<a id="tt-101712" href="topic-prygody-bulvipa-griffina-the-adventures-of-bullwhip-griffin-1967-web-dl-1080p-ukr-eng-t=101712.html" class="torTopic tt-text"><b>Пригоди Булвіпа Ґріффіна / The Adventures of Bullwhip Griffin (1967) WEB-DL 1080p Ukr/Eng</b></a>									</h4>
+				<br><br>
+				<span class="desc lighter">
+					Автор: <a href="profile-okremo-mode=viewprofile&amp;u=105854.html"><span title="Модератор" class="">Okremo</span></a>				</span>
+								<br>
+							</td>
+			<td class="col_f_viewst desc blend_links">
+								<ul title="Завантажити торент">
+					<li><span class="seedmed" title="Seeders"><b>1</b></span><span class="med"> | </span>  
+					<span class="leechmed" title="Leechers"><b>0</b></span>
+					<br><a href="./dl.php?id=101878" class="small tr-dl" style="text-decoration: none">6.83&nbsp;GB</a> </li>
+				</ul>
+							</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+					<li><a title="Повідомлень">0</a></li>
+				</ul>
+			</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+					<li class="desc"><a title="Переглядів">109</a></li>
+				</ul>
+			</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+									</ul>
+			</td>
+			<td class="col_f_post">
+				<ul class="last_post ipsType_small">
+					<li class="desc lighter blend_links"><a title="До непрочитаного повідомлення" href="topic-prygody-bulvipa-griffina-the-adventures-of-bullwhip-griffin-1967-web-dl-1080p-ukr-eng-p=113506.html#113506">24 Лип 2026, 23:17</a></li>			<li><a href="profile-okremo-mode=viewprofile&amp;u=105854.html"><span title="Модератор" class="">Okremo</span></a></li>	
+				</ul>
+			</td>
+		</tr>
+				<tr id="tr-101711">
+		                <td class="col_f_icon"><img class="light_img" src="https://mazepa.to/data/thumbnails/26072422112651686-f0-0.jpg"></td>	  
+			<td class="col_f_content tt">
+				<h4>
+					<span id="status-101711" title="перевірено"><span class="tor-icon tor-approved">&radic;</span></span>&#0183;																					<a id="tt-101711" href="topic-brubejker-brubaker-1980-web-dl-1080p-ukr-eng-t=101711.html" class="torTopic tt-text"><b>Брубейкер / Brubaker (1980) WEB-DL 1080p Ukr/Eng</b></a>									</h4>
+				<br><br>
+				<span class="desc lighter">
+					Автор: <a href="profile-okremo-mode=viewprofile&amp;u=105854.html"><span title="Модератор" class="">Okremo</span></a>				</span>
+								<br>
+							</td>
+			<td class="col_f_viewst desc blend_links">
+								<ul title="Завантажити торент">
+					<li><span class="seedmed" title="Seeders"><b>0</b></span><span class="med"> | </span>  
+					<span class="leechmed" title="Leechers"><b>1</b></span>
+					<br><a href="./dl.php?id=101876" class="small tr-dl" style="text-decoration: none">7.52&nbsp;GB</a> </li>
+				</ul>
+							</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+					<li><a title="Повідомлень">0</a></li>
+				</ul>
+			</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+					<li class="desc"><a title="Переглядів">129</a></li>
+				</ul>
+			</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+									</ul>
+			</td>
+			<td class="col_f_post">
+				<ul class="last_post ipsType_small">
+					<li class="desc lighter blend_links"><a title="До непрочитаного повідомлення" href="topic-brubejker-brubaker-1980-web-dl-1080p-ukr-eng-p=113505.html#113505">24 Лип 2026, 22:49</a></li>			<li><a href="profile-okremo-mode=viewprofile&amp;u=105854.html"><span title="Модератор" class="">Okremo</span></a></li>	
+				</ul>
+			</td>
+		</tr>
+				<tr id="tr-101710">
+		                <td class="col_f_icon"><img class="light_img" src="https://mazepa.to/data/thumbnails/26072421553451686-f0-0.jpg"></td>	  
+			<td class="col_f_content tt">
+				<h4>
+					<span id="status-101710" title="перевірено"><span class="tor-icon tor-approved">&radic;</span></span>&#0183;																					<a id="tt-101710" href="topic-i-znovu-vse-po-kolu-down-the-drain-1990-web-dl-1080p-ukr-eng-t=101710.html" class="torTopic tt-text"><b>І знову все по колу / Down the Drain (1990) WEB-DL 1080p Ukr/Eng</b></a>									</h4>
+				<br><br>
+				<span class="desc lighter">
+					Автор: <a href="profile-okremo-mode=viewprofile&amp;u=105854.html"><span title="Модератор" class="">Okremo</span></a>				</span>
+								<br>
+							</td>
+			<td class="col_f_viewst desc blend_links">
+								<ul title="Завантажити торент">
+					<li><span class="seedmed" title="Seeders"><b>1</b></span><span class="med"> | </span>  
+					<span class="leechmed" title="Leechers"><b>0</b></span>
+					<br><a href="./dl.php?id=101875" class="small tr-dl" style="text-decoration: none">7.5&nbsp;GB</a> </li>
+				</ul>
+							</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+					<li><a title="Повідомлень">0</a></li>
+				</ul>
+			</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+					<li class="desc"><a title="Переглядів">93</a></li>
+				</ul>
+			</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+									</ul>
+			</td>
+			<td class="col_f_post">
+				<ul class="last_post ipsType_small">
+					<li class="desc lighter blend_links"><a title="До непрочитаного повідомлення" href="topic-i-znovu-vse-po-kolu-down-the-drain-1990-web-dl-1080p-ukr-eng-p=113504.html#113504">24 Лип 2026, 22:46</a></li>			<li><a href="profile-okremo-mode=viewprofile&amp;u=105854.html"><span title="Модератор" class="">Okremo</span></a></li>	
+				</ul>
+			</td>
+		</tr>
+				<tr id="tr-101709">
+		                <td class="col_f_icon"><img class="light_img" src="https://mazepa.to/data/thumbnails/26072421432051686-f0-0.jpg"></td>	  
+			<td class="col_f_content tt">
+				<h4>
+					<span id="status-101709" title="перевірено"><span class="tor-icon tor-approved">&radic;</span></span>&#0183;																					<a id="tt-101709" href="topic-dogljadach-upravytel-the-super-1991-web-dl-1080p-ukr-eng-t=101709.html" class="torTopic tt-text"><b>Доглядач / Управитель / The Super (1991) WEB-DL 1080p Ukr/Eng</b></a>									</h4>
+				<br><br>
+				<span class="desc lighter">
+					Автор: <a href="profile-okremo-mode=viewprofile&amp;u=105854.html"><span title="Модератор" class="">Okremo</span></a>				</span>
+								<br>
+							</td>
+			<td class="col_f_viewst desc blend_links">
+								<ul title="Завантажити торент">
+					<li><span class="seedmed" title="Seeders"><b>0</b></span><span class="med"> | </span>  
+					<span class="leechmed" title="Leechers"><b>0</b></span>
+					<br><a href="./dl.php?id=101874" class="small tr-dl" style="text-decoration: none">8.45&nbsp;GB</a> </li>
+				</ul>
+							</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+					<li><a title="Повідомлень">0</a></li>
+				</ul>
+			</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+					<li class="desc"><a title="Переглядів">94</a></li>
+				</ul>
+			</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+									</ul>
+			</td>
+			<td class="col_f_post">
+				<ul class="last_post ipsType_small">
+					<li class="desc lighter blend_links"><a title="До непрочитаного повідомлення" href="topic-dogljadach-upravytel-the-super-1991-web-dl-1080p-ukr-eng-p=113503.html#113503">24 Лип 2026, 22:44</a></li>			<li><a href="profile-okremo-mode=viewprofile&amp;u=105854.html"><span title="Модератор" class="">Okremo</span></a></li>	
+				</ul>
+			</td>
+		</tr>
+				<tr id="tr-101708">
+		                <td class="col_f_icon"><img class="light_img" src="https://mazepa.to/data/thumbnails/Covera7495fd46d419780-md.jpg"></td>	  
+			<td class="col_f_content tt">
+				<h4>
+					<span id="status-101708" title="перевірено"><span class="tor-icon tor-approved">&radic;</span></span>&#0183;																					<a id="tt-101708" href="topic-ozero-bazhan-bone-lake-2024-bdrip-1080p-h265-ukr-eng-t=101708.html" class="torTopic tt-text"><b>Озеро бажань / Bone Lake (2024) BDRip 1080p H.265 Ukr/Eng</b></a>									</h4>
+				<br><br>
+				<span class="desc lighter">
+					Автор: <a href="profile-okremo-mode=viewprofile&amp;u=105854.html"><span title="Модератор" class="">Okremo</span></a>				</span>
+								<br>
+							</td>
+			<td class="col_f_viewst desc blend_links">
+								<ul title="Завантажити торент">
+					<li><span class="seedmed" title="Seeders"><b>0</b></span><span class="med"> | </span>  
+					<span class="leechmed" title="Leechers"><b>0</b></span>
+					<br><a href="./dl.php?id=101873" class="small tr-dl" style="text-decoration: none">8.44&nbsp;GB</a> </li>
+				</ul>
+							</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+					<li><a title="Повідомлень">0</a></li>
+				</ul>
+			</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+					<li class="desc"><a title="Переглядів">217</a></li>
+				</ul>
+			</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+									</ul>
+			</td>
+			<td class="col_f_post">
+				<ul class="last_post ipsType_small">
+					<li class="desc lighter blend_links"><a title="До непрочитаного повідомлення" href="topic-ozero-bazhan-bone-lake-2024-bdrip-1080p-h265-ukr-eng-p=113502.html#113502">24 Лип 2026, 22:39</a></li>			<li><a href="profile-okremo-mode=viewprofile&amp;u=105854.html"><span title="Модератор" class="">Okremo</span></a></li>	
+				</ul>
+			</td>
+		</tr>
+				<tr id="tr-101707">
+		                <td class="col_f_icon"><img class="light_img" src="https://mazepa.to/data/thumbnails/26072421302251686-f0-0.jpg"></td>	  
+			<td class="col_f_content tt">
+				<h4>
+					<span id="status-101707" title="перевірено"><span class="tor-icon tor-approved">&radic;</span></span>&#0183;																					<a id="tt-101707" href="topic-optom-deshevshe-cheaper-by-the-dozen-2003-web-dl-1080p-ukr-eng-t=101707.html" class="torTopic tt-text"><b>Оптом Дешевше / Cheaper by the Dozen (2003) WEB-DL 1080p Ukr/Eng</b></a>									</h4>
+				<br><br>
+				<span class="desc lighter">
+					Автор: <a href="profile-okremo-mode=viewprofile&amp;u=105854.html"><span title="Модератор" class="">Okremo</span></a>				</span>
+								<br>
+							</td>
+			<td class="col_f_viewst desc blend_links">
+								<ul title="Завантажити торент">
+					<li><span class="seedmed" title="Seeders"><b>2</b></span><span class="med"> | </span>  
+					<span class="leechmed" title="Leechers"><b>0</b></span>
+					<br><a href="./dl.php?id=101872" class="small tr-dl" style="text-decoration: none">8.78&nbsp;GB</a> </li>
+				</ul>
+							</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+					<li><a title="Повідомлень">0</a></li>
+				</ul>
+			</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+					<li class="desc"><a title="Переглядів">92</a></li>
+				</ul>
+			</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+									</ul>
+			</td>
+			<td class="col_f_post">
+				<ul class="last_post ipsType_small">
+					<li class="desc lighter blend_links"><a title="До непрочитаного повідомлення" href="topic-optom-deshevshe-cheaper-by-the-dozen-2003-web-dl-1080p-ukr-eng-p=113501.html#113501">24 Лип 2026, 22:36</a></li>			<li><a href="profile-okremo-mode=viewprofile&amp;u=105854.html"><span title="Модератор" class="">Okremo</span></a></li>	
+				</ul>
+			</td>
+		</tr>
+				<tr id="tr-101700">
+		                <td class="col_f_icon"><img class="light_img" src="https://mazepa.to/data/thumbnails/26072321373951686-f0-0.jpg"></td>	  
+			<td class="col_f_content tt">
+				<h4>
+					<span id="status-101700" title="перевірено"><span class="tor-icon tor-approved">&radic;</span></span>&#0183;																					<a id="tt-101700" href="topic-200-moteliv-200-motels-1971-web-dl-1080p-ukr-eng-t=101700.html" class="torTopic tt-text"><b>200 мотелів / 200 Motels (1971) WEB-DL 1080p Ukr/Eng</b></a>									</h4>
+				<br><br>
+				<span class="desc lighter">
+					Автор: <a href="profile-okremo-mode=viewprofile&amp;u=105854.html"><span title="Модератор" class="">Okremo</span></a>				</span>
+								<br>
+							</td>
+			<td class="col_f_viewst desc blend_links">
+								<ul title="Завантажити торент">
+					<li><span class="seedmed" title="Seeders"><b>0</b></span><span class="med"> | </span>  
+					<span class="leechmed" title="Leechers"><b>0</b></span>
+					<br><a href="./dl.php?id=101867" class="small tr-dl" style="text-decoration: none">10.59&nbsp;GB</a> </li>
+				</ul>
+							</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+					<li><a title="Повідомлень">0</a></li>
+				</ul>
+			</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+					<li class="desc"><a title="Переглядів">49</a></li>
+				</ul>
+			</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+									</ul>
+			</td>
+			<td class="col_f_post">
+				<ul class="last_post ipsType_small">
+					<li class="desc lighter blend_links"><a title="До непрочитаного повідомлення" href="topic-200-moteliv-200-motels-1971-web-dl-1080p-ukr-eng-p=113488.html#113488">23 Лип 2026, 23:26</a></li>			<li><a href="profile-okremo-mode=viewprofile&amp;u=105854.html"><span title="Модератор" class="">Okremo</span></a></li>	
+				</ul>
+			</td>
+		</tr>
+				<tr id="tr-101699">
+		                <td class="col_f_icon"><img class="light_img" src="https://mazepa.to/data/thumbnails/26072321041451686-f0-0.jpg"></td>	  
+			<td class="col_f_content tt">
+				<h4>
+					<span id="status-101699" title="перевірено"><span class="tor-icon tor-approved">&radic;</span></span>&#0183;																					<a id="tt-101699" href="topic-stezhennja-2-another-stakeout-1993-web-dl-1080p-ukr-eng-t=101699.html" class="torTopic tt-text"><b>Стеження 2 / Another Stakeout (1993) WEB-DL 1080p Ukr/Eng</b></a>									</h4>
+				<br><br>
+				<span class="desc lighter">
+					Автор: <a href="profile-okremo-mode=viewprofile&amp;u=105854.html"><span title="Модератор" class="">Okremo</span></a>				</span>
+								<br>
+							</td>
+			<td class="col_f_viewst desc blend_links">
+								<ul title="Завантажити торент">
+					<li><span class="seedmed" title="Seeders"><b>2</b></span><span class="med"> | </span>  
+					<span class="leechmed" title="Leechers"><b>0</b></span>
+					<br><a href="./dl.php?id=101866" class="small tr-dl" style="text-decoration: none">8.02&nbsp;GB</a> </li>
+				</ul>
+							</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+					<li><a title="Повідомлень">0</a></li>
+				</ul>
+			</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+					<li class="desc"><a title="Переглядів">201</a></li>
+				</ul>
+			</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+									</ul>
+			</td>
+			<td class="col_f_post">
+				<ul class="last_post ipsType_small">
+					<li class="desc lighter blend_links"><a title="До непрочитаного повідомлення" href="topic-stezhennja-2-another-stakeout-1993-web-dl-1080p-ukr-eng-p=113487.html#113487">23 Лип 2026, 23:06</a></li>			<li><a href="profile-okremo-mode=viewprofile&amp;u=105854.html"><span title="Модератор" class="">Okremo</span></a></li>	
+				</ul>
+			</td>
+		</tr>
+				<tr id="tr-101698">
+		                <td class="col_f_icon"><img class="light_img" src="https://mazepa.to/data/thumbnails/26072320274651686-f0-0.jpg"></td>	  
+			<td class="col_f_content tt">
+				<h4>
+					<span id="status-101698" title="перевірено"><span class="tor-icon tor-approved">&radic;</span></span>&#0183;																					<a id="tt-101698" href="topic-holostjacka-vechirka-2-ostannja-zvaba-bachelor-party-2-the-last-temptation-2008-web-dl-1080p-ukr-eng-t=101698.html" class="torTopic tt-text"><b>Холостяцька вечірка 2: Остання зваба / Bachelor Party 2: The Last Temptation (2008) WEB-DL 1080p Ukr/Eng</b></a>									</h4>
+				<br><br>
+				<span class="desc lighter">
+					Автор: <a href="profile-okremo-mode=viewprofile&amp;u=105854.html"><span title="Модератор" class="">Okremo</span></a>				</span>
+								<br>
+							</td>
+			<td class="col_f_viewst desc blend_links">
+								<ul title="Завантажити торент">
+					<li><span class="seedmed" title="Seeders"><b>0</b></span><span class="med"> | </span>  
+					<span class="leechmed" title="Leechers"><b>0</b></span>
+					<br><a href="./dl.php?id=101865" class="small tr-dl" style="text-decoration: none">10.9&nbsp;GB</a> </li>
+				</ul>
+							</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+					<li><a title="Повідомлень">0</a></li>
+				</ul>
+			</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+					<li class="desc"><a title="Переглядів">278</a></li>
+				</ul>
+			</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+									</ul>
+			</td>
+			<td class="col_f_post">
+				<ul class="last_post ipsType_small">
+					<li class="desc lighter blend_links"><a title="До непрочитаного повідомлення" href="topic-holostjacka-vechirka-2-ostannja-zvaba-bachelor-party-2-the-last-temptation-2008-web-dl-1080p-ukr-eng-p=113486.html#113486">23 Лип 2026, 22:50</a></li>			<li><a href="profile-okremo-mode=viewprofile&amp;u=105854.html"><span title="Модератор" class="">Okremo</span></a></li>	
+				</ul>
+			</td>
+		</tr>
+				<tr id="tr-101696">
+		                <td class="col_f_icon"><img class="light_img" src="https://mazepa.to/data/thumbnails/260723190026730949-f0-0.jpg"></td>	  
+			<td class="col_f_content tt">
+				<h4>
+					<span id="status-101696" title="перевірено"><span class="tor-icon tor-approved">&radic;</span></span>&#0183;																					<a id="tt-101696" href="topic-shopen-shopen-chopin-chopin-2025-web-dl-1080p-ukr-pol-t=101696.html" class="torTopic tt-text"><b>Шопен, Шопен! / Chopin, Chopin! (2025) WEB-DL 1080p Ukr/Pol</b></a>									</h4>
+				<br><br>
+				<span class="desc lighter">
+					Автор: <a href="profile-okremo-mode=viewprofile&amp;u=105854.html"><span title="Модератор" class="">Okremo</span></a>				</span>
+								<br>
+							</td>
+			<td class="col_f_viewst desc blend_links">
+								<ul title="Завантажити торент">
+					<li><span class="seedmed" title="Seeders"><b>3</b></span><span class="med"> | </span>  
+					<span class="leechmed" title="Leechers"><b>0</b></span>
+					<br><a href="./dl.php?id=101863" class="small tr-dl" style="text-decoration: none">4.73&nbsp;GB</a> </li>
+				</ul>
+							</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+					<li><a title="Повідомлень">0</a></li>
+				</ul>
+			</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+					<li class="desc"><a title="Переглядів">218</a></li>
+				</ul>
+			</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+									</ul>
+			</td>
+			<td class="col_f_post">
+				<ul class="last_post ipsType_small">
+					<li class="desc lighter blend_links"><a title="До непрочитаного повідомлення" href="topic-shopen-shopen-chopin-chopin-2025-web-dl-1080p-ukr-pol-p=113484.html#113484">23 Лип 2026, 21:54</a></li>			<li><a href="profile-okremo-mode=viewprofile&amp;u=105854.html"><span title="Модератор" class="">Okremo</span></a></li>	
+				</ul>
+			</td>
+		</tr>
+				<tr id="tr-101695">
+		                <td class="col_f_icon"><img class="light_img" src="https://mazepa.to/data/thumbnails/26072320485151686-f0-0.jpg"></td>	  
+			<td class="col_f_content tt">
+				<h4>
+					<span id="status-101695" title="не перевірено"><span class="tor-icon tor-not-approved">*</span></span>&#0183;																					<a id="tt-101695" href="topic-povitrjanyj-udar-air-strike-da-hong-zha-2018-bdrip-1080p-ukr-eng-fra-international-cut-fra-t=101695.html" class="torTopic tt-text"><b>Повітряний удар / Air Strike / Da Hong Zha (2018) BDRip 1080p Ukr/Eng/Fra [Internationa<wbr>l Cut, FRA]</b></a>									</h4>
+				<br><br>
+				<span class="desc lighter">
+					Автор: <a href="profile-okremo-mode=viewprofile&amp;u=105854.html"><span title="Модератор" class="">Okremo</span></a>				</span>
+								<br>
+							</td>
+			<td class="col_f_viewst desc blend_links">
+								<ul title="Завантажити торент">
+					<li><span class="seedmed" title="Seeders"><b>1</b></span><span class="med"> | </span>  
+					<span class="leechmed" title="Leechers"><b>0</b></span>
+					<br><a href="./dl.php?id=101862" class="small tr-dl" style="text-decoration: none">9.5&nbsp;GB</a> </li>
+				</ul>
+							</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+					<li><a title="Повідомлень">0</a></li>
+				</ul>
+			</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+					<li class="desc"><a title="Переглядів">309</a></li>
+				</ul>
+			</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+									</ul>
+			</td>
+			<td class="col_f_post">
+				<ul class="last_post ipsType_small">
+					<li class="desc lighter blend_links"><a title="До непрочитаного повідомлення" href="topic-povitrjanyj-udar-air-strike-da-hong-zha-2018-bdrip-1080p-ukr-eng-fra-international-cut-fra-p=113482.html#113482">23 Лип 2026, 21:06</a></li>			<li><a href="profile-okremo-mode=viewprofile&amp;u=105854.html"><span title="Модератор" class="">Okremo</span></a></li>	
+				</ul>
+			</td>
+		</tr>
+				<tr id="tr-101694">
+		                <td class="col_f_icon"><img class="light_img" src="https://mazepa.to/data/thumbnails/26072320043951686-f0-0.jpg"></td>	  
+			<td class="col_f_content tt">
+				<h4>
+					<span id="status-101694" title="не перевірено"><span class="tor-icon tor-not-approved">*</span></span>&#0183;																					<a id="tt-101694" href="topic-pozhezhnyj-pes-firehouse-dog-2007-web-dl-1080p-ukr-eng-t=101694.html" class="torTopic tt-text"><b>Пожежний пес / Firehouse dog (2007) WEB-DL 1080p Ukr/Eng</b></a>									</h4>
+				<br><br>
+				<span class="desc lighter">
+					Автор: <a href="profile-okremo-mode=viewprofile&amp;u=105854.html"><span title="Модератор" class="">Okremo</span></a>				</span>
+								<br>
+							</td>
+			<td class="col_f_viewst desc blend_links">
+								<ul title="Завантажити торент">
+					<li><span class="seedmed" title="Seeders"><b>0</b></span><span class="med"> | </span>  
+					<span class="leechmed" title="Leechers"><b>1</b></span>
+					<br><a href="./dl.php?id=101861" class="small tr-dl" style="text-decoration: none">11.29&nbsp;GB</a> </li>
+				</ul>
+							</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+					<li><a title="Повідомлень">0</a></li>
+				</ul>
+			</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+					<li class="desc"><a title="Переглядів">84</a></li>
+				</ul>
+			</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+									</ul>
+			</td>
+			<td class="col_f_post">
+				<ul class="last_post ipsType_small">
+					<li class="desc lighter blend_links"><a title="До непрочитаного повідомлення" href="topic-pozhezhnyj-pes-firehouse-dog-2007-web-dl-1080p-ukr-eng-p=113481.html#113481">23 Лип 2026, 20:29</a></li>			<li><a href="profile-okremo-mode=viewprofile&amp;u=105854.html"><span title="Модератор" class="">Okremo</span></a></li>	
+				</ul>
+			</td>
+		</tr>
+				<tr id="tr-92808">
+		                <td class="col_f_icon"><img class="light_img" src="https://mazepa.to/data/thumbnails/181103125115486531-f0-0.jpg"></td>	  
+			<td class="col_f_content tt">
+				<h4>
+					<span id="status-92808" title="не перевірено"><span class="tor-icon tor-not-approved">*</span></span>&#0183;																					<a id="tt-92808" href="topic-troja-troy-rezhyserska-versija-2004-bdrip-1080p-2xukr-eng-t=92808.html" class="torTopic tt-text"><b>Троя / Troy [Режисерська версія] (2004) BDRip 1080p 2xUkr/Eng</b></a>									</h4>
+				<br><br>
+				<span class="desc lighter">
+					Автор: <a href="profile-misjacb-mode=viewprofile&amp;u=75455.html"><span title="Користувач" class="">misjacb</span></a>				</span>
+								<br>
+							</td>
+			<td class="col_f_viewst desc blend_links">
+								<ul title="Завантажити торент">
+					<li><span class="seedmed" title="Seeders"><b>0</b></span><span class="med"> | </span>  
+					<span class="leechmed" title="Leechers"><b>1</b></span>
+					<br><a href="./dl.php?id=93393" class="small tr-dl" style="text-decoration: none">18.36&nbsp;GB</a> </li>
+				</ul>
+							</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+					<li><a title="Повідомлень">1</a></li>
+				</ul>
+			</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+					<li class="desc"><a title="Переглядів">675</a></li>
+				</ul>
+			</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+									</ul>
+			</td>
+			<td class="col_f_post">
+				<ul class="last_post ipsType_small">
+					<li class="desc lighter blend_links"><a title="До непрочитаного повідомлення" href="topic-troja-troy-rezhyserska-versija-2004-bdrip-1080p-2xukr-eng-p=113464.html#113464">22 Лип 2026, 17:48</a></li>			<li><a href="profile-lu4-mode=viewprofile&amp;u=27463.html"><span title="Користувач" class="">lu4</span></a></li>	
+				</ul>
+			</td>
+		</tr>
+				<tr id="tr-101675">
+		                <td class="col_f_icon"><img class="light_img" src="https://mazepa.to/data/thumbnails/creed-ii-2018-1550228225-550.jpg"></td>	  
+			<td class="col_f_content tt">
+				<h4>
+					<span id="status-101675" title="не перевірено"><span class="tor-icon tor-not-approved">*</span></span>&#0183;																					<a id="tt-101675" href="topic-krid-ii-spadok-rokki-balboa-creed-ii2018-bdremux-1080p-2xukr-eng-t=101675.html" class="torTopic tt-text"><b>Крід ІІ: Спадок Роккі Бальбоа / Creed II (2018) BDRemux 1080p 2xUkr/Eng</b></a>									</h4>
+				<br><br>
+				<span class="desc lighter">
+					Автор: <a href="profile-okremo-mode=viewprofile&amp;u=105854.html"><span title="Модератор" class="">Okremo</span></a>				</span>
+								<br>
+							</td>
+			<td class="col_f_viewst desc blend_links">
+								<ul title="Завантажити торент">
+					<li><span class="seedmed" title="Seeders"><b>0</b></span><span class="med"> | </span>  
+					<span class="leechmed" title="Leechers"><b>0</b></span>
+					<br><a href="./dl.php?id=101843" class="small tr-dl" style="text-decoration: none">27.96&nbsp;GB</a> </li>
+				</ul>
+							</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+					<li><a title="Повідомлень">0</a></li>
+				</ul>
+			</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+					<li class="desc"><a title="Переглядів">135</a></li>
+				</ul>
+			</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+									</ul>
+			</td>
+			<td class="col_f_post">
+				<ul class="last_post ipsType_small">
+					<li class="desc lighter blend_links"><a title="До непрочитаного повідомлення" href="topic-krid-ii-spadok-rokki-balboa-creed-ii2018-bdremux-1080p-2xukr-eng-p=113436.html#113436">21 Лип 2026, 13:31</a></li>			<li><a href="profile-okremo-mode=viewprofile&amp;u=105854.html"><span title="Модератор" class="">Okremo</span></a></li>	
+				</ul>
+			</td>
+		</tr>
+				<tr id="tr-101674">
+		                <td class="col_f_icon"><img class="light_img" src="https://mazepa.to/data/thumbnails/230908121900824178-f0-0.jpg"></td>	  
+			<td class="col_f_content tt">
+				<h4>
+					<span id="status-101674" title="не перевірено"><span class="tor-icon tor-not-approved">*</span></span>&#0183;																					<a id="tt-101674" href="topic-krid-spadok-rokki-balboa-creed-2015-bdremux-1080p-2xukr-eng-t=101674.html" class="torTopic tt-text"><b>Крід: Спадок Роккі Бальбоа / Creed (2015) BDRemux 1080p 2xUkr/Eng</b></a>									</h4>
+				<br><br>
+				<span class="desc lighter">
+					Автор: <a href="profile-okremo-mode=viewprofile&amp;u=105854.html"><span title="Модератор" class="">Okremo</span></a>				</span>
+								<br>
+							</td>
+			<td class="col_f_viewst desc blend_links">
+								<ul title="Завантажити торент">
+					<li><span class="seedmed" title="Seeders"><b>0</b></span><span class="med"> | </span>  
+					<span class="leechmed" title="Leechers"><b>0</b></span>
+					<br><a href="./dl.php?id=101842" class="small tr-dl" style="text-decoration: none">28.51&nbsp;GB</a> </li>
+				</ul>
+							</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+					<li><a title="Повідомлень">0</a></li>
+				</ul>
+			</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+					<li class="desc"><a title="Переглядів">97</a></li>
+				</ul>
+			</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+									</ul>
+			</td>
+			<td class="col_f_post">
+				<ul class="last_post ipsType_small">
+					<li class="desc lighter blend_links"><a title="До непрочитаного повідомлення" href="topic-krid-spadok-rokki-balboa-creed-2015-bdremux-1080p-2xukr-eng-p=113435.html#113435">21 Лип 2026, 13:21</a></li>			<li><a href="profile-okremo-mode=viewprofile&amp;u=105854.html"><span title="Модератор" class="">Okremo</span></a></li>	
+				</ul>
+			</td>
+		</tr>
+				<tr id="tr-101673">
+		                <td class="col_f_icon"><img class="light_img" src="https://mazepa.to/data/thumbnails/260721104136824178-f0-0.jpg"></td>	  
+			<td class="col_f_content tt">
+				<h4>
+					<span id="status-101673" title="не перевірено"><span class="tor-icon tor-not-approved">*</span></span>&#0183;																					<a id="tt-101673" href="topic-krid-3-creed-iii2023-bdremux-1080p-ukr-eng-t=101673.html" class="torTopic tt-text"><b>Крід 3 / Creed III (2023) BDRemux 1080p Ukr/Eng</b></a>									</h4>
+				<br><br>
+				<span class="desc lighter">
+					Автор: <a href="profile-okremo-mode=viewprofile&amp;u=105854.html"><span title="Модератор" class="">Okremo</span></a>				</span>
+								<br>
+							</td>
+			<td class="col_f_viewst desc blend_links">
+								<ul title="Завантажити торент">
+					<li><span class="seedmed" title="Seeders"><b>0</b></span><span class="med"> | </span>  
+					<span class="leechmed" title="Leechers"><b>0</b></span>
+					<br><a href="./dl.php?id=101841" class="small tr-dl" style="text-decoration: none">25.54&nbsp;GB</a> </li>
+				</ul>
+							</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+					<li><a title="Повідомлень">0</a></li>
+				</ul>
+			</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+					<li class="desc"><a title="Переглядів">102</a></li>
+				</ul>
+			</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+									</ul>
+			</td>
+			<td class="col_f_post">
+				<ul class="last_post ipsType_small">
+					<li class="desc lighter blend_links"><a title="До непрочитаного повідомлення" href="topic-krid-3-creed-iii2023-bdremux-1080p-ukr-eng-p=113434.html#113434">21 Лип 2026, 13:12</a></li>			<li><a href="profile-okremo-mode=viewprofile&amp;u=105854.html"><span title="Модератор" class="">Okremo</span></a></li>	
+				</ul>
+			</td>
+		</tr>
+				<tr id="tr-101658">
+		                <td class="col_f_icon"><img class="light_img" src="https://mazepa.to/data/thumbnails/260323103810730949-f0-0.jpg"></td>	  
+			<td class="col_f_content tt">
+				<h4>
+					<span id="status-101658" title="перевірено"><span class="tor-icon tor-approved">&radic;</span></span>&#0183;																					<a id="tt-101658" href="topic-pen-podorozh-do-nebuvaliji-pan-2015-bdremux-1080p-ukr-eng-t=101658.html" class="torTopic tt-text"><b>Пен. Подорож до Небувалії / Pan (2015) BDRemux 1080p Ukr/Eng</b></a>									</h4>
+				<br><br>
+				<span class="desc lighter">
+					Автор: <a href="profile-okremo-mode=viewprofile&amp;u=105854.html"><span title="Модератор" class="">Okremo</span></a>				</span>
+								<br>
+							</td>
+			<td class="col_f_viewst desc blend_links">
+								<ul title="Завантажити торент">
+					<li><span class="seedmed" title="Seeders"><b>1</b></span><span class="med"> | </span>  
+					<span class="leechmed" title="Leechers"><b>0</b></span>
+					<br><a href="./dl.php?id=101829" class="small tr-dl" style="text-decoration: none">23.92&nbsp;GB</a> </li>
+				</ul>
+							</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+					<li><a title="Повідомлень">0</a></li>
+				</ul>
+			</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+					<li class="desc"><a title="Переглядів">169</a></li>
+				</ul>
+			</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+									</ul>
+			</td>
+			<td class="col_f_post">
+				<ul class="last_post ipsType_small">
+					<li class="desc lighter blend_links"><a title="До непрочитаного повідомлення" href="topic-pen-podorozh-do-nebuvaliji-pan-2015-bdremux-1080p-ukr-eng-p=113403.html#113403">20 Лип 2026, 08:30</a></li>			<li><a href="profile-okremo-mode=viewprofile&amp;u=105854.html"><span title="Модератор" class="">Okremo</span></a></li>	
+				</ul>
+			</td>
+		</tr>
+				<tr id="tr-101656">
+		                <td class="col_f_icon"><img class="light_img" src="https://mazepa.to/data/thumbnails/4-Tnh8qa-J58rv-Wls-Gm-HWfo-Ac0u3-F.jpg"></td>	  
+			<td class="col_f_content tt">
+				<h4>
+					<span id="status-101656" title="перевірено"><span class="tor-icon tor-approved">&radic;</span></span>&#0183;																					<a id="tt-101656" href="topic-robin-gud-prync-zlodijiv-robin-hood-prince-of-thieves-1991-bdremux-1080p-3xukr-eng-gbr-transfer-arrow-films-t=101656.html" class="torTopic tt-text"><b>Робін Гуд: Принц Злодіїв / Robin Hood: Prince of Thieves (1991) BDRemux 1080p 3xUkr/Eng [GBR Transfer, Arrow Films]</b></a>									</h4>
+				<br><br>
+				<span class="desc lighter">
+					Автор: <a href="profile-okremo-mode=viewprofile&amp;u=105854.html"><span title="Модератор" class="">Okremo</span></a>				</span>
+								<br>
+							</td>
+			<td class="col_f_viewst desc blend_links">
+								<ul title="Завантажити торент">
+					<li><span class="seedmed" title="Seeders"><b>0</b></span><span class="med"> | </span>  
+					<span class="leechmed" title="Leechers"><b>0</b></span>
+					<br><a href="./dl.php?id=101827" class="small tr-dl" style="text-decoration: none">29.14&nbsp;GB</a> </li>
+				</ul>
+							</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+					<li><a title="Повідомлень">0</a></li>
+				</ul>
+			</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+					<li class="desc"><a title="Переглядів">227</a></li>
+				</ul>
+			</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+									</ul>
+			</td>
+			<td class="col_f_post">
+				<ul class="last_post ipsType_small">
+					<li class="desc lighter blend_links"><a title="До непрочитаного повідомлення" href="topic-robin-gud-prync-zlodijiv-robin-hood-prince-of-thieves-1991-bdremux-1080p-3xukr-eng-gbr-transfer-arrow-films-p=113396.html#113396">19 Лип 2026, 21:39</a></li>			<li><a href="profile-okremo-mode=viewprofile&amp;u=105854.html"><span title="Модератор" class="">Okremo</span></a></li>	
+				</ul>
+			</td>
+		</tr>
+				<tr id="tr-92381">
+		                <td class="col_f_icon"><img class="light_img" src="https://mazepa.to/data/thumbnails/2402120201483760-f0-0.jpg"></td>	  
+			<td class="col_f_content tt">
+				<h4>
+					<span id="status-92381" title="тимчасова"><span class="tor-icon tor-dup">T</span></span>&#0183;																					<a id="tt-92381" href="topic-zaliznyj-kigot-the-iron-claw-2023-webrip-1080p-t=92381.html" class="torTopic tt-text"><b>Залізний кіготь / The Iron Claw (2023) WEBRip 1080p</b></a>									</h4>
+				<br><br>
+				<span class="desc lighter">
+					Автор: <a href="profile-ivan-dobryj-mode=viewprofile&amp;u=80597.html"><span title="Користувач" class="">Іван Добрий</span></a>				</span>
+				&nbsp;&nbsp;&nbsp;<h4 style="color:rgb(178, 34, 34);">Реліз МАЗЕПА</h4>				<br>
+							</td>
+			<td class="col_f_viewst desc blend_links">
+								<ul title="Завантажити торент">
+					<li><span class="seedmed" title="Seeders"><b>1</b></span><span class="med"> | </span>  
+					<span class="leechmed" title="Leechers"><b>0</b></span>
+					<br><a href="./dl.php?id=92994" class="small tr-dl" style="text-decoration: none">5.48&nbsp;GB</a> </li>
+				</ul>
+							</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+					<li><a title="Повідомлень">2</a></li>
+				</ul>
+			</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+					<li class="desc"><a title="Переглядів">1957</a></li>
+				</ul>
+			</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+									</ul>
+			</td>
+			<td class="col_f_post">
+				<ul class="last_post ipsType_small">
+					<li class="desc lighter blend_links"><a title="До непрочитаного повідомлення" href="topic-zaliznyj-kigot-the-iron-claw-2023-webrip-1080p-p=113395.html#113395">19 Лип 2026, 20:33</a></li>			<li><a href="profile-sacira-mode=viewprofile&amp;u=81278.html"><span title="Користувач" class="">sacira</span></a></li>	
+				</ul>
+			</td>
+		</tr>
+				<tr id="tr-101653">
+		                <td class="col_f_icon"><img class="light_img" src="https://mazepa.to/data/thumbnails/Coverab9f6299ff3b4e55-md.jpg"></td>	  
+			<td class="col_f_content tt">
+				<h4>
+					<span id="status-101653" title="перевірено"><span class="tor-icon tor-approved">&radic;</span></span>&#0183;																					<a id="tt-101653" href="topic-drugyj-shans-gridiron-gang-2006-bdrip-1080p-ukr-eng-t=101653.html" class="torTopic tt-text"><b>Другий шанс / Gridiron Gang (2006) BDRip 1080p Ukr/Eng</b></a>									</h4>
+				<br><br>
+				<span class="desc lighter">
+					Автор: <a href="profile-okremo-mode=viewprofile&amp;u=105854.html"><span title="Модератор" class="">Okremo</span></a>				</span>
+								<br>
+							</td>
+			<td class="col_f_viewst desc blend_links">
+								<ul title="Завантажити торент">
+					<li><span class="seedmed" title="Seeders"><b>0</b></span><span class="med"> | </span>  
+					<span class="leechmed" title="Leechers"><b>0</b></span>
+					<br><a href="./dl.php?id=101824" class="small tr-dl" style="text-decoration: none">18.05&nbsp;GB</a> </li>
+				</ul>
+							</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+					<li><a title="Повідомлень">0</a></li>
+				</ul>
+			</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+					<li class="desc"><a title="Переглядів">207</a></li>
+				</ul>
+			</td>
+			<td class="col_f_views desc blend_links">
+				<ul>
+									</ul>
+			</td>
+			<td class="col_f_post">
+				<ul class="last_post ipsType_small">
+					<li class="desc lighter blend_links"><a title="До непрочитаного повідомлення" href="topic-drugyj-shans-gridiron-gang-2006-bdrip-1080p-ukr-eng-p=113392.html#113392">19 Лип 2026, 19:45</a></li>			<li><a href="profile-okremo-mode=viewprofile&amp;u=105854.html"><span title="Модератор" class="">Okremo</span></a></li>	
+				</ul>
+			</td>
+		</tr>
+										<tr>
+			<td colspan="8" class="catBottom med pad_4">
+				<form method="post" action="viewforum.php?f=12&amp;start=0">
+					Показати теми: 
+<select  name="topicdays" id="topicdays">
+		<option selected="selected"  value="0">&nbsp;Усі повідомлення&nbsp;</option>
+		<option value="1">&nbsp;за останній день&nbsp;</option>
+		<option value="7">&nbsp;за останні 7 днів&nbsp;</option>
+		<option value="14">&nbsp;за останні 2 тижні&nbsp;</option>
+		<option value="30">&nbsp;за останній місяць&nbsp;</option>
+		<option value="90">&nbsp;за останні 3 місяці&nbsp;</option>
+		<option value="180">&nbsp;за останні 6 місяців&nbsp;</option>
+		<option value="364">&nbsp;за останній рік&nbsp;</option>
+</select>
+ &nbsp;Сортувати за:&nbsp;<select name="sort"><option value="0" selected="selected">ост. повідомлення</option><option value="1">Назва теми</option><option value="2">час розміщення</option></select>&nbsp;<select name="order"><option value="0" selected="selected">за спаданням</option><option value="1">за зростанням</option></select>&nbsp;					<input type="submit" value="Перейти" />
+				</form>
+			</td>
+		</tr>
+																																								  
+	</table>		
+</div></div></div>
+
+															  
+</div>
+				 
+<div class="pagination clearfix left pNum">Сторінка <b>1</b> з <b>378</b></div>
+<div class="pagination clearfix right pag"><a class="menu-root" href="#pg-jump">Перейти на сторінку</a> &nbsp;&nbsp;<b>1</b> <a href="forum-filmy-hd-f=12&amp;start=50.html">2</a> <a href="forum-filmy-hd-f=12&amp;start=100.html">3</a>&nbsp;...&nbsp;<a href="forum-filmy-hd-f=12&amp;start=18750.html">376</a> <a href="forum-filmy-hd-f=12&amp;start=18800.html">377</a> <a href="forum-filmy-hd-f=12&amp;start=18850.html">378</a>&nbsp;&nbsp;<a href="forum-filmy-hd-f=12&amp;start=50.html">Наступ.</a></div>
+<div class="clear"></div>
+	  
+</div>
+<!--bottom_info-->
+<div class="spacer_20"></div>
+<div class="bottom_info rowC CbRow">
+<div class="jumpbox"></div>
+
+<div id="timezone">
+	<p>Поточний час: <span class="tz_time">30-Лип 20:20</span></p>
+	<p>Часовий пояс: <span class="tz_time">UTC + 3 </span></p>
+</div>
+<div class="clear"></div>
+
+
+
+
+
+
+
+</div><!--/bottom_info-->
+
+	</div><!--/main_content_wrap-->
+	</td><!--/main_content-->
+
+	
+	</tr></table>
+	</div>
+	<!--/page_content-->
+
+	<!--page_footer-->
+	<div class="ipsSideBlock clearfix">
+	<div id="page_footer">
+
+		<div class="clear"></div>
+
+		<div class="med bold tCenter">
+						<a href="info.php?show=user_agreement" onclick="if (!window.__cfRLUnblockHandlers) return false; window.open(this.href, '', IWP); return false;" data-cf-modified-62994f3e33b2402b3ce732d5-="">Угода користувача</a>
+									<span class="normal">&nbsp;|&nbsp;</span>
+			<a href="info.php?show=copyright_holders" onclick="if (!window.__cfRLUnblockHandlers) return false; window.open(this.href, '', IWP); return false;" data-cf-modified-62994f3e33b2402b3ce732d5-="">Для правовласників</a>
+									<span class="normal">&nbsp;|&nbsp;</span>
+			<a href="info.php?show=advert" onclick="if (!window.__cfRLUnblockHandlers) return false; window.open(this.href, '', IWP); return false;" data-cf-modified-62994f3e33b2402b3ce732d5-="">Реклама на сайті</a>
+					</div>
+		<br />
+
+		
+		<div class="copyright tCenter">
+			Fueled by <a target="_blank" referrerpolicy="origin" href="https://github.com/torrentpier/torrentpier">TorrentPier</a> &copy; 2005-2026<br />
+		</div>
+
+	</div>
+
+	<div class="copyright tCenter">
+		<b style="color:rgb(204,0,0);">!УВАГА!</b><br />
+		Сайт не надає електронні версії творів, а займається лише колекціонуванням та каталогізацією посилань, що надсилають та публікують на форумі наші читачі. Якщо ви є правовласником будь-якого представленого матеріалу і не бажаєте, щоб посилання на нього були в нашому каталозі, зв'яжіться з нами і ми негайно приберемо його. Файли для обміну на трекері надані користувачами сайту, і адміністрація не несе відповідальності за їх зміст. Прохання не завантажувати файли, захищені авторськими правами, а також файли нелегального змісту!	</div>
+</div>
+	<!--/page_footer -->
+
+	</div>
+	<!--/page_container -->
+
+								
+
+	</div><!--/body_container-->
+
+	<script src="/cdn-cgi/scripts/7d0fa10a/cloudflare-static/rocket-loader.min.js" data-cf-settings="62994f3e33b2402b3ce732d5-|49" defer></script><script>(function(){function c(){var b=a.contentDocument||(a.contentWindow&&a.contentWindow.document);if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'a236086e9856916c',t:'MTc4NTQzMjAxNQ=='};var a=document.createElement('script');a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
+	</html>
