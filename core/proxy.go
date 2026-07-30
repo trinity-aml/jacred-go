@@ -1,9 +1,7 @@
 package core
 
 import (
-	"crypto/tls"
 	"math/rand"
-	"net/http"
 	"net/url"
 	"regexp"
 	"strings"
@@ -12,33 +10,51 @@ import (
 	"jacred/app"
 )
 
-// TransportForURL returns a cached *http.Transport reflecting the given
-// (proxy, insecureTLS) combination, or nil when neither knob applies (in
-// which case the caller should use the default-pool http.Client).
+// FetchProfile identifies the network path a request takes: which proxy (if
+// any) and whether TLS verification is skipped. It is a comparable value used
+// directly as the cache key for the impersonating HTTP clients in
+// tlsclient.go, so every distinct (proxy, tls) combination keeps its own warm
+// keep-alive pool instead of allocating a client per fetch.
 //
-// Both the regex compilation for globalproxy patterns and the transport
-// itself are cached process-wide. This keeps the keep-alive pool warm across
-// thousands of requests instead of allocating a fresh transport (and a fresh
-// connection pool) per fetch.
-func TransportForURL(rawURL string, useProxy, insecureSkipVerify bool, cfg app.Config) *http.Transport {
+// This replaced a *http.Transport: TLS fingerprint impersonation happens below
+// the transport, so the shape of the connection is now a property of the
+// client, not something a stdlib transport can express.
+type FetchProfile struct {
+	proxyURL string
+	useAuth  bool
+	user     string
+	pass     string
+	insecure bool
+}
+
+// profileForURL resolves the proxy rules in cfg for rawURL. The zero profile
+// means "direct, verified TLS" — still a valid key, unlike the old
+// transport-based scheme where that case was represented by nil.
+func profileForURL(rawURL string, useProxy, insecureSkipVerify bool, cfg app.Config) FetchProfile {
 	proxyURL, useAuth, user, pass := pickProxy(rawURL, useProxy, cfg)
-	if proxyURL == "" && !insecureSkipVerify {
-		return nil
-	}
-	return cachedTransport(transportKey{
+	return FetchProfile{
 		proxyURL: proxyURL,
 		useAuth:  useAuth,
 		user:     user,
 		pass:     pass,
 		insecure: insecureSkipVerify,
-	})
+	}
 }
 
-// ProxyForURL is retained for backward compatibility (returns the raw
-// transport if a proxy applies, ignoring insecureTLS). Prefer
-// TransportForURL — it folds the TLS-skip decision into the cache key.
-func ProxyForURL(rawURL string, useProxy bool, cfg app.Config) *http.Transport {
-	return TransportForURL(rawURL, useProxy, false, cfg)
+// proxyURLWithAuth renders the profile's proxy as a URL string, folding in
+// credentials when the config asked for authentication. Empty when direct.
+func (p FetchProfile) proxyURLWithAuth() (string, error) {
+	if p.proxyURL == "" {
+		return "", nil
+	}
+	u, err := url.Parse(strings.TrimSpace(p.proxyURL))
+	if err != nil {
+		return "", err
+	}
+	if p.useAuth && p.user != "" {
+		u.User = url.UserPassword(p.user, p.pass)
+	}
+	return u.String(), nil
 }
 
 func pickProxy(rawURL string, useProxy bool, cfg app.Config) (proxyURL string, useAuth bool, user, pass string) {
@@ -101,58 +117,4 @@ func getProxyRegex(pattern string) *regexp.Regexp {
 	return compiled
 }
 
-// --- transport cache ---------------------------------------------------------
-
-type transportKey struct {
-	proxyURL string
-	useAuth  bool
-	user     string
-	pass     string
-	insecure bool
-}
-
-var (
-	transportMu    sync.RWMutex
-	transportCache = map[transportKey]*http.Transport{}
-)
-
-func cachedTransport(key transportKey) *http.Transport {
-	transportMu.RLock()
-	t, ok := transportCache[key]
-	transportMu.RUnlock()
-	if ok {
-		return t
-	}
-	transportMu.Lock()
-	defer transportMu.Unlock()
-	if t, ok := transportCache[key]; ok {
-		return t
-	}
-	t = newPooledTransport()
-	if key.proxyURL != "" {
-		pURL, err := url.Parse(strings.TrimSpace(key.proxyURL))
-		if err != nil {
-			return nil
-		}
-		if key.useAuth && key.user != "" {
-			pURL.User = url.UserPassword(key.user, key.pass)
-		}
-		t.Proxy = http.ProxyURL(pURL)
-	}
-	if key.insecure {
-		t.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
-	}
-	transportCache[key] = t
-	return t
-}
-
-// newPooledTransport returns an http.Transport with the standard library's
-// default tuning (keep-alive pool, HTTP/2, TLS handshake timeout). Cloning
-// http.DefaultTransport mirrors net/http's behavior so we don't surprise the
-// runtime with bespoke settings.
-func newPooledTransport() *http.Transport {
-	if dt, ok := http.DefaultTransport.(*http.Transport); ok {
-		return dt.Clone()
-	}
-	return &http.Transport{}
-}
+// Client caching now lives in tlsclient.go, keyed by FetchProfile.

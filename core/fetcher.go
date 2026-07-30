@@ -18,6 +18,7 @@ import (
 
 	"jacred/app"
 
+	fhttp "github.com/bogdanfinn/fhttp"
 	flaresolverr "github.com/trinity-aml/flaresolverr-go/server"
 )
 
@@ -114,6 +115,32 @@ func InitFlareService(cfg app.FlareSolverrGoConfig) {
 			pinnedBrowserPath = bp
 			pinnedDriverPath = dp
 			log.Printf("chrome-pin: chrome=%s driver=%s", bp, dp)
+		}
+	}
+	// "cloakbrowser" is a jacred-side alias, not a library backend: the library
+	// only knows auto|chromedriver|geckodriver. Resolve the patched Chromium
+	// (and the chromedriver shipped in the same archive) here, then hand the
+	// library a plain chromedriver setup pointed at them. Both paths are
+	// overridden unconditionally — picking this backend means the binaries are
+	// managed for you, so a stale browser_path left over from another backend
+	// can't quietly win.
+	if strings.EqualFold(strings.TrimSpace(cfg.BrowserBackend), "cloakbrowser") {
+		if b, d, err := EnsureCloakBrowser(); err != nil {
+			log.Printf("cloakbrowser: %v (falling back to stock Chrome)", err)
+			flareSvcCfg.BrowserBackend = "chromedriver"
+			flareSvcCfg.BrowserPath = ""
+		} else {
+			flareSvcCfg.BrowserPath = b
+			flareSvcCfg.DriverPath = d
+			flareSvcCfg.BrowserBackend = "chromedriver"
+			// Measured on rutracker: headed clears the managed challenge in
+			// ~7 s with no click, headless gets the interactive Turnstile
+			// widget and loops on it indefinitely. Xvfb is started below when
+			// there is no DISPLAY, so headed costs nothing on a server.
+			if flareSvcCfg.Headless == nil || *flareSvcCfg.Headless {
+				log.Printf("cloakbrowser: headless is on — CF managed challenges that need " +
+					"an interactive Turnstile will loop; set flaresolverr_go.headless: false")
+			}
 		}
 	}
 	// Auto-download Camoufox when geckodriver backend is selected without an
@@ -416,18 +443,24 @@ func getFlareService() *flaresolverr.Service {
 			// on every solve.
 			DriverAutoDownload: true,
 		}
-		// Pinned Chrome for Testing wins over config BrowserPath.
-		if pinnedBrowserPath != "" {
-			flareCfg.BrowserPath = pinnedBrowserPath
-			flareCfg.DriverPath = pinnedDriverPath
-			// With a pinned driver we don't want the library to auto-download
-			// a mismatched one.
-			flareCfg.DriverAutoDownload = false
-		} else if flareSvcCfg.BrowserPath != "" {
+		// Browser and driver are resolved independently: an explicit path is
+		// the operator's deliberate choice and outranks a pin. Previously a
+		// pinned Chrome for Testing overrode both at once, which made "pin the
+		// driver version" and "use a custom browser binary" mutually exclusive.
+		switch {
+		case flareSvcCfg.BrowserPath != "":
 			flareCfg.BrowserPath = flareSvcCfg.BrowserPath
+		case pinnedBrowserPath != "":
+			flareCfg.BrowserPath = pinnedBrowserPath
 		}
-		if flareSvcCfg.DriverPath != "" {
+		switch {
+		case flareSvcCfg.DriverPath != "":
 			flareCfg.DriverPath = flareSvcCfg.DriverPath
+			// A specific driver means we don't want the library fetching
+			// another, possibly mismatched, one.
+			flareCfg.DriverAutoDownload = false
+		case pinnedDriverPath != "":
+			flareCfg.DriverPath = pinnedDriverPath
 			flareCfg.DriverAutoDownload = false
 		}
 		if flareSvcCfg.BrowserBackend != "" {
@@ -444,19 +477,11 @@ func getFlareService() *flaresolverr.Service {
 
 // Fetcher provides unified HTTP fetching with configurable mode per tracker.
 type Fetcher struct {
-	cfg       app.Config
-	stdClient *http.Client
+	cfg app.Config
 
 	// Cookie cache: domain -> cached session
 	flareMu    sync.RWMutex
 	flareCache map[string]*flareSession
-
-	// Reusable http.Client cache keyed by *http.Transport. Transports are
-	// produced by core.TransportForURL which caches them by (proxy, insecure)
-	// shape — so the pool here ends up with one client per distinct
-	// transport, sharing keep-alive connections across all requests.
-	clientMu   sync.RWMutex
-	clientPool map[*http.Transport]*http.Client
 }
 
 // flareSession holds cookies obtained from flaresolverr for a domain.
@@ -481,35 +506,8 @@ const flareSessionTTL = 60 * time.Minute
 func NewFetcher(cfg app.Config) *Fetcher {
 	return &Fetcher{
 		cfg:        cfg,
-		stdClient:  &http.Client{Timeout: 30 * time.Second},
 		flareCache: loadFlareSessions(flareSessionTTL),
-		clientPool: make(map[*http.Transport]*http.Client),
 	}
-}
-
-// clientForTransport returns a reusable *http.Client wrapping the supplied
-// transport. The default (transport==nil) uses the shared stdClient which
-// rides http.DefaultTransport's pool. Custom transports get their own cached
-// client so each (proxy, tls) combination keeps its keep-alive connections
-// across requests instead of throwing them away per-call.
-func (f *Fetcher) clientForTransport(t *http.Transport) *http.Client {
-	if t == nil {
-		return f.stdClient
-	}
-	f.clientMu.RLock()
-	c, ok := f.clientPool[t]
-	f.clientMu.RUnlock()
-	if ok {
-		return c
-	}
-	f.clientMu.Lock()
-	defer f.clientMu.Unlock()
-	if c, ok := f.clientPool[t]; ok {
-		return c
-	}
-	c = &http.Client{Timeout: 30 * time.Second, Transport: t}
-	f.clientPool[t] = c
-	return c
 }
 
 // UpdateConfig updates the fetcher's config (for hot-reload).
@@ -585,17 +583,17 @@ func (f *Fetcher) GetExt(rawURL string, tracker app.TrackerSettings, extraCookie
 	}
 
 	cookie := strings.TrimSpace(tracker.Cookie)
-	transport := TransportForURL(rawURL, tracker.UseProxy, tracker.InsecureSkipVerify, f.cfg)
+	profile := profileForURL(rawURL, tracker.UseProxy, tracker.InsecureSkipVerify, f.cfg)
 
 	switch mode {
 	case "flaresolverr":
-		return f.fetchViaFlare(rawURL, cookie, nil, transport)
+		return f.fetchViaFlare(rawURL, cookie, nil, profile)
 	default:
 		ua := userAgent
 		if strings.TrimSpace(ua) == "" {
-			ua = "Mozilla/5.0"
+			ua = defaultUserAgent
 		}
-		res, err := f.doHTTP(http.MethodGet, rawURL, cookie, ua, "", nil, nil, transport)
+		res, err := f.doHTTP(http.MethodGet, rawURL, cookie, ua, "", nil, nil, profile)
 		if err != nil {
 			return res, err
 		}
@@ -605,7 +603,7 @@ func (f *Fetcher) GetExt(rawURL string, tracker app.TrackerSettings, extraCookie
 		// roundtrip via the isDomainCFAuto check above.
 		if isCloudflareChallenge(res.Body) {
 			markDomainCF(domain)
-			return f.fetchViaFlare(rawURL, cookie, nil, transport)
+			return f.fetchViaFlare(rawURL, cookie, nil, profile)
 		}
 		return res, nil
 	}
@@ -686,13 +684,13 @@ func (f *Fetcher) Do(rawURL string, tracker app.TrackerSettings, opts FetchOptio
 	}
 
 	cookie := strings.TrimSpace(tracker.Cookie)
-	transport := TransportForURL(rawURL, tracker.UseProxy, tracker.InsecureSkipVerify, f.cfg)
+	profile := profileForURL(rawURL, tracker.UseProxy, tracker.InsecureSkipVerify, f.cfg)
 
 	// GET in flare mode goes through the full browser-aware path so it can
 	// re-solve on stale cookies or fall back to a browser-rendered body.
 	// Non-GET can't use that path because the browser only navigates.
 	if mode == "flaresolverr" && method == http.MethodGet {
-		return f.fetchViaFlare(rawURL, cookie, opts.ExtraHeaders, transport)
+		return f.fetchViaFlare(rawURL, cookie, opts.ExtraHeaders, profile)
 	}
 
 	ua := opts.UserAgent
@@ -710,10 +708,10 @@ func (f *Fetcher) Do(rawURL string, tracker app.TrackerSettings, opts FetchOptio
 		}
 	}
 	if strings.TrimSpace(ua) == "" {
-		ua = "Mozilla/5.0"
+		ua = defaultUserAgent
 	}
 
-	res, err := f.doHTTP(method, rawURL, cookie, ua, opts.ContentType, opts.Body, opts.ExtraHeaders, transport)
+	res, err := f.doHTTP(method, rawURL, cookie, ua, opts.ContentType, opts.Body, opts.ExtraHeaders, profile)
 	if err != nil {
 		return res, err
 	}
@@ -724,7 +722,7 @@ func (f *Fetcher) Do(rawURL string, tracker app.TrackerSettings, opts FetchOptio
 	if mode != "flaresolverr" && isCloudflareChallenge(res.Body) {
 		markDomainCF(domain)
 		if method == http.MethodGet {
-			return f.fetchViaFlare(rawURL, cookie, opts.ExtraHeaders, transport)
+			return f.fetchViaFlare(rawURL, cookie, opts.ExtraHeaders, profile)
 		}
 		flareCookie, flareUA := f.GetFlareCookies(rawURL)
 		if flareCookie != "" {
@@ -735,25 +733,32 @@ func (f *Fetcher) Do(rawURL string, tracker app.TrackerSettings, opts FetchOptio
 			retryUA = flareUA
 		}
 		if strings.TrimSpace(retryUA) == "" {
-			retryUA = "Mozilla/5.0"
+			retryUA = defaultUserAgent
 		}
-		return f.doHTTP(method, rawURL, cookie, retryUA, opts.ContentType, opts.Body, opts.ExtraHeaders, transport)
+		return f.doHTTP(method, rawURL, cookie, retryUA, opts.ContentType, opts.Body, opts.ExtraHeaders, profile)
 	}
 	return res, nil
 }
 
 // doHTTP performs an HTTP request honoring the caller's method, body,
 // content-type, cookie, UA, and any extra headers. Body is capped at 5 MiB.
-func (f *Fetcher) doHTTP(method, rawURL, cookie, userAgent, contentType string, body []byte, extraHeaders map[string]string, transport *http.Transport) (*FetchResult, error) {
+//
+// Runs on an impersonating client (see tlsclient.go), so this uses fhttp
+// rather than net/http — fhttp is what lets the ClientHello and the HTTP/2
+// header order look like Chrome's.
+func (f *Fetcher) doHTTP(method, rawURL, cookie, userAgent, contentType string, body []byte, extraHeaders map[string]string, profile FetchProfile) (*FetchResult, error) {
 	if strings.TrimSpace(method) == "" {
 		method = http.MethodGet
 	}
-	client := f.clientForTransport(transport)
+	client, err := clientFor(profile)
+	if err != nil {
+		return nil, err
+	}
 	var bodyReader io.Reader
 	if len(body) > 0 {
 		bodyReader = bytes.NewReader(body)
 	}
-	req, err := http.NewRequest(method, rawURL, bodyReader)
+	req, err := fhttp.NewRequest(method, rawURL, bodyReader)
 	if err != nil {
 		return nil, err
 	}
@@ -769,12 +774,26 @@ func (f *Fetcher) doHTTP(method, rawURL, cookie, userAgent, contentType string, 
 	for k, v := range extraHeaders {
 		req.Header.Set(k, v)
 	}
+	applyChromeHeaderOrder(req.Header)
+
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
-	data, err := io.ReadAll(io.LimitReader(resp.Body, 5<<20))
+	// Parsers all expect plain bytes, but who decompressed already depends on
+	// the protocol: fhttp's HTTP/2 path always unwraps the body yet leaves
+	// Content-Encoding in place, while its HTTP/1 path only unwraps what it
+	// asked for itself (and does strip the header). Decoding twice fails with
+	// "brotli: RESERVED", so trust the Uncompressed flag, which both paths set,
+	// rather than the header.
+	respBody := resp.Body
+	if !resp.Uncompressed {
+		rc := fhttp.DecompressBody(resp)
+		defer rc.Close()
+		respBody = rc
+	}
+	data, err := io.ReadAll(io.LimitReader(respBody, 5<<20))
 	if err != nil {
 		return nil, err
 	}
@@ -793,12 +812,12 @@ func (f *Fetcher) doHTTP(method, rawURL, cookie, userAgent, contentType string, 
 //     URLs that automation can't pass)
 //  4. Use the resulting cookies to fetch the actual deep URL
 //  5. Cache cookies for subsequent requests
-func (f *Fetcher) fetchViaFlare(rawURL, cookie string, extraHeaders map[string]string, transport *http.Transport) (*FetchResult, error) {
+func (f *Fetcher) fetchViaFlare(rawURL, cookie string, extraHeaders map[string]string, profile FetchProfile) (*FetchResult, error) {
 	domain := extractDomain(rawURL)
 	httpCookiesFailed := false
 
 	if sess := f.getFlareSession(domain); sess != nil {
-		res, err := f.fetchWithCookies(rawURL, cookie, sess, extraHeaders, transport)
+		res, err := f.fetchWithCookies(rawURL, cookie, sess, extraHeaders, profile)
 		// CF re-challenge returns 200 with challenge HTML — status-only check is
 		// not enough, inspect the body too.
 		if err == nil && res.StatusCode != 403 && !isCloudflareChallenge(res.Body) {
@@ -818,7 +837,7 @@ func (f *Fetcher) fetchViaFlare(rawURL, cookie string, extraHeaders map[string]s
 		// No cached flare session, and the last probe within flareProbeTTL
 		// did NOT see a challenge — probe again. Skips the wasted probe on
 		// still-protected sites where we already know CF is up.
-		if probe, err := f.doHTTP(http.MethodGet, rawURL, cookie, "Mozilla/5.0", "", nil, extraHeaders, transport); err == nil {
+		if probe, err := f.doHTTP(http.MethodGet, rawURL, cookie, defaultUserAgent, "", nil, extraHeaders, profile); err == nil {
 			if probe.StatusCode != 403 && !isCloudflareChallenge(probe.Body) {
 				// CF appears inactive — skip the Chrome solve, use direct body.
 				clearChallengeSeen(domain)
@@ -851,7 +870,7 @@ func (f *Fetcher) fetchViaFlare(rawURL, cookie string, extraHeaders map[string]s
 	// Retry via cookies. If that still returns challenge, fall back to the
 	// browser-rendered body (even if direct == nil above, because e.g. the
 	// binary-download redirect stripped it).
-	res, err := f.fetchWithCookies(rawURL, cookie, sess, extraHeaders, transport)
+	res, err := f.fetchWithCookies(rawURL, cookie, sess, extraHeaders, profile)
 	if err == nil && res.StatusCode != 403 && !isCloudflareChallenge(res.Body) {
 		return res, nil
 	}
@@ -887,7 +906,7 @@ func isCloudflareChallenge(body []byte) bool {
 // fetchWithCookies fetches via standard HTTP with the browser's UA and solved cookies.
 // Pass the UA that was used by the browser during solve so CF sees a consistent
 // (cookie, UA) pair. Mismatch invalidates cf_clearance and triggers a re-challenge.
-func (f *Fetcher) fetchWithCookies(rawURL, cookie string, sess *flareSession, extraHeaders map[string]string, transport *http.Transport) (*FetchResult, error) {
+func (f *Fetcher) fetchWithCookies(rawURL, cookie string, sess *flareSession, extraHeaders map[string]string, profile FetchProfile) (*FetchResult, error) {
 	// Caller's cookie carries the login PHPSESSID and must win over the
 	// browser's guest session captured during solve. Unique flare cookies
 	// (cf_clearance) still get added — only same-name conflicts flip.
@@ -896,7 +915,7 @@ func (f *Fetcher) fetchWithCookies(rawURL, cookie string, sess *flareSession, ex
 	if ua == "" {
 		ua = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36"
 	}
-	return f.doHTTP(http.MethodGet, rawURL, merged, ua, "", nil, extraHeaders, transport)
+	return f.doHTTP(http.MethodGet, rawURL, merged, ua, "", nil, extraHeaders, profile)
 }
 
 func (f *Fetcher) getFlareSession(domain string) *flareSession {
@@ -1053,7 +1072,7 @@ func (f *Fetcher) solveFlare(rawURL, domain string, forceRender bool) (*flareSes
 	ua := resp.Solution.UserAgent
 	log.Printf("flaresolverr: solved %s cookies=%d", domain, len(resp.Solution.Cookies))
 	if ua == "" {
-		ua = "Mozilla/5.0"
+		ua = defaultUserAgent
 	}
 
 	// Empty cookie set means the browser navigated but never received CF
@@ -1082,8 +1101,16 @@ func (f *Fetcher) solveFlare(rawURL, domain string, forceRender bool) (*flareSes
 	// When the browser actually navigated to rawURL, hand the rendered body
 	// back so the caller can skip an HTTP roundtrip that would likely hit a
 	// fresh CF challenge anyway.
+	//
+	// "Actually" is load-bearing: the site may have bounced the browser
+	// somewhere else. rutracker sends the first request from a cold profile to
+	// /forum/index.php, so trusting the rendered body blindly returns the
+	// homepage for a category page and the parser reads it as an empty
+	// listing — the same silent-zero shape that hid the kinozal breakage.
+	// On a mismatch, fall through to the cookie replay, which fetches the URL
+	// we asked for.
 	var direct *FetchResult
-	if !redirected && resp.Solution.Response != "" {
+	if !redirected && resp.Solution.Response != "" && samePage(resp.Solution.URL, solveURL) {
 		status := resp.Solution.Status
 		if status == 0 {
 			status = 200
@@ -1092,6 +1119,9 @@ func (f *Fetcher) solveFlare(rawURL, domain string, forceRender bool) (*flareSes
 			Body:       []byte(resp.Solution.Response),
 			StatusCode: status,
 		}
+	} else if !redirected && resp.Solution.URL != "" && !samePage(resp.Solution.URL, solveURL) {
+		log.Printf("flaresolverr: %s redirected the browser to %s — refetching %s over HTTP",
+			domain, resp.Solution.URL, solveURL)
 	}
 
 	return sess, direct, nil
@@ -1165,7 +1195,7 @@ func (f *Fetcher) SolveForLogin(ctx context.Context, rawURL string) (cookies, us
 	cookies = strings.Join(parts, "; ")
 	userAgent = resp.Solution.UserAgent
 	if userAgent == "" {
-		userAgent = "Mozilla/5.0"
+		userAgent = defaultUserAgent
 	}
 	body = resp.Solution.Response
 	turnstileToken = resp.Solution.TurnstileToken
@@ -1262,7 +1292,7 @@ func (f *Fetcher) LoginViaFlare(ctx context.Context, rawURL, postData string) (c
 	cookies = strings.Join(cookieParts, "; ")
 	userAgent = resp.Solution.UserAgent
 	if userAgent == "" {
-		userAgent = "Mozilla/5.0"
+		userAgent = defaultUserAgent
 	}
 	body = resp.Solution.Response
 	log.Printf("flaresolverr: login POST %s returned cookies=%d body=%d", domain, len(resp.Solution.Cookies), len(body))

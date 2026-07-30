@@ -339,3 +339,37 @@ globalproxy:
 		t.Errorf("valid config produced warnings:\n%s", out)
 	}
 }
+
+// The `useragent` key exists so a cf_clearance cookie copied out of a real
+// browser keeps working: Cloudflare binds it to the User-Agent that solved the
+// challenge, so the pair has to travel together through parse and write-back.
+func TestTrackerUserAgentRoundTrips(t *testing.T) {
+	const ua = "Mozilla/5.0 (X11; Linux x86_64; rv:153.0) Gecko/20100101 Firefox/153.0"
+	src := `
+Rutracker:
+  host: "https://rutracker.org"
+  cookie: "cf_clearance=abc; bb_session=xyz"
+  useragent: "` + ua + `"
+  reqMinute: 8
+`
+	var cfg Config
+	parseYAMLIntoConfig(src, &cfg)
+
+	if cfg.Rutracker.UserAgent != ua {
+		t.Fatalf("UserAgent = %q, want %q", cfg.Rutracker.UserAgent, ua)
+	}
+	if cfg.Rutracker.Cookie != "cf_clearance=abc; bb_session=xyz" {
+		t.Errorf("Cookie = %q", cfg.Rutracker.Cookie)
+	}
+
+	// Saving settings from the web UI must not silently drop it.
+	out := MarshalYAML(cfg)
+	if !strings.Contains(out, "useragent: ") || !strings.Contains(out, ua) {
+		t.Errorf("useragent lost on write-back; got:\n%s", out)
+	}
+	var back Config
+	parseYAMLIntoConfig(out, &back)
+	if back.Rutracker.UserAgent != ua {
+		t.Errorf("after round-trip UserAgent = %q, want %q", back.Rutracker.UserAgent, ua)
+	}
+}

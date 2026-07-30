@@ -27,16 +27,21 @@ type TracksIntervalConfig struct {
 }
 
 type TrackerSettings struct {
-	Host               string        `json:"host"`
-	Alias              string        `json:"alias,omitempty"`
-	Cookie             string        `json:"cookie,omitempty"`
-	Log                bool          `json:"log"`
-	UseProxy           bool          `json:"useproxy"`
-	InsecureSkipVerify bool          `json:"insecureSkipVerify,omitempty"` // skip TLS certificate verification
-	FetchMode          string        `json:"fetchmode,omitempty"`          // "standard" (default), "flaresolverr"
-	ReqMinute          int           `json:"reqMinute"`
-	ParseDelay         int           `json:"parseDelay"`
-	Login              LoginSettings `json:"login"`
+	Host               string `json:"host"`
+	Alias              string `json:"alias,omitempty"`
+	Cookie             string `json:"cookie,omitempty"`
+	Log                bool   `json:"log"`
+	UseProxy           bool   `json:"useproxy"`
+	InsecureSkipVerify bool   `json:"insecureSkipVerify,omitempty"` // skip TLS certificate verification
+	FetchMode          string `json:"fetchmode,omitempty"`          // "standard" (default), "flaresolverr"
+	// UserAgent overrides the default UA on standard-mode requests. Needed
+	// when `cookie` holds a cf_clearance copied from a real browser:
+	// Cloudflare binds that cookie to the exact UA that solved the challenge,
+	// so sending our own UA invalidates it.
+	UserAgent  string        `json:"useragent,omitempty"`
+	ReqMinute  int           `json:"reqMinute"`
+	ParseDelay int           `json:"parseDelay"`
+	Login      LoginSettings `json:"login"`
 }
 
 type FlareSolverrGoConfig struct {

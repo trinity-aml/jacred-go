@@ -390,6 +390,8 @@ func setTrackerKV(t *TrackerSettings, where, k, v string) {
 		t.UseProxy = flag()
 	case "fetchmode":
 		t.FetchMode = unquote(v)
+	case "useragent":
+		t.UserAgent = unquote(v)
 	case "insecureSkipVerify":
 		t.InsecureSkipVerify = flag()
 	case "reqMinute":

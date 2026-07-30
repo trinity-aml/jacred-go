@@ -3,6 +3,7 @@ package rutracker
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html"
 	"io"
@@ -66,22 +67,20 @@ func (t *Task) MarkToday(loc *time.Location) {
 }
 
 type Parser struct {
-	Config     app.Config
-	DB         *filedb.DB
-	DataDir    string
-	Client     *http.Client
-	SlowClient *http.Client
-	Fetcher    *core.Fetcher
-	loc        *time.Location
-	mu         sync.Mutex
-	working    bool
-	allWork    bool
-	latestMu   sync.Mutex
-	tasks      map[string][]Task
-	cookieMu   sync.Mutex
-	cookie     string
-	cookieT    time.Time
-	domain     string
+	Config   app.Config
+	DB       *filedb.DB
+	DataDir  string
+	Fetcher  *core.Fetcher
+	loc      *time.Location
+	mu       sync.Mutex
+	working  bool
+	allWork  bool
+	latestMu sync.Mutex
+	tasks    map[string][]Task
+	cookieMu sync.Mutex
+	cookie   string
+	cookieT  time.Time
+	domain   string
 }
 
 type ParseResult struct {
@@ -95,15 +94,9 @@ func New(cfg app.Config, db *filedb.DB, dataDir string) *Parser {
 	if loc == nil {
 		loc = time.Local
 	}
-	host := strings.TrimRight(cfg.Rutracker.Host, "/")
-	if host == "" {
-		host = "https://rutracker.org"
-	}
-	slowClient := &http.Client{Timeout: 60 * time.Second}
-	if t := core.TransportForURL(host, cfg.Rutracker.UseProxy, cfg.Rutracker.InsecureSkipVerify, cfg); t != nil {
-		slowClient.Transport = t
-	}
-	p := &Parser{Config: cfg, DB: db, DataDir: dataDir, Client: &http.Client{Timeout: 35 * time.Second}, SlowClient: slowClient, Fetcher: core.NewFetcher(cfg), loc: loc, tasks: map[string][]Task{}, domain: core.DomainFromHost(cfg.Rutracker.Host)}
+	// Page fetches now go through Fetcher, which applies the proxy/TLS
+	// transport itself — the parser no longer keeps http.Clients of its own.
+	p := &Parser{Config: cfg, DB: db, DataDir: dataDir, Fetcher: core.NewFetcher(cfg), loc: loc, tasks: map[string][]Task{}, domain: core.DomainFromHost(cfg.Rutracker.Host)}
 	_ = p.loadTasks()
 	if saved, savedT := core.DefaultSessionStore().LoadAuth(p.domain); saved != "" && time.Since(savedT) < 2*time.Hour {
 		p.cookie = saved
@@ -145,6 +138,49 @@ func looksLikeRutrackerLoginForm(htmlBody string) bool {
 		!strings.Contains(htmlBody, `class="torTopic"`)
 }
 
+// errCFChallenge marks a response that is Cloudflare's interstitial rather
+// than anything rutracker served. It is a distinct error because the body
+// contains neither `class="torTopic"` nor the login form, so every downstream
+// check would otherwise read it as "this category has no topics" and the run
+// would report success with zero records.
+var errCFChallenge = errors.New("rutracker: cloudflare challenge (bypass failed)")
+
+// looksLikeCFChallenge recognises the Cloudflare interstitial. `cf_chl_opt` is
+// the challenge script's config object and `cf-mitigated: challenge` is the
+// header CF sets alongside it; the title check covers the localized variants.
+//
+// The bare `/cdn-cgi/challenge-platform/` path is deliberately NOT a marker: a
+// *cleared* page still loads CF's JS-detection beacon from
+// `/cdn-cgi/challenge-platform/scripts/jsd/main.js`, so matching on the path
+// alone reports a challenge on every successful fetch. Only the interstitial's
+// own `orchestrate/chl_page` script is exclusive to a challenge.
+func looksLikeCFChallenge(body string) bool {
+	// Topic rows mean we got the listing, whatever else rides along with it.
+	if strings.Contains(body, `class="torTopic"`) {
+		return false
+	}
+	if strings.Contains(body, "cf_chl_opt") || strings.Contains(body, "orchestrate/chl_page") {
+		return true
+	}
+	return strings.Contains(body, "<title>Just a moment")
+}
+
+// decodeRutrackerBody picks the right charset. Origin pages are CP1251, but a
+// body that came back through flaresolverr was already decoded to UTF-8 by the
+// browser, and running the CP1251 mapping over that mangles every Cyrillic
+// title. Decode, then fall back when the marker every rutracker page carries
+// fails to appear.
+func decodeRutrackerBody(data []byte) string {
+	text := core.DecodeCP1251(data)
+	if strings.Contains(text, "rutracker") || strings.Contains(text, "торрент") {
+		return text
+	}
+	if raw := string(data); strings.Contains(raw, "rutracker") || strings.Contains(raw, "торрент") {
+		return raw
+	}
+	return text
+}
+
 func (p *Parser) takeLogin(ctx context.Context) bool {
 	host := strings.TrimRight(p.Config.Rutracker.Host, "/")
 	if host == "" || p.Config.Rutracker.Login.U == "" {
@@ -152,6 +188,29 @@ func (p *Parser) takeLogin(ctx context.Context) bool {
 		return false
 	}
 	log.Printf("rutracker: attempting login to %s as %s", host, p.Config.Rutracker.Login.U)
+	loginURL := host + "/forum/login.php"
+
+	// /forum/login.php sits behind the same Cloudflare challenge as the rest
+	// of the forum, so the credentials POST needs cf_clearance and the exact
+	// User-Agent that earned it. The POST itself stays on a raw http.Client
+	// (not Fetcher) because bb_session arrives in Set-Cookie on the 302 and
+	// FetchResult carries only body + status.
+	ua := strings.TrimSpace(p.Config.Rutracker.UserAgent)
+	postCookie := strings.TrimSpace(p.Config.Rutracker.Cookie)
+	if flareCookie, flareUA := p.Fetcher.GetFlareCookies(loginURL); flareCookie != "" {
+		postCookie = core.MergeCookieStrings(postCookie, flareCookie)
+		if ua == "" {
+			ua = flareUA
+		}
+		log.Printf("rutracker: login using cf_clearance from flaresolverr")
+	} else if !strings.Contains(postCookie, "cf_clearance") {
+		log.Printf("rutracker: login has no cf_clearance — the CF challenge on %s was not solved; "+
+			"paste a browser cf_clearance (plus a matching useragent) into init.yaml Rutracker", loginURL)
+	}
+	if ua == "" {
+		ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+	}
+
 	loginClient := &http.Client{
 		Timeout: 20 * time.Second,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
@@ -163,20 +222,26 @@ func (p *Parser) takeLogin(ctx context.Context) bool {
 		"login_password": {p.Config.Rutracker.Login.P},
 		"login":          {"\xc2\xf5\xee\xe4"}, // "Вход" in CP1251
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, host+"/forum/login.php", strings.NewReader(form.Encode()))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, loginURL, strings.NewReader(form.Encode()))
 	if err != nil {
 		log.Printf("rutracker: login request error: %v", err)
 		return false
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+	req.Header.Set("User-Agent", ua)
+	if postCookie != "" {
+		req.Header.Set("Cookie", postCookie)
+	}
+	req.Header.Set("Referer", loginURL)
+	req.Header.Set("Origin", host)
 	resp, err := loginClient.Do(req)
 	if err != nil {
 		log.Printf("rutracker: login HTTP error: %v", err)
 		return false
 	}
 	defer resp.Body.Close()
-	log.Printf("rutracker: login response status=%d", resp.StatusCode)
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	log.Printf("rutracker: login response status=%d cf-mitigated=%q", resp.StatusCode, resp.Header.Get("Cf-Mitigated"))
 
 	var parts []string
 	for _, line := range resp.Header.Values("Set-Cookie") {
@@ -184,13 +249,25 @@ func (p *Parser) takeLogin(ctx context.Context) bool {
 	}
 	cookieStr := strings.Join(parts, "; ")
 	if strings.Contains(cookieStr, "bb_session") {
+		// Keep cf_clearance alongside bb_session: listing fetches reuse this
+		// saved string, and an auth-only cookie would get bounced at the edge.
+		merged := cookieStr
+		if postCookie != "" {
+			merged = core.MergeCookieStrings(postCookie, cookieStr)
+		}
 		p.cookieMu.Lock()
-		p.cookie = cookieStr
+		p.cookie = merged
 		p.cookieT = time.Now()
 		p.cookieMu.Unlock()
-		_ = core.DefaultSessionStore().SaveAuth(p.domain, cookieStr)
+		_ = core.DefaultSessionStore().SaveAuth(p.domain, merged)
 		log.Printf("rutracker: login OK, got bb_session")
 		return true
+	}
+	// Distinguish "Cloudflare never let us reach phpBB" from "rutracker
+	// rejected these credentials" — they need completely different fixes.
+	if resp.Header.Get("Cf-Mitigated") == "challenge" || looksLikeCFChallenge(decodeRutrackerBody(body)) {
+		log.Printf("rutracker: login BLOCKED by cloudflare challenge (credentials were never checked)")
+		return false
 	}
 	log.Printf("rutracker: login FAILED — no bb_session in cookies: %s", cookieStr)
 	return false
@@ -223,6 +300,13 @@ func (p *Parser) Parse(ctx context.Context, page int) (ParseResult, error) {
 	log.Printf("rutracker: starting parse, %d categories, masterDb=%d entries", len(firstPageCats), len(p.DB.MasterEntries()))
 	for i, cat := range firstPageCats {
 		items, err := p.parsePage(ctx, cat, page)
+		if errors.Is(err, errCFChallenge) {
+			// Every remaining category would hit the same wall, so stop after
+			// one instead of grinding through 60+ futile fetches.
+			log.Printf("rutracker: aborting after %d/%d cats — %v", i, len(firstPageCats), err)
+			res.Status = "cf-challenge"
+			return res, err
+		}
 		if err != nil {
 			log.Printf("rutracker: cat %s error: %v (continuing)", cat, err)
 			continue // don't abort all categories on single failure
@@ -262,6 +346,10 @@ func (p *Parser) UpdateTasksParse(ctx context.Context) (map[string][]Task, error
 	}
 	for _, cat := range allTaskCats {
 		htmlBody, err := p.fetchCategoryRoot(ctx, cat)
+		if errors.Is(err, errCFChallenge) {
+			log.Printf("rutracker: updatetasksparse aborted — %v", err)
+			return nil, err
+		}
 		if err != nil {
 			continue
 		}
@@ -340,6 +428,10 @@ func (p *Parser) ParseAllTask(ctx context.Context, force bool) (string, error) {
 				}
 			}
 			items, err := p.parsePage(ctx, cat, task.Page)
+			if errors.Is(err, errCFChallenge) {
+				log.Printf("rutracker: parsealltask aborted at cat=%s page=%d — %v", cat, task.Page, err)
+				return "cf-challenge", err
+			}
 			if err != nil {
 				log.Printf("rutracker: parsealltask cat=%s page=%d error: %v", cat, task.Page, err)
 				errs++
@@ -431,6 +523,10 @@ func (p *Parser) ParseLatest(ctx context.Context, pages int) (string, error) {
 				}
 			}
 			items, err := p.parsePage(ctx, cat, task.Page)
+			if errors.Is(err, errCFChallenge) {
+				log.Printf("rutracker: parselatest aborted at cat=%s page=%d — %v", cat, task.Page, err)
+				return "cf-challenge", err
+			}
 			if err != nil {
 				log.Printf("rutracker: parselatest cat=%s page=%d error: %v", cat, task.Page, err)
 				errs++
@@ -636,6 +732,13 @@ func (p *Parser) fetchPage(ctx context.Context, cat string, page int) (string, e
 func (p *Parser) fetchTopic(ctx context.Context, url string) (string, error) {
 	return p.fetch(ctx, url)
 }
+
+// fetch retrieves a page through the shared Fetcher. Going through Fetcher
+// (rather than a bare http.Client, as this parser used to) is what puts
+// rutracker on the same footing as every other tracker: CF auto-detect can
+// promote the domain to flaresolverr routing, solved cf_clearance cookies come
+// from the shared session store, and a `useragent` from init.yaml is honoured
+// so a hand-copied cf_clearance stays valid.
 func (p *Parser) fetch(ctx context.Context, rawURL string) (string, error) {
 	cookie := ""
 	if c := p.getCookie(); c != "" {
@@ -654,16 +757,8 @@ func (p *Parser) fetch(ctx context.Context, rawURL string) (string, error) {
 			}
 		}
 		last := attempt == len(delays)-1
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
-		if err != nil {
-			return "", err
-		}
-		if cookie != "" {
-			req.Header.Set("Cookie", cookie)
-		}
-		req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
 		started := time.Now()
-		resp, err := p.SlowClient.Do(req)
+		data, status, err := p.Fetcher.DownloadExt(rawURL, p.Config.Rutracker, cookie, p.Config.Rutracker.UserAgent)
 		elapsed := time.Since(started).Round(time.Millisecond)
 		if err != nil {
 			log.Printf("rutracker: fetch err elapsed=%s attempt=%d url=%s err=%v", elapsed, attempt+1, rawURL, err)
@@ -672,26 +767,24 @@ func (p *Parser) fetch(ctx context.Context, rawURL string) (string, error) {
 			}
 			continue
 		}
-		data, readErr := io.ReadAll(io.LimitReader(resp.Body, 5<<20))
-		resp.Body.Close()
-		if readErr != nil {
-			log.Printf("rutracker: fetch read err elapsed=%s attempt=%d url=%s err=%v", elapsed, attempt+1, rawURL, readErr)
-			if last {
-				return "", readErr
-			}
-			continue
+		text := decodeRutrackerBody(data)
+		// A challenge is not a transient error — retrying just burns the
+		// browser and the rate limit. Report it so the caller can stop.
+		if looksLikeCFChallenge(text) || status == http.StatusForbidden && strings.TrimSpace(text) == "" {
+			log.Printf("rutracker: fetch %d elapsed=%s attempt=%d url=%s — cloudflare challenge", status, elapsed, attempt+1, rawURL)
+			return "", errCFChallenge
 		}
-		if resp.StatusCode >= 500 {
-			log.Printf("rutracker: fetch %d elapsed=%s attempt=%d bytes=%d url=%s", resp.StatusCode, elapsed, attempt+1, len(data), rawURL)
+		if status >= 500 {
+			log.Printf("rutracker: fetch %d elapsed=%s attempt=%d bytes=%d url=%s", status, elapsed, attempt+1, len(data), rawURL)
 			if last {
-				return "", fmt.Errorf("rutracker returned HTTP %d", resp.StatusCode)
+				return "", fmt.Errorf("rutracker returned HTTP %d", status)
 			}
 			continue
 		}
 		if isListing || elapsed > 5*time.Second {
-			log.Printf("rutracker: fetch ok elapsed=%s status=%d bytes=%d url=%s", elapsed, resp.StatusCode, len(data), rawURL)
+			log.Printf("rutracker: fetch ok elapsed=%s status=%d bytes=%d url=%s", elapsed, status, len(data), rawURL)
 		}
-		return core.DecodeCP1251(data), nil
+		return text, nil
 	}
 	return "", fmt.Errorf("rutracker fetch exhausted retries")
 }

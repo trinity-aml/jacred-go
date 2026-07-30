@@ -124,20 +124,31 @@ evercache:
 #
 # Requires Xvfb on headless servers: apt install xvfb
 #
-#   headless        — true = headless, false = visible (needs Xvfb on servers)
-#   browser_backend — geckodriver (Camoufox, recommended for CF)
-#                     or chromedriver (Chrome for Testing)
-#   browser_path    — browser binary. Empty + geckodriver = auto-download
+#   headless        — true = headless, false = visible (needs Xvfb on servers).
+#                     Keep false with cloakbrowser: measured on rutracker,
+#                     headed clears the managed challenge in ~7 s with no
+#                     click, while headless gets the interactive Turnstile
+#                     widget and loops on it indefinitely.
+#   browser_backend — cloakbrowser (patched stealth Chromium, recommended for
+#                     CF — the only one that clears rutracker), geckodriver
+#                     (Camoufox) or chromedriver (Chrome for Testing).
+#   browser_path    — browser binary. Ignored with cloakbrowser, which manages
+#                     its own binary. Empty + geckodriver = auto-download
 #                     Camoufox (~680 MB, one-time) to ~/.cache.
 #                     Empty + chromedriver = use system Chrome.
 #   driver_path     — custom geckodriver/chromedriver path.
 #                     Empty = auto-download a matching driver.
 #   chrome_version  — pin Chrome for Testing to a major (e.g. "146").
 #                     Only used with browser_backend: chromedriver.
+#
+# cloakbrowser auto-downloads github.com/CloakHQ/CloakBrowser (~217 MB,
+# one-time) to ~/.cache/jacred/cloakbrowser, chromedriver included. Only the
+# v146 line is a free public release; v148+ are Pro-only, so the version is
+# pinned to v146 and the free build ages as CF detection evolves.
 
 flaresolverr_go:
-  headless: true
-  browser_backend: geckodriver
+  headless: false
+  browser_backend: cloakbrowser
   browser_path: ""
   driver_path: ""
   chrome_version: ""

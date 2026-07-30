@@ -155,6 +155,9 @@ func writeTracker(b *strings.Builder, name string, t TrackerSettings) {
 	if t.FetchMode != "" {
 		writeIndented(b, 2, "fetchmode", t.FetchMode)
 	}
+	if t.UserAgent != "" {
+		writeIndented(b, 2, "useragent", t.UserAgent)
+	}
 	if t.InsecureSkipVerify {
 		writeIndented(b, 2, "insecureSkipVerify", true)
 	}
