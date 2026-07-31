@@ -208,7 +208,13 @@ tracksinterval:
 # Each section is optional — defaults are used if omitted.
 #
 # Common keys for every tracker:
-#   host               — base URL; change if the tracker moves domain
+#   host               — base URL; change if the tracker moves domain.
+#                        Also the value written into stored record URLs.
+#   alias              — mirror to send the actual requests to, while `host`
+#                        stays what records are keyed by. Use it when a tracker
+#                        is only reachable via a mirror but you do not want to
+#                        re-key every record already stored. Honoured by
+#                        kinozal, korsars, animelayer, torrentby, rutracker.
 #   parseDelay         — ms between requests within a single parse call.
 #                        For trackers with many categories (Rutor=11,
 #                        Kinozal=25, Rutracker=64+) this prevents rate-limit
@@ -219,6 +225,11 @@ tracksinterval:
 #   useproxy           — route through a matching globalproxy entry
 #   log                — per-tracker verbose log
 #   cookie             — static session cookie (alternative to login: u/p)
+#   useragent          — override the User-Agent on standard-mode requests.
+#                        Needed when `cookie` holds a cf_clearance copied out of
+#                        a real browser: Cloudflare binds that cookie to the
+#                        exact UA that earned it, so sending our own UA next to
+#                        it invalidates the cookie.
 #   login: {u, p}      — credentials; the parser logs in and persists the
 #                        session to Data/cookie/<domain>.json, re-logging in
 #                        automatically when the cookie expires
@@ -258,9 +269,13 @@ TorrentBy:
     p: ""
 
 # ── Kinozal ───────────────────────────────────────────────────────────────────
-# Auth: LOGIN REQUIRED for magnet links
-# Without credentials torrents are fetched but magnets won't be resolved.
+# Auth: LOGIN REQUIRED — for browsing, not just for magnets. Every path except
+# /login.php, /rss.xml and /robots.txt redirects to login.php?m=5, so without
+# credentials a parse yields nothing at all.
 # A static `cookie:` may be used instead of login: u/p.
+# The host moved from kinozal.tv (DNS gone) to kinozal.guru, and the site
+# rebranded "Кинозал.ТВ" to "Кинозал.GURU" at the same time. Fronted by
+# Cloudflare, but it does not challenge — no fetchmode hint needed.
 # Parses 25 categories x year range; parseDelay is critical to avoid bans.
 # Supports: parse?page=N, updatetasksparse, parsealltask, parselatest?pages=N
 
@@ -318,7 +333,16 @@ Toloka:
     p: ""
 
 # ── Mazepa ────────────────────────────────────────────────────────────────────
-# Auth: login optional  |  CF-protected
+# Auth: LOGIN REQUIRED for magnets  |  CF-protected
+# The site dropped magnets from its listings in Jul 2026. They are now taken
+# from each row's dl.php attachment, which is served to logged-in users only —
+# anonymous listings carry no dl.php links at all. Without credentials every
+# row is discarded and the run reports fetched=0 without any error.
+# Magnets are built WITHOUT announce URLs on purpose: mazepa stamps the
+# account's passkey into every attachment it serves, and a magnet keeps being
+# republished through the search API, torznab and /sync.
+# Already-stored magnets are reused, so only genuinely new rows cost a
+# .torrent download — but the first pass after an upgrade downloads a lot.
 # Parses 47+ categories — a high parseDelay is recommended.
 # Supports: parse?page=N, updatetasksparse, parsealltask, parselatest?pages=N
 
@@ -333,6 +357,13 @@ Mazepa:
 
 # ── Rutracker ─────────────────────────────────────────────────────────────────
 # Auth: LOGIN REQUIRED — without login the site returns nothing useful.
+# CF-protected since Jul 2026: a managed challenge covers every forum path
+# except /forum/index.php, login included. No fetchmode hint is set here on
+# purpose — auto-detect promotes the domain on the first challenge — but the
+# challenge only clears with browser_backend: cloakbrowser and headless: false.
+# Camoufox and stock Chrome both get the interactive Turnstile and loop forever.
+# If you would rather not run a browser, paste a cf_clearance cookie from your
+# own browser into `cookie` and set `useragent` to that browser's exact UA.
 # Parses 64+ categories x year range. A full parse is very long — use
 # parselatest daily. Strict rate limits: do not lower parseDelay.
 # Supports: parse?page=N, updatetasksparse, parsealltask, parselatest?pages=N

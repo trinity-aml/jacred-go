@@ -2,7 +2,7 @@
 
 Go-based multi-tracker torrent aggregator. Port of C# project jacred (mainly from https://github.com/jacred-fdb/jacred)
 
-Collects torrent metadata from 20 Russian/Ukrainian trackers into a unified flat-file database with search, sync, and stats APIs.
+Collects torrent metadata from 22 Russian/Ukrainian trackers (23 parsers — bitru has both an HTML and an API parser) into a unified flat-file database with search, sync, and stats APIs.
 
 ## Table of Contents
 
@@ -124,23 +124,32 @@ gcpercent: 50    # Go's GOGC knob: 50 = GC at +50% heap growth (default 50, Go d
 
 ### CloudFlare Bypass (flaresolverr-go)
 
-For trackers protected by CloudFlare (megapeer, bitru, anistar, anifilm, torrentby, mazepa), the system uses an embedded **flaresolverr-go** solver — no external Docker service required.
+For CloudFlare-gated trackers the system uses an embedded **flaresolverr-go** solver — no external Docker service required. Which trackers those are is decided at runtime by auto-detection (see below), not by this list; the domains currently hinted in `init.yaml` are megapeer, nnmclub, bitru, toloka, mazepa, selezen, anistar and anifilm, and rutracker is CF-gated too but left to auto-detect.
 
 How it works:
 
-1. The first request to a CF-gated domain spawns a real browser (Camoufox via geckodriver by default, or Chrome for Testing via chromedriver) on a virtual Xvfb display, lets it pass the CF managed challenge, and extracts the resulting `cf_clearance` cookies and User-Agent.
-2. Solved cookies are cached in memory for 60 minutes per domain and persisted to `Data/temp/flare/` so quick restarts reuse them.
-3. Subsequent requests for the same domain use plain `net/http` with those cookies + the browser's UA (fast path). Only on a fresh CF challenge (403 or interstitial markers in the body) is the browser invoked again.
-4. Idle browser sessions are reaped after 5 minutes of inactivity to free RAM (~800 MB per Camoufox process).
+1. The first request to a CF-gated domain spawns a real browser (CloakBrowser via chromedriver by default; Camoufox via geckodriver and stock Chrome via chromedriver are alternatives) on a virtual Xvfb display, lets it pass the CF managed challenge, and extracts the resulting `cf_clearance` cookies and User-Agent.
+2. Solved cookies are cached in memory for 60 minutes per domain and persisted to `Data/cookie/<domain>.json`, so quick restarts reuse them. That file holds both halves of a domain's session — the flare cookie/UA and the tracker login cookie.
+3. Subsequent requests for the same domain replay those cookies over the normal HTTP path (fast path). Only on a fresh CF challenge (403 or interstitial markers in the body) is the browser invoked again.
+4. Idle browser sessions are reaped after 5 minutes of inactivity to free RAM (~800 MB per browser process).
+
+The fast path is **not** `net/http`: it uses [bogdanfinn/tls-client](https://github.com/bogdanfinn/tls-client) with a Chrome TLS fingerprint. CloudFlare fingerprints the TLS ClientHello (JA3/JA4) and the HTTP/2 header order, so a Go handshake replaying a cookie that a real Chrome earned is a visible mismatch — the cookie is valid and the request still gets challenged. This applies to every CF tracker, not just the hard ones.
 
 ```yaml
 flaresolverr_go:
-  headless: true               # true = headless mode, false = visible (still needs Xvfb on servers)
-  browser_backend: geckodriver # geckodriver (Camoufox, recommended) | chromedriver (Chrome for Testing)
-  browser_path: ""             # Browser binary. Empty + geckodriver = auto-download Camoufox (~680 MB, one-time) into ~/.cache. Empty + chromedriver = system Chrome.
-  driver_path: ""              # Custom geckodriver/chromedriver path. Empty = library auto-downloads a matching driver.
-  chrome_version: ""           # Pin Chrome for Testing to a major (e.g. "146") — only used with browser_backend: chromedriver.
+  headless: false               # false = visible (recommended); needs Xvfb on servers
+  browser_backend: cloakbrowser # cloakbrowser (patched stealth Chromium, recommended) | geckodriver (Camoufox) | chromedriver (Chrome for Testing)
+  browser_path: ""              # Browser binary. Ignored with cloakbrowser (it manages its own). Empty + geckodriver = auto-download Camoufox (~680 MB, one-time) into ~/.cache. Empty + chromedriver = system Chrome.
+  driver_path: ""               # Custom geckodriver/chromedriver path. Empty = library auto-downloads a matching driver.
+  chrome_version: ""            # Pin Chrome for Testing to a major (e.g. "146") — only used with browser_backend: chromedriver.
 ```
+
+`cloakbrowser` auto-downloads [CloakBrowser](https://github.com/CloakHQ/CloakBrowser) (~217 MB, one-time) into `~/.cache/jacred/cloakbrowser`, chromedriver bundled in the same archive so the majors always match. Only the v146 line is a free public release — v148+ are Pro-only — so the version is pinned to v146 and the free build ages as CF detection evolves.
+
+Two settings here are not cosmetic, both measured on rutracker:
+
+- **Keep `headless: false`.** Headed clears the managed challenge in about 7 seconds with no click. Headless gets served the *interactive* Turnstile widget instead and loops on it indefinitely.
+- **`cloakbrowser` is the only backend that clears rutracker.** Camoufox and stock Chrome both get the interactive widget and never pass. They remain fine for easier CF sites.
 
 Requires `Xvfb` on headless servers (`apt install xvfb`). jacred starts its own Xvfb instance on `:99-:119` if `DISPLAY` is unset.
 
@@ -153,7 +162,7 @@ CloudFlare detection is automatic — `fetchmode` in `init.yaml` is now an optio
 3. Transparently retries the same request through flaresolverr-go in the same call — the caller gets the real response.
 4. Routes every subsequent request for that domain through flaresolverr automatically (skipping the wasted standard roundtrip).
 
-Setting `fetchmode: "flaresolverr"` explicitly still works; it just saves the very first wasted request. POST requests are auto-promoted too: when CF rejects a POST, the original body never reached the upstream API, so the retry through flaresolverr (which obtains `cf_clearance` and re-issues the POST via `net/http` + browser UA) is safe.
+Setting `fetchmode: "flaresolverr"` explicitly still works; it just saves the very first wasted request. POST requests are auto-promoted too: when CF rejects a POST, the original body never reached the upstream API, so the retry through flaresolverr (which obtains `cf_clearance` and re-issues the POST over the normal HTTP path with the browser's UA) is safe.
 
 Registry entries persist across restarts and age out after 30 days (any domain that's gone quiet that long is rechecked from scratch). To inspect or clear the registry manually, use `/admin/cf-domains` (see [Database Admin Endpoints](#database-admin-endpoints)).
 
@@ -201,13 +210,20 @@ Each tracker section is optional — defaults are used if omitted.
 
 ```yaml
 Kinozal:
-  host: "https://kinozal.guru"   # Override default host
+  host: "https://kinozal.guru"   # Override default host; also what stored record URLs are keyed by
+  alias: ""                      # Mirror to send requests to, while host stays the record key.
+                                 # Honoured by kinozal, korsars, animelayer, torrentby, rutracker.
   cookie: "uid=abc123; pass=..." # Session cookie (required for login-only trackers)
+  useragent: ""                  # Override the UA on standard-mode requests. Required when cookie
+                                 # holds a cf_clearance copied from a browser: CF binds that cookie
+                                 # to the exact UA that earned it.
   login:
     u: "username"
     p: "password"
   reqMinute: 8                  # Max requests per minute (rate limiting)
   parseDelay: 7000              # Delay between category/page requests in ms
+  fetchmode: ""                 # "flaresolverr" skips the first CF-detection roundtrip (a hint only)
+  insecureSkipVerify: false     # Accept invalid/expired TLS certificates
   log: false                    # Log this tracker's requests
   useproxy: false               # Route requests through globalproxy
 ```
@@ -235,7 +251,7 @@ Kinozal:
 | Anifilm | `https://anifilm.pro` |
 | Leproduction | `https://www.le-production.tv` |
 | Korsars | `https://korsars.pro` |
-| Ultradox | `https://ultradox.top` |
+| Ultradox | `https://ultradox.onl` |
 | Viruseproject | `https://viruseproject.tv` |
 | Anibelka | `https://anibelka.com` |
 
@@ -432,6 +448,20 @@ GET /cron/anifilm/parse
   fullparse=true    — re-parse all pages
 ```
 
+#### Anibelka
+```
+GET /cron/anibelka/parse
+  page=N   (default 0) — parse single page
+
+GET /cron/anibelka/updatetasksparse
+GET /cron/anibelka/parsealltask
+GET /cron/anibelka/parselatest
+  pages=N   (default 1)
+```
+Anime-only phpBB tracker, no login. Five forums under its "Скачать аниме" menu (32 Универсальные, 33 С озвучкой, 34 С субтитрами, 36 Полнометражки, 37 PSP), 15 topics per listing page, pagination via `?start=N`. There are no magnets in the markup: each topic carries exactly one `.torrent` attachment, so the parser downloads it and derives the magnet from the info dict — two requests per topic, hence a conservative `parseDelay`.
+
+**Do not add credentials for this tracker.** A logged-in `.torrent` download embeds the account's personal passkey in the announce URL, and that passkey would then be copied into every magnet this instance serves over the search API and `/sync`. Anonymous downloads produce the same info hash and login grants no extra topics.
+
 #### Bitru
 ```
 GET /cron/bitru/parse
@@ -465,6 +495,7 @@ GET /cron/kinozal/parsealltask
 GET /cron/kinozal/parselatest
   pages=N   (default 100, max 100) — scan unfiltered pages 0..N-1 per category, no year filter
 ```
+Login required for browsing, not just for magnets: every path except `/login.php`, `/rss.xml` and `/robots.txt` redirects to `login.php?m=5`. The host moved from `kinozal.tv` (DNS gone) to `kinozal.guru`, and the site rebranded "Кинозал.ТВ" to "Кинозал.GURU" at the same time. Fronted by CloudFlare but it does not challenge, so no `fetchmode` hint is needed.
 
 #### Knaben
 ```
@@ -503,8 +534,14 @@ GET /cron/lostfilm/stats            — Lostfilm-specific stats
 
 #### Mazepa
 ```
-GET /cron/mazepa/parse   — no parameters, parses current page
+GET /cron/mazepa/parse   — no parameters, walks its category list
+
+GET /cron/mazepa/updatetasksparse
+GET /cron/mazepa/parsealltask
+GET /cron/mazepa/parselatest
+  pages=N   (default 5)
 ```
+Login required (`Mazepa.login.u/p`). The site moved to SEO paths in Jul 2026 and dropped magnets from its listings; they are now resolved from each row's `dl.php` attachment, which is served to logged-in users only — anonymous listings carry no `dl.php` links at all, so without credentials every row is discarded and the run reports `fetched=0` with no error. Magnets are built **without** announce URLs on purpose: mazepa stamps the account's passkey into every attachment it serves, and magnets get republished through the search API, torznab and `/sync`. Already-stored magnets are reused, so only genuinely new rows cost a `.torrent` download.
 
 #### NNMClub
 ```
@@ -527,6 +564,7 @@ GET /cron/rutracker/parsealltask
 GET /cron/rutracker/parselatest
   pages=N   (default 5)
 ```
+Login required (`Rutracker.login.u/p`). CF-gated since Jul 2026: a managed challenge covers every forum path except `/forum/index.php`, login included. No `fetchmode` hint is set — auto-detect promotes the domain on the first challenge — but clearing it in practice needs `browser_backend: cloakbrowser` with `headless: false`. A challenged run reports `status: "cf-challenge"` with HTTP 500 rather than a silent empty result.
 
 #### Korsars
 ```
@@ -550,7 +588,7 @@ GET /cron/ultradox/parsealltask
 GET /cron/ultradox/parselatest
   pages=N   (default 5)
 ```
-Listing-then-detail tracker, no login. Six sections: `serial-hd`, `hd`, `rufilm`, `camrip`, `webrips`, `anime`. Listing rows expose placeholder magnets with empty btih, so the parser follows each title link to the detail page where every quality variant has a full info-hash. One torrent record is stored per quality variant. Sid/pir are placeholder values (1) — the site doesn't expose peer counts. Upstream's TLS certificate is expired, so the default config carries `insecureSkipVerify: true`.
+Listing-then-detail tracker, no login. Six sections: `serial-hd`, `hd`, `rufilm`, `camrip`, `webrips`, `anime`. Listing rows expose placeholder magnets with empty btih, so the parser follows each title link to the detail page where every quality variant has a full info-hash. One torrent record is stored per quality variant. Sid/pir are placeholder values (1) — the site doesn't expose peer counts. The host moved from `ultradox.top` (dead) to `ultradox.onl`, which 307s to a numbered mirror such as `021.ultadox.space` — follow the redirect, don't hardcode the mirror. The origin answers `503` unless the `Referer` is a search engine (google/yandex pass; its own origin does not); this is not a CF challenge and flaresolverr does not help, so the parser sends the required browser headers itself and nothing is needed in config. TLS certificates are valid again, so `insecureSkipVerify` is off.
 
 #### Viruseproject
 ```
@@ -1297,3 +1335,10 @@ Notes:
   never resolve a different dependency graph than the one that was tagged.
 - The release archive bundles only `init.yaml.example`. `init.yaml` is a live
   deployment file holding tracker credentials and must not be published.
+- Do not run `go get -u` on this module. `anacrolix/torrent v1.61.0` (the newest
+  release) requires `anacrolix/missinggo/v2 v2.10.0`, the last version built on
+  `RoaringBitmap/roaring` v1; missinggo v2.11.0 moved to `roaring/v2` and
+  torrent then fails to compile *inside its own source*, with no newer torrent
+  to upgrade to. `go mod tidy` never causes this — a blanket upgrade does.
+  Recover with `git checkout go.mod go.sum`, then `go get` the single module
+  you actually wanted.
