@@ -220,8 +220,7 @@ Kinozal:
   login:
     u: "username"
     p: "password"
-  reqMinute: 8                  # Max requests per minute (rate limiting)
-  parseDelay: 7000              # Delay between category/page requests in ms
+  parseDelay: 7000              # Delay between category/page requests in ms — the only pacing knob
   fetchmode: ""                 # "flaresolverr" skips the first CF-detection roundtrip (a hint only)
   insecureSkipVerify: false     # Accept invalid/expired TLS certificates
   log: false                    # Log this tracker's requests

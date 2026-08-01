@@ -598,8 +598,10 @@
                   <option value="flaresolverr" ${t.fetchmode === 'flaresolverr' ? 'selected' : ''}>flaresolverr</option>
                 </select>
               </div>
-              <div><label class="field-label">reqMinute</label><input type="number" class="field-input" data-tr="${name}" data-k="reqMinute" value="${t.reqMinute ?? ''}"/></div>
-              <div><label class="field-label">parseDelay (мс)</label><input type="number" class="field-input" data-tr="${name}" data-k="parseDelay" value="${t.parseDelay ?? ''}"/></div>
+              <div>
+                <label class="field-label" title="Пауза между запросами внутри одного прогона парсера. Единственная реально работающая настройка темпа: reqMinute не читается кодом и намеренно здесь не показан (значение из init.yaml при сохранении сохраняется как есть).">parseDelay (мс)</label>
+                <input type="number" class="field-input" data-tr="${name}" data-k="parseDelay" value="${t.parseDelay ?? ''}"/>
+              </div>
               <div class="checkbox-row"><input type="checkbox" id="cb_${name}_useproxy" data-tr="${name}" data-k="useproxy" ${t.useproxy ? 'checked' : ''}/><label for="cb_${name}_useproxy">useproxy</label></div>
               <div class="checkbox-row"><input type="checkbox" id="cb_${name}_skip" data-tr="${name}" data-k="insecureSkipVerify" ${t.insecureSkipVerify ? 'checked' : ''}/><label for="cb_${name}_skip">insecureSkipVerify</label></div>
               <div class="checkbox-row"><input type="checkbox" id="cb_${name}_log" data-tr="${name}" data-k="log" ${t.log ? 'checked' : ''}/><label for="cb_${name}_log">log</label></div>

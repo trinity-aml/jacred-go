@@ -219,7 +219,6 @@ tracksinterval:
 #                        For trackers with many categories (Rutor=11,
 #                        Kinozal=25, Rutracker=64+) this prevents rate-limit
 #                        bans. Set to 0 to disable.
-#   reqMinute          — soft limit on requests per minute (0 = no limit)
 #   fetchmode          — "flaresolverr" to skip CF auto-detection (see above)
 #   insecureSkipVerify — accept invalid/expired TLS certificates
 #   useproxy           — route through a matching globalproxy entry
@@ -233,6 +232,14 @@ tracksinterval:
 #   login: {u, p}      — credentials; the parser logs in and persists the
 #                        session to Data/cookie/<domain>.json, re-logging in
 #                        automatically when the cookie expires
+#
+# Legacy key, still accepted so old configs load unchanged but no longer shown
+# here because nothing reads it:
+#   reqMinute          — in the C# original parseDelay did not exist as a key;
+#                        it was computed as (60/reqMinute)*1000 ms and reqMinute
+#                        was the only knob. This port made parseDelay a real key
+#                        and wired that instead, which left reqMinute with
+#                        nothing to do. Set parseDelay directly.
 
 # ── Rutor ─────────────────────────────────────────────────────────────────────
 # Auth: not required
@@ -242,7 +249,6 @@ tracksinterval:
 Rutor:
   host: "https://rutor.is"
   parseDelay: 7000
-  reqMinute: 8
 
 # ── Megapeer ──────────────────────────────────────────────────────────────────
 # Auth: not required  |  CF-protected
@@ -252,7 +258,6 @@ Megapeer:
   host: "https://megapeer.vip"
   fetchmode: "flaresolverr"
   parseDelay: 3000
-  reqMinute: 10
 
 # ── TorrentBy ─────────────────────────────────────────────────────────────────
 # Auth: login supported (session persisted, auto-renewed on expiry)
@@ -263,7 +268,6 @@ TorrentBy:
   host: "https://torrent.by"
   insecureSkipVerify: true
   parseDelay: 5000
-  reqMinute: 8
   login:
     u: ""
     p: ""
@@ -282,7 +286,6 @@ TorrentBy:
 Kinozal:
   host: "https://kinozal.guru"
   parseDelay: 7000
-  reqMinute: 6
   login:
     u: ""
     p: ""
@@ -299,7 +302,6 @@ NNMClub:
   fetchmode: "flaresolverr"
   cookie: ""
   parseDelay: 5000
-  reqMinute: 8
   login:
     u: ""
     p: ""
@@ -317,7 +319,6 @@ Bitru:
   host: "https://bitru.org"
   fetchmode: "flaresolverr"
   parseDelay: 3000
-  reqMinute: 10
 
 # ── Toloka ────────────────────────────────────────────────────────────────────
 # Auth: login recommended (required for full access)  |  CF-protected
@@ -327,7 +328,6 @@ Toloka:
   host: "https://toloka.to"
   fetchmode: "flaresolverr"
   parseDelay: 5000
-  reqMinute: 6
   login:
     u: ""
     p: ""
@@ -350,7 +350,6 @@ Mazepa:
   host: "https://mazepa.to"
   parseDelay: 10000
   fetchmode: "flaresolverr"
-  reqMinute: 6
   login:
     u: ""
     p: ""
@@ -371,7 +370,6 @@ Mazepa:
 Rutracker:
   host: "https://rutracker.org"
   parseDelay: 8000
-  reqMinute: 6
   login:
     u: ""
     p: ""
@@ -386,7 +384,6 @@ Selezen:
   host: "https://use.selezen.club"
   fetchmode: "flaresolverr"
   parseDelay: 3000
-  reqMinute: 10
   login:
     u: ""
     p: ""
@@ -400,7 +397,6 @@ Lostfilm:
   host: "https://www.lostfilm.tv"
   cookie: ""
   parseDelay: 3000
-  reqMinute: 10
 
 # ── Animelayer ────────────────────────────────────────────────────────────────
 # Auth: login optional
@@ -409,7 +405,6 @@ Lostfilm:
 Animelayer:
   host: "https://animelayer.ru"
   parseDelay: 3000
-  reqMinute: 10
   login:
     u: ""
     p: ""
@@ -421,7 +416,6 @@ Animelayer:
 Anidub:
   host: "https://tr.anidub.com"
   parseDelay: 2000
-  reqMinute: 15
 
 # ── Aniliberty ────────────────────────────────────────────────────────────────
 # Auth: not required (public RSS/API)
@@ -431,7 +425,6 @@ Anidub:
 Aniliberty:
   host: "https://aniliberty.top"
   parseDelay: 1000
-  reqMinute: 20
 
 # ── Knaben ────────────────────────────────────────────────────────────────────
 # Auth: not required (public JSON API)
@@ -441,7 +434,6 @@ Aniliberty:
 Knaben:
   host: "https://api.knaben.org"
   parseDelay: 0
-  reqMinute: 30
 
 # ── Anistar ───────────────────────────────────────────────────────────────────
 # Auth: not required  |  CF-protected
@@ -451,7 +443,6 @@ Anistar:
   host: "https://anistar.org"
   fetchmode: "flaresolverr"
   parseDelay: 3000
-  reqMinute: 10
 
 # ── Anifilm ───────────────────────────────────────────────────────────────────
 # Auth: login optional (a static cookie is also accepted)  |  CF-protected
@@ -461,7 +452,6 @@ Anifilm:
   host: "https://anifilm.pro"
   fetchmode: "flaresolverr"
   parseDelay: 3000
-  reqMinute: 10
   login:
     u: ""
     p: ""
@@ -473,7 +463,6 @@ Anifilm:
 Leproduction:
   host: "https://www.le-production.tv"
   parseDelay: 3000
-  reqMinute: 10
 
 # ── Korsars ───────────────────────────────────────────────────────────────────
 # Auth: LOGIN REQUIRED — without credentials the site shows no torrent metadata.
@@ -484,7 +473,6 @@ Leproduction:
 Korsars:
   host: "https://korsars.pro"
   parseDelay: 5000
-  reqMinute: 8
   login:
     u: ""
     p: ""
@@ -506,7 +494,6 @@ Korsars:
 Ultradox:
   host: "https://ultradox.onl"
   parseDelay: 5000
-  reqMinute: 8
 
 # ── Viruseproject ─────────────────────────────────────────────────────────────
 # Auth: not required
@@ -516,7 +503,6 @@ Ultradox:
 Viruseproject:
   host: "https://viruseproject.tv"
   parseDelay: 7000
-  reqMinute: 8
 
 # ── Anibelka ──────────────────────────────────────────────────────────────────
 # Auth: not required — and deliberately not used.
@@ -537,7 +523,6 @@ Viruseproject:
 Anibelka:
   host: "https://anibelka.com"
   parseDelay: 3000
-  reqMinute: 10
 
 # ── Proxy ─────────────────────────────────────────────────────────────────────
 # Route specific tracker requests through a proxy.
