@@ -8,7 +8,7 @@ require (
 	github.com/bogdanfinn/fhttp v0.6.8
 	github.com/bogdanfinn/tls-client v1.15.1
 	github.com/fsnotify/fsnotify v1.10.1
-	github.com/trinity-aml/flaresolverr-go v0.0.0-20260731173051-b27ad033ede5
+	github.com/trinity-aml/flaresolverr-go v0.0.0-20260801095858-0c15b2116c96
 	github.com/ulikunitz/xz v0.5.15
 )
 
