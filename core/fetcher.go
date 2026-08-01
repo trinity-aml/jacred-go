@@ -59,6 +59,9 @@ var (
 	flareFailMu   sync.RWMutex
 	flareLastFail = make(map[string]time.Time, 32)
 
+	flareReplayMu      sync.RWMutex
+	flareReplayHostile = make(map[string]time.Time, 8)
+
 	// flareLastChallenge records when fetchViaFlare's standard-HTTP probe last
 	// saw a CF challenge for a domain. While the entry is within probeTTL we
 	// skip the probe and go straight to solveFlare — saving one wasted HTTP
@@ -87,6 +90,16 @@ const (
 	// that only needs the page. See flareWaitSeconds.
 	flareSolveWait  = 8
 	flareRenderWait = 2
+
+	// A clearance challenged within this window of being issued was never
+	// valid for our client, as opposed to having expired. Generous because the
+	// distinction only has to separate "seconds" from "an hour" — the real
+	// cf_clearance lifetime is 30–120 min (see flareSessionTTL).
+	flareReplayFreshWindow = 2 * time.Minute
+	// How long a domain stays flagged as replay-hostile. Matches flareProbeTTL:
+	// long enough to cover a parse cycle, short enough that a site (or an IP
+	// reputation) that stops being hostile is retried the same day.
+	flareReplayHostileTTL = flareProbeTTL
 	// flareProbeTTL bounds how long we trust a "domain showed a CF challenge
 	// recently" mark. 6h is long enough to skip probes during a typical
 	// parse cycle yet short enough that a CF removal is picked up within a
@@ -358,6 +371,36 @@ func clearFlareFailure(domain string) {
 	flareFailMu.Lock()
 	delete(flareLastFail, domain)
 	flareFailMu.Unlock()
+}
+
+// replayHostile reports whether this domain's cf_clearance has been shown to
+// be unusable from our HTTP client, so the replay must be skipped outright.
+func replayHostile(domain string) bool {
+	flareReplayMu.RLock()
+	t, ok := flareReplayHostile[domain]
+	flareReplayMu.RUnlock()
+	return ok && time.Since(t) < flareReplayHostileTTL
+}
+
+// markReplayHostile records that a *freshly minted* clearance was challenged
+// on replay.
+//
+// Measured on rutracker from the production host: solve at 19:58:43 returns
+// `[cf_clearance bb_guid]`, and the replay one second later comes back 403
+// with challenge markers. A clearance rejected a second after CF issued it is
+// not stale — it is bound to something our client cannot reproduce (the
+// browser's TLS/JA4 or h2 fingerprint; CloakBrowser is a *patched* Chromium,
+// so its ClientHello need not equal the stock Chrome_146 we impersonate, and
+// CF is stricter about that on datacenter IPs — the same build replays fine
+// from a dev box).
+//
+// Treating that as "cookies stale" is what wedged the parser: it deleted a
+// perfectly good session and forced a cold solve for *every* page, which buried
+// the browser until it stopped responding and put the domain in cooldown.
+func markReplayHostile(domain string) {
+	flareReplayMu.Lock()
+	flareReplayHostile[domain] = time.Now()
+	flareReplayMu.Unlock()
 }
 
 // recentChallengeSeen reports whether the standard-HTTP probe last saw a CF
@@ -850,39 +893,47 @@ func (f *Fetcher) fetchViaFlare(rawURL, cookie string, extraHeaders map[string]s
 
 	sessionWasValid := false
 	if sess := f.getFlareSession(domain); sess != nil {
-		res, err := f.fetchWithCookies(rawURL, cookie, sess, extraHeaders, profile)
-		// CF re-challenge returns 200 with challenge HTML — status-only check is
-		// not enough, inspect the body too.
-		if err == nil && res.StatusCode != 403 && !isCloudflareChallenge(res.Body) {
-			return res, nil
-		}
-		// Only drop the cached session when cookies are actually stale
-		// (challenge markers in body). A plain 403 typically means CF WAF is
-		// blocking our raw HTTP client's IP/fingerprint — cookies are still
-		// valid, we just can't use them without the browser.
-		challenged := err == nil && isCloudflareChallenge(res.Body)
-		if challenged {
-			f.clearFlareSession(domain)
-		} else {
-			// Cookies are believed good, we just can't replay them from here.
-			// The browser still holds this domain's clearance, so the coming
-			// navigation is a render, not a fresh solve.
+		if replayHostile(domain) {
+			// Known-unusable replay: sending it again only costs a request and
+			// re-learns the same 403. Go straight to the browser, which still
+			// holds the clearance, so this is a render and not a fresh solve.
 			sessionWasValid = true
+			httpCookiesFailed = true
+		} else {
+			res, err := f.fetchWithCookies(rawURL, cookie, sess, extraHeaders, profile)
+			// CF re-challenge returns 200 with challenge HTML — status-only
+			// check is not enough, inspect the body too.
+			if err == nil && res.StatusCode != 403 && !isCloudflareChallenge(res.Body) {
+				return res, nil
+			}
+			challenged := err == nil && isCloudflareChallenge(res.Body)
+			age := time.Since(sess.obtained)
+			// Why the fast path failed decides which of three different bugs
+			// this is, and nothing used to record it: a silent fall-through to
+			// the browser looked identical in all three cases.
+			switch {
+			case challenged && age < flareReplayFreshWindow:
+				// Not stale — never valid for this client. Keep the session:
+				// dropping it forces a cold solve per page, which is exactly
+				// what buried the browser. See markReplayHostile.
+				markReplayHostile(domain)
+				sessionWasValid = true
+				log.Printf("flaresolverr: %s challenged a clearance issued %s ago — replay is unusable here, routing this domain through the browser", domain, age.Round(time.Second))
+			case challenged:
+				// Old enough to have genuinely expired.
+				f.clearFlareSession(domain)
+				log.Printf("flaresolverr: %s cookie replay got a challenge (status=%d, age=%s) — cookies stale, re-solving", domain, res.StatusCode, age.Round(time.Second))
+			case err != nil:
+				sessionWasValid = true
+				log.Printf("flaresolverr: %s cookie replay failed (%v) — falling back to the browser", domain, err)
+			default:
+				sessionWasValid = true
+				log.Printf("flaresolverr: %s cookie replay rejected (status=%d, no challenge markers) — cookies kept, rendering in the browser", domain, res.StatusCode)
+			}
+			// Force the browser to actually navigate this URL; reusing the
+			// cached session we just tried would send us straight back here.
+			httpCookiesFailed = true
 		}
-		// Why the fast path failed decides which of two opposite bugs this is,
-		// and nothing used to record it: a silent fall-through to the browser
-		// looks identical whether the cookies expired or were never usable.
-		switch {
-		case err != nil:
-			log.Printf("flaresolverr: %s cookie replay failed (%v) — falling back to the browser", domain, err)
-		case challenged:
-			log.Printf("flaresolverr: %s cookie replay got a challenge (status=%d) — cookies stale, re-solving", domain, res.StatusCode)
-		default:
-			log.Printf("flaresolverr: %s cookie replay rejected (status=%d, no challenge markers) — cookies kept, rendering in the browser", domain, res.StatusCode)
-		}
-		// Force the browser to actually navigate this URL; reusing the cached
-		// session we just tried would send us straight back here.
-		httpCookiesFailed = true
 	} else if !recentChallengeSeen(domain) {
 		// No cached flare session, and the last probe within flareProbeTTL
 		// did NOT see a challenge — probe again. Skips the wasted probe on
@@ -958,14 +1009,59 @@ func isCloudflareChallenge(body []byte) bool {
 // (cookie, UA) pair. Mismatch invalidates cf_clearance and triggers a re-challenge.
 func (f *Fetcher) fetchWithCookies(rawURL, cookie string, sess *flareSession, extraHeaders map[string]string, profile FetchProfile) (*FetchResult, error) {
 	// Caller's cookie carries the login PHPSESSID and must win over the
-	// browser's guest session captured during solve. Unique flare cookies
-	// (cf_clearance) still get added — only same-name conflicts flip.
-	merged := mergeCookies(sess.cookies, cookie)
+	// browser's guest session captured during solve — but only for *auth*
+	// cookies. For CF-managed ones the live session is the authority, so they
+	// are stripped from the caller's copy before merging.
+	//
+	// Without that strip the precedence is exactly backwards. Parsers persist
+	// a cf_clearance snapshot into their saved auth cookie at login time
+	// (rutracker `takeLogin`, nnmclub likewise) so the standard non-flare path
+	// isn't bounced at the edge; mergeCookies then lets the caller win on
+	// same-name conflicts, so that hours-old clearance overwrote the one the
+	// solve had just minted. Measured on rutracker: solve returns a fresh
+	// clearance, the replay one second later sends a 1h36m-old one and is
+	// challenged — then the challenge is read as "cookies stale" and the whole
+	// thing re-solves, per page, until the browser stops responding.
+	merged := mergeCookies(sess.cookies, stripCFManagedCookies(cookie))
 	ua := sess.userAgent
 	if ua == "" {
 		ua = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36"
 	}
 	return f.doHTTP(http.MethodGet, rawURL, merged, ua, "", nil, extraHeaders, profile)
+}
+
+// cfManagedCookies are issued by Cloudflare and bound to the client that
+// earned them, so a stored copy goes stale independently of the auth cookies
+// it was saved next to. Only meaningful when a live flare session exists to
+// supply fresher ones.
+var cfManagedCookies = map[string]bool{
+	"cf_clearance": true,
+	"__cf_bm":      true,
+}
+
+// stripCFManagedCookies removes Cloudflare's own cookies from a cookie string,
+// leaving auth cookies untouched.
+func stripCFManagedCookies(cookie string) string {
+	if cookie == "" || !strings.Contains(cookie, "cf") {
+		return cookie
+	}
+	parts := strings.Split(cookie, ";")
+	kept := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		name := part
+		if eq := strings.IndexByte(part, '='); eq > 0 {
+			name = strings.TrimSpace(part[:eq])
+		}
+		if cfManagedCookies[name] {
+			continue
+		}
+		kept = append(kept, part)
+	}
+	return strings.Join(kept, "; ")
 }
 
 func (f *Fetcher) getFlareSession(domain string) *flareSession {
