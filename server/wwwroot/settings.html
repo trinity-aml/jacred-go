@@ -339,7 +339,7 @@
                 <input type="number" class="field-input" data-path="tracksdelay" min="0"/>
               </div>
               <div>
-                <label class="field-label" title="Сколько раз пытаться проанализировать раздачу до пометки skip (ffprobe_tryingdata ≥ N)">tracksatempt — макс попыток (по умолчанию 20)</label>
+                <label class="field-label" title="Сколько раз пытаться проанализировать раздачу до пометки skip (ffprobe_tryingdata ≥ N)">tracksatempt — макс попыток (по умолчанию 5)</label>
                 <input type="number" class="field-input" data-path="tracksatempt" min="1"/>
               </div>
               <div>
@@ -396,10 +396,20 @@
           </summary>
           <div class="body space-y-4">
             <p class="text-sm text-gray-500 dark:text-gray-400">
-              Один общий браузер для всех CF-защищённых парсеров (anistar, anifilm, bitru,
-              megapeer, mazepa, torrentby). Рекомендуется
-              <strong>geckodriver + Camoufox</strong> — проходит CF Managed Challenge Invisible.
-              Для трекера нужно выставить <code>fetchmode: flaresolverr</code>.
+              Один общий браузер для всех CF-защищённых парсеров. Список таких трекеров
+              определяется <strong>на лету</strong>: любой домен, ответивший CF-челленджем,
+              автоматически переводится на flaresolverr и запоминается в
+              <code>Data/temp/cf_auto.json</code> (TTL 30 дней). Поэтому
+              <code>fetchmode: flaresolverr</code> — только подсказка, которая экономит
+              первый круг детекта, а не источник истины: фактическую маршрутизацию смотрите
+              на <a href="/admin/cf-domains" class="text-blue-600 dark:text-blue-400 hover:underline">/admin/cf-domains</a>.
+              Подсказка сейчас выставлена у megapeer, nnmclub, bitru, toloka, mazepa,
+              selezen, anistar, anifilm; rutracker определяется автоматически.
+            </p>
+            <p class="text-sm text-gray-500 dark:text-gray-400">
+              Рекомендуется <strong>cloakbrowser + headless: false</strong> — единственная
+              связка, проходящая managed challenge на rutracker (~7 с без клика).
+              Camoufox и стоковый Chrome получают интерактивный Turnstile и зацикливаются.
             </p>
 
             <!-- Backend choice -->
@@ -407,19 +417,20 @@
               <legend class="px-2 text-sm font-semibold">Backend</legend>
               <div class="grid-fields">
                 <div>
-                  <label class="field-label" title="auto — по browser_path; geckodriver — Firefox/Camoufox; chromedriver — Chrome/Chromium">
+                  <label class="field-label" title="cloakbrowser — патченый Chromium CloakBrowser (качается автоматически, ~217 МБ); auto — по browser_path; geckodriver — Firefox/Camoufox; chromedriver — Chrome/Chromium">
                     browser_backend
                   </label>
                   <select class="field-select" data-path="flaresolverr_go.browser_backend">
+                    <option value="cloakbrowser">cloakbrowser + патченый Chromium (рекомендуется)</option>
                     <option value="">auto (определить по browser_path)</option>
-                    <option value="geckodriver">geckodriver + Firefox/Camoufox (рекомендуется)</option>
+                    <option value="geckodriver">geckodriver + Firefox/Camoufox</option>
                     <option value="chromedriver">chromedriver + Chrome/Chromium</option>
                   </select>
                 </div>
                 <div class="checkbox-row">
-                  <input type="checkbox" id="cb_fs_headless" data-path="flaresolverr_go.headless"/>
-                  <label for="cb_fs_headless" title="Запускать браузер без видимого окна (Xvfb всё равно требуется на Linux)">
-                    headless — фоновый режим
+                  <input type="checkbox" id="cb_fs_headless" data-path="flaresolverr_go.headless" data-default="true"/>
+                  <label for="cb_fs_headless" title="Запускать браузер без видимого окна. Для cloakbrowser должно быть ВЫКЛЮЧЕНО: в headless CF отдаёт интерактивный Turnstile и челлендж не проходится. Xvfb стартует сам, если DISPLAY пуст.">
+                    headless — фоновый режим <span class="text-amber-600 dark:text-amber-400">(для cloakbrowser выключить)</span>
                   </label>
                 </div>
               </div>
@@ -429,15 +440,19 @@
             <fieldset class="border border-gray-300 dark:border-gray-700 rounded-lg p-3">
               <legend class="px-2 text-sm font-semibold">Пути (пусто = авто-скачивание)</legend>
               <div class="space-y-3">
+                <p class="text-xs text-amber-600 dark:text-amber-400">
+                  При <code>browser_backend: cloakbrowser</code> оба пути игнорируются —
+                  браузер и chromedriver берутся из скачанного архива CloakBrowser.
+                </p>
                 <div>
-                  <label class="field-label" title="Путь к Chrome/Chromium или Firefox/Camoufox. Если пусто — для chromedriver скачивается Chrome for Testing, для geckodriver — Camoufox.">
+                  <label class="field-label" title="Путь к Chrome/Chromium или Firefox/Camoufox. Если пусто — для chromedriver скачивается Chrome for Testing, для geckodriver — Camoufox. Игнорируется при backend=cloakbrowser.">
                     browser_path — путь к браузеру
                   </label>
                   <input class="field-input" data-path="flaresolverr_go.browser_path"
                          placeholder="/usr/bin/google-chrome  или  /opt/camoufox/camoufox"/>
                 </div>
                 <div>
-                  <label class="field-label" title="Путь к chromedriver или geckodriver. Если пусто — драйвер скачивается автоматически в Data/drivers/.">
+                  <label class="field-label" title="Путь к chromedriver или geckodriver. Если пусто — драйвер скачивается автоматически в Data/drivers/. Игнорируется при backend=cloakbrowser.">
                     driver_path — путь к WebDriver
                   </label>
                   <input class="field-input" data-path="flaresolverr_go.driver_path"
@@ -451,7 +466,7 @@
               <legend class="px-2 text-sm font-semibold">Только для chromedriver</legend>
               <div class="grid-fields">
                 <div>
-                  <label class="field-label" title="Закрепить версию Chrome for Testing для авто-скачивания. Игнорируется при backend=geckodriver.">
+                  <label class="field-label" title="Закрепить версию Chrome for Testing для авто-скачивания. Игнорируется при backend=geckodriver и cloakbrowser.">
                     chrome_version — фикс версии (напр. 146)
                   </label>
                   <input class="field-input" data-path="flaresolverr_go.chrome_version" placeholder="latest"/>
@@ -591,6 +606,10 @@
               <div><label class="field-label">login.u</label><input class="field-input" data-tr="${name}" data-k="login.u" value="${escapeHtml(login.u || '')}"/></div>
               <div><label class="field-label">login.p</label><input type="password" class="field-input" data-tr="${name}" data-k="login.p" value="${escapeHtml(login.p || '')}"/></div>
               <div class="col-span-full"><label class="field-label">cookie</label><input class="field-input" data-tr="${name}" data-k="cookie" value="${escapeHtml(t.cookie || '')}"/></div>
+              <div class="col-span-full">
+                <label class="field-label" title="Переопределяет User-Agent в обычном (не flaresolverr) режиме. Нужен, когда в cookie лежит cf_clearance, скопированный из настоящего браузера: Cloudflare привязывает такую куку к точному UA, которым её выдали.">useragent</label>
+                <input class="field-input" data-tr="${name}" data-k="useragent" value="${escapeHtml(t.useragent || '')}" placeholder="пусто = UA по умолчанию"/>
+              </div>
             </div>
           </details>`;
       }
@@ -626,9 +645,27 @@
         formEl.querySelectorAll('[data-path]').forEach(el => {
           const path = el.dataset.path;
           const val = getByPath(cfg, path);
-          if (el.type === 'checkbox') el.checked = !!val;
+          // A *bool that is nil is omitted from the JSON, but "absent" does not
+          // mean false — flaresolverr_go.headless defaults to true. Without
+          // data-default such a field renders unchecked and the very next save
+          // writes an explicit false, silently flipping the default.
+          if (el.type === 'checkbox') el.checked = val == null ? el.dataset.default === 'true' : !!val;
           else if (el.dataset.type === 'lines') el.value = Array.isArray(val) ? val.join('\n') : '';
-          else el.value = val == null ? '' : String(val);
+          else {
+            const s = val == null ? '' : String(val);
+            el.value = s;
+            // Assigning a <select> a value no <option> carries deselects it
+            // outright (selectedIndex -1, value ""), and collect() would then
+            // save that "" over the real setting. Surface the config's value
+            // as an option instead of losing it on the next save.
+            if (el.tagName === 'SELECT' && el.selectedIndex === -1 && s !== '') {
+              const opt = document.createElement('option');
+              opt.value = s;
+              opt.textContent = s + ' (из конфига)';
+              el.appendChild(opt);
+              el.value = s;
+            }
+          }
         });
         // Trackers
         trackerEl.innerHTML = TRACKERS.map(n => trackerCard(n, cfg[n])).join('');
