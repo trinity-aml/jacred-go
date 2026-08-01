@@ -83,6 +83,10 @@ const (
 	flareFailCooldown   = 3 * time.Minute
 	flareSessionIdleTTL = 5 * time.Minute
 	flareReaperInterval = 1 * time.Minute
+	// Post-load idle in the browser: long on a cold solve, short on a render
+	// that only needs the page. See flareWaitSeconds.
+	flareSolveWait  = 8
+	flareRenderWait = 2
 	// flareProbeTTL bounds how long we trust a "domain showed a CF challenge
 	// recently" mark. 6h is long enough to skip probes during a typical
 	// parse cycle yet short enough that a CF removal is picked up within a
@@ -301,6 +305,24 @@ func getDomainLock(domain string) *sync.Mutex {
 	return e.mu
 }
 
+// flareWaitSeconds picks how long the browser idles on the page after load.
+//
+// A cold solve needs the long wait: it covers slow custom anti-bot JS (e.g.
+// nnmclub's eb927f21fc_* cookies set a ~2s delay plus verification). At 2s the
+// browser snapshot caught only Yandex.Metrica cookies, missing both the
+// anti-bot tokens and the phpBB anonymous session.
+//
+// A render, where the profile already holds clearance, has nothing to wait
+// for. Charging it the cold-solve wait is what made every rutracker page cost
+// 11–17 s: the site's cookies cannot be replayed from Go, so *every* page was
+// a browser navigation, and the browser stopped responding under the load.
+func flareWaitSeconds(haveClearance bool) int {
+	if haveClearance {
+		return flareRenderWait
+	}
+	return flareSolveWait
+}
+
 // flareCooldownRemaining reports whether a recent solve for this domain failed
 // and how much cooldown time is left.
 func flareCooldownRemaining(domain string) (time.Duration, bool) {
@@ -315,6 +337,15 @@ func flareCooldownRemaining(domain string) (time.Duration, bool) {
 		return 0, false
 	}
 	return flareFailCooldown - elapsed, true
+}
+
+// FlareCooldown reports how long a URL's domain stays in the post-failure
+// cooldown. Parsers use it to skip retries that cannot possibly reach the
+// network: the cooldown is flareFailCooldown (3m), while a typical parser
+// retry ladder spans well under a minute, so every attempt after the first
+// failure would burn against a fast local error.
+func FlareCooldown(rawURL string) (time.Duration, bool) {
+	return flareCooldownRemaining(extractDomain(rawURL))
 }
 
 func markFlareFailure(domain string) {
@@ -521,7 +552,8 @@ func (f *Fetcher) GetFlareCookies(rawURL string) (cookie, userAgent string) {
 	if sess := f.getFlareSession(domain); sess != nil {
 		return sess.cookies, sess.userAgent
 	}
-	sess, _, err := f.solveFlare(rawURL, domain, false)
+	// Reached only when there is no cached session, so this is a cold solve.
+	sess, _, err := f.solveFlare(rawURL, domain, false, false)
 	if err != nil {
 		return "", ""
 	}
@@ -816,6 +848,7 @@ func (f *Fetcher) fetchViaFlare(rawURL, cookie string, extraHeaders map[string]s
 	domain := extractDomain(rawURL)
 	httpCookiesFailed := false
 
+	sessionWasValid := false
 	if sess := f.getFlareSession(domain); sess != nil {
 		res, err := f.fetchWithCookies(rawURL, cookie, sess, extraHeaders, profile)
 		// CF re-challenge returns 200 with challenge HTML — status-only check is
@@ -827,8 +860,25 @@ func (f *Fetcher) fetchViaFlare(rawURL, cookie string, extraHeaders map[string]s
 		// (challenge markers in body). A plain 403 typically means CF WAF is
 		// blocking our raw HTTP client's IP/fingerprint — cookies are still
 		// valid, we just can't use them without the browser.
-		if err == nil && isCloudflareChallenge(res.Body) {
+		challenged := err == nil && isCloudflareChallenge(res.Body)
+		if challenged {
 			f.clearFlareSession(domain)
+		} else {
+			// Cookies are believed good, we just can't replay them from here.
+			// The browser still holds this domain's clearance, so the coming
+			// navigation is a render, not a fresh solve.
+			sessionWasValid = true
+		}
+		// Why the fast path failed decides which of two opposite bugs this is,
+		// and nothing used to record it: a silent fall-through to the browser
+		// looks identical whether the cookies expired or were never usable.
+		switch {
+		case err != nil:
+			log.Printf("flaresolverr: %s cookie replay failed (%v) — falling back to the browser", domain, err)
+		case challenged:
+			log.Printf("flaresolverr: %s cookie replay got a challenge (status=%d) — cookies stale, re-solving", domain, res.StatusCode)
+		default:
+			log.Printf("flaresolverr: %s cookie replay rejected (status=%d, no challenge markers) — cookies kept, rendering in the browser", domain, res.StatusCode)
 		}
 		// Force the browser to actually navigate this URL; reusing the cached
 		// session we just tried would send us straight back here.
@@ -854,7 +904,7 @@ func (f *Fetcher) fetchViaFlare(rawURL, cookie string, extraHeaders map[string]s
 	// Solve via flaresolverr-go browser. For non-binary URLs the browser
 	// navigates to rawURL itself, so its rendered Response is the page we
 	// actually want — use it directly when available.
-	sess, direct, err := f.solveFlare(rawURL, domain, httpCookiesFailed)
+	sess, direct, err := f.solveFlare(rawURL, domain, httpCookiesFailed, sessionWasValid)
 	if err != nil {
 		log.Printf("flaresolverr: solve failed for %s: %v", domain, err)
 		// No doHTTP fallback: fetchmode=flaresolverr means the site is CF-gated,
@@ -964,7 +1014,13 @@ func (f *Fetcher) clearFlareSession(domain string) {
 // determined cached cookies don't work for this URL (e.g. HTTP+cookies just
 // returned a WAF 403) pass true to avoid looping back through the same stale
 // fast path.
-func (f *Fetcher) solveFlare(rawURL, domain string, forceRender bool) (*flareSession, *FetchResult, error) {
+//
+// haveClearance=true says the browser profile already holds this domain's
+// clearance and the navigation is only a render. That is the common case for
+// sites whose cookies we can never replay from Go: every page then went
+// through the browser paying the full cold-solve wait, which is what made
+// rutracker take 11–17 s per page and eventually stall the browser outright.
+func (f *Fetcher) solveFlare(rawURL, domain string, forceRender, haveClearance bool) (*flareSession, *FetchResult, error) {
 	if flareShutdown.Load() {
 		return nil, nil, fmt.Errorf("flaresolverr: service is shutting down")
 	}
@@ -1020,7 +1076,14 @@ func (f *Fetcher) solveFlare(rawURL, domain string, forceRender bool) (*flareSes
 	// fetchViaFlare skips the session for sites where cookies alone work.
 	browserID := flareSharedSessionID
 
-	log.Printf("flaresolverr: solving challenge for %s", domain)
+	// Say which of the two this is. The old wording claimed "solving challenge"
+	// for every navigation, so a domain that merely could not replay cookies
+	// read as one that was being re-challenged on every page.
+	if haveClearance {
+		log.Printf("flaresolverr: rendering %s in the browser (clearance already held)", domain)
+	} else {
+		log.Printf("flaresolverr: solving challenge for %s", domain)
+	}
 
 	// MaxTimeout caps Chrome's solve time inside the library.
 	// Bitru + Turnstile sometimes takes >60s on cold webdriver start; 90s is a
@@ -1040,14 +1103,10 @@ func (f *Fetcher) solveFlare(rawURL, domain string, forceRender bool) (*flareSes
 	}
 
 	resp, _ := svc.ControllerV1(ctx, &flaresolverr.V1Request{
-		Cmd:        "request.get",
-		URL:        solveURL,
-		MaxTimeout: 90000,
-		// 8s wait covers slow custom anti-bot JS challenges (e.g. nnmclub's
-		// eb927f21fc_* cookies set a ~2s delay + verification). At 2s the
-		// browser snapshot caught only Yandex.Metrica cookies, missing both
-		// the anti-bot tokens and phpBB anonymous session.
-		WaitInSeconds:     8,
+		Cmd:               "request.get",
+		URL:               solveURL,
+		MaxTimeout:        90000,
+		WaitInSeconds:     flareWaitSeconds(haveClearance),
 		Session:           browserID,
 		SessionTTLMinutes: int(flareSessionTTL / time.Minute),
 	})
@@ -1065,12 +1124,24 @@ func (f *Fetcher) solveFlare(rawURL, domain string, forceRender bool) (*flareSes
 
 	// Build cookie string from solution cookies
 	cookieParts := make([]string, 0, len(resp.Solution.Cookies))
+	names := make([]string, 0, len(resp.Solution.Cookies))
+	hasClearance := false
 	for _, c := range resp.Solution.Cookies {
 		cookieParts = append(cookieParts, c.Name+"="+c.Value)
+		names = append(names, c.Name)
+		if c.Name == "cf_clearance" {
+			hasClearance = true
+		}
 	}
 	cookieStr := strings.Join(cookieParts, "; ")
 	ua := resp.Solution.UserAgent
-	log.Printf("flaresolverr: solved %s cookies=%d", domain, len(resp.Solution.Cookies))
+	// Names, never values — a cf_clearance in the log is a replayable
+	// credential. The count alone could not distinguish "solved but CF issued
+	// no clearance" (replay can never work, the browser has to serve every
+	// page) from "clearance present but our TLS client is being rejected",
+	// which are opposite fixes.
+	log.Printf("flaresolverr: solved %s cookies=%d [%s] clearance=%v",
+		domain, len(resp.Solution.Cookies), strings.Join(names, " "), hasClearance)
 	if ua == "" {
 		ua = defaultUserAgent
 	}

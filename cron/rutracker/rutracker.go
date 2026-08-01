@@ -750,6 +750,14 @@ func (p *Parser) fetch(ctx context.Context, rawURL string) (string, error) {
 	delays := []time.Duration{0, 5 * time.Second, 10 * time.Second, 15 * time.Second}
 	for attempt, delay := range delays {
 		if delay > 0 {
+			// The whole ladder spans 30s while a flare failure puts the domain
+			// in a 3-minute cooldown, so once we are in one every remaining
+			// attempt returns 503 in ~0ms without touching the network. Stop
+			// instead of burning the budget on guaranteed failures.
+			if remaining, blocked := core.FlareCooldown(rawURL); blocked {
+				log.Printf("rutracker: flaresolverr in cooldown for %s — abandoning retries for %s", remaining.Round(time.Second), rawURL)
+				return "", fmt.Errorf("rutracker: flaresolverr cooldown %s", remaining.Round(time.Second))
+			}
 			select {
 			case <-ctx.Done():
 				return "", ctx.Err()
