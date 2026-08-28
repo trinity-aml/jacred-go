@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="ru" >
+<head>
+	<title>Авторизация на сайте Anime Layer</title>
+<meta http-equiv="content-type" content="text/html; charset=utf-8"/>
+				<meta name="description" content="Авторизация на сайте Anime Layer"/>
+				<meta name="keywords" content="Anime Layer"/>
+					<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+	<meta http-equiv="revisit-after" content="7 days" />
+<meta name="viewport" content="width=1100, maximum-scale=1"/>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:400,700&amp;subset=latin,cyrillic-ext">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="preconnect" href="https://images.animelayer.ru" crossorigin>
+<link rel="dns-prefetch" href="https://images.animelayer.ru">
+<link rel="alternate" type="application/rss+xml" title="RSS" href="/rss/" />
+<link rel="shortcut icon" href="/favicon.ico" type="image/x-icon" />
+	<link href="//animelayer.ru/build/app.css?v=1787523854" rel="stylesheet">
+	<script src="//animelayer.ru/build/app.js?v=1787343380"></script>
+<script>
+require.config({
+	baseUrl: '//animelayer.ru/js/',
+	urlArgs: 'v=2',
+	paths: {'socket.io': '//animelayer.ru/socket.io/socket.io'}
+});
+</script>
+    </head>
+<body class="">
+<div id="wrapper">
+	<div class="panel">
+	<header class="header">
+		<div class="header-container">
+			<div class="wrapper">
+				<div class="row-fluid">
+					<div class="col2">
+						<div class="logo">
+							<a href="/"><img src="//animelayer.ru/img/logo.png" height="40" alt="Animelayer" /></a>
+						</div>
+					</div>
+					<div class="col7">
+						<div class="header-menu">
+	<ul class="list-reset clearfix">
+					<li class="pull-left">
+								<a class="header-menu-item pd20" href="/torrents/anime/">Торренты</a>
+							</li>
+					<li class="pull-left">
+								<a class="header-menu-item pd20" target="_blank" href="https://telegram.me/+pAHOV2VeQK5lMTIy"><img class="mr5" height="20" src="/img/telegram.png" />Telegram-чат</a>
+							</li>
+						<!-- noindex -->
+		<li class="pull-right mt10">
+			<a rel="nofollow" href="/auth/register/" class="button button-large button-green"><i class="icon s-icons-user-add-white"></i>&nbsp;Регистрация</a>
+		</li>
+		<!--/noindex-->
+			</ul>
+</div>
+					</div>
+					<div class="col3">
+						<!-- noindex -->
+<div class="profile-menu">
+	<div class="h3 text-overflow">
+		<div class="pd20">
+			<a rel="nofollow" href="/auth/login/"><i class="icon s-icons-user"></i>&nbsp;Вход</a>
+		</div>
+	</div>
+</div>
+<!--/noindex-->											</div>
+				</div>
+			</div>
+		</div>
+	</header>
+</div>	<div class="wrapper pd20">
+		<div class="clearfix">
+			<div class="col-side pull-left">
+							</div>
+			<div class="col-side pull-right">
+							</div>
+			<div class="col-main">
+				<form id="loginForm" action="/auth/login/" method="post" class="form panel">
+	<div class="pd20">
+		<h1 class="h1">Вход на сайт</h1>
+
+		<dl class="form-group ">
+			<dt><label for="login">Логин</label></dt>
+			<dd>
+				<input maxlength="50" type="text" required="required" class="text large" name="login" value="" autocomplete="off" />
+				<div class="error"></div>
+			</dd>
+		</dl>
+
+		<dl class="form-group">
+			<dt><label for="password">Пароль</label></dt>
+			<dd>
+				<input type="password" required="required" class="text large" name="password" value="" autocomplete="off" />
+			</dd>
+		</dl>
+
+	</div>
+
+	<div class="form-bottom pd20">
+		<input type="submit" value="Войти" class="button button-large button-primary" />
+		<span class="iblock ml20 mt10">&nbsp;<span class="gray">или</span>&nbsp;<a href="/auth/forgot/" class="ml20">Забыли пароль?</a></span>
+	</div>
+</form>
+
+<script>
+	require(['lib/form'], function(Form){
+		new Form(document.getElementById('loginForm'), { onSubmit: function(R){
+			if(!R.s) return;
+			window.location.reload();
+		}});
+	});
+</script>
+			</div>
+		</div>
+	</div>
+</div>
+<footer class="footer">
+	<div class="wrapper pd20 clearfix">
+		<div class="pull-left mr20">
+			<a href="/" class="logo"><img src="//animelayer.ru/img/logo.png" height="40" alt="Animelayer" /></a>
+		</div>
+
+		<div class="pull-left">
+			<div>Animelayer &copy; 2004&ndash;2026</div>
+
+			<div class="clearfix">
+				<div class="pull-left mr40"><a href="/page/disclaimer/" class="u">Пользовательское соглашение</a></div>
+				<div class="pull-left mr40"><a href="/page/complaint/" class="u">Правообладателям</a></div>
+				<div class="pull-left mr40"><a href="/avatars/" class="u">Аватары</a></div>
+				<div class="pull-left mr40"><a href="/page/faq/" class="u">FAQ</a></div>
+				<div class="pull-left mr40"><a href="/page/rules/" class="u">Правила</a></div>
+				<div class="pull-left"><a href="/feedback/" class="u">Обратная связь</a></div>
+			</div>
+		</div>
+	</div>
+
+	<hr class="m0" />
+
+	<div class="wrapper pd20 clearfix">
+		<div class="adults-only pull-left mr20">
+			<i class="s-icons-18plus iblock pull-left mr20"></i>
+			<div class="oh">Сайт может содержать материалы не&nbsp;предназначенные для лиц младше 18&nbsp;лет.</div>
+		</div>
+
+		<div class="social-links pull-right clearfix">
+			<a target="_blank" href="https://vk.com/animelayer" class="iblock pull-left mr10 s-icons-vkontakte"></a>
+			<a target="_blank" href="https://www.facebook.com/animelayer" class="iblock pull-left mr10 s-icons-facebook"></a>
+			<a target="_blank" href="https://twitter.com/animelayer" class="iblock pull-left mr10 s-icons-twitter"></a>
+			<a target="_blank" href="/rss/" class="iblock pull-left s-icons-rss"></a>
+		</div>
+	</div>
+</footer><a href="#top" rel="nofollow" id="scrollToTop" class="panel panel-dark scrollToTop pd20 hide"><i class="iblock s-icons-arrow-top-white"></i></a><!-- Yandex.Metrika counter --> <script type="text/javascript"> (function (d, w, c) { (w[c] = w[c] || []).push(function() { try { w.yaCounter2209786 = new Ya.Metrika({ id:2209786, clickmap:true, trackLinks:true, accurateTrackBounce:true }); } catch(e) { } }); var n = d.getElementsByTagName("script")[0], s = d.createElement("script"), f = function () { n.parentNode.insertBefore(s, n); }; s.type = "text/javascript"; s.async = true; s.src = "https://mc.yandex.ru/metrika/watch.js"; if (w.opera == "[object Opera]") { d.addEventListener("DOMContentLoaded", f, false); } else { f(); } })(document, window, "yandex_metrika_callbacks"); </script> <noscript><div><img src="https://mc.yandex.ru/watch/2209786" style="position:absolute; left:-9999px;" alt="" /></div></noscript> <!-- /Yandex.Metrika counter --><script>
+	require(['project'], function(Project){
+		new Project().init();
+	});
+</script>
+</body>
+</html>

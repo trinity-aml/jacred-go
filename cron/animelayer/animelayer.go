@@ -2,6 +2,7 @@ package animelayer
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"html"
 	"io"
@@ -24,11 +25,25 @@ import (
 const trackerName = "animelayer"
 const userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
 
+// loginCooldown throttles repeated login attempts after a failure.
+const loginCooldown = time.Minute
+
+var (
+	// errNoCredentials separates "login is not configured" from "login was
+	// attempted and did not work". Both used to surface as an empty cookie.
+	errNoCredentials = errors.New("animelayer: no cookie and no login credentials configured")
+	// errUnauthorized marks a response animelayer served to a logged-out
+	// visitor: the anonymous catalog page, or the topic page returned in
+	// place of a .torrent attachment.
+	errUnauthorized = errors.New("animelayer: session cookie is not authorized")
+)
+
 var (
 	rowSplitRe       = regexp.MustCompile(`class="torrent-item torrent-item-medium panel"`)
 	titleURLRe       = regexp.MustCompile(`<a href="/(torrent/[a-z0-9]+)/?">([^<]+)</a>`)
 	sidRe            = regexp.MustCompile(`class="icon s-icons-upload"></i>([0-9]+)`)
 	pirRe            = regexp.MustCompile(`class="icon s-icons-download"></i>([0-9]+)`)
+	sizeNameRe       = regexp.MustCompile(`s-icons-download"></i>\s*[0-9]+\s*<span[^>]*>[\s\S]*?</span>\s*([0-9]+(?:[.,][0-9]+)?\s*(?:[KMGT]B|[КМГТ]Б))`)
 	resolution1080Re = regexp.MustCompile(`Разрешение: ?</strong>1920x1080`)
 	resolution720Re  = regexp.MustCompile(`Разрешение: ?</strong>1280x720`)
 	yearRe           = regexp.MustCompile(`Год выхода: ?</strong>([0-9]{4})`)
@@ -92,6 +107,16 @@ func (p *Parser) Parse(ctx context.Context, maxpage int) (ParseResult, error) {
 	if maxpage <= 0 {
 		maxpage = 1
 	}
+	// Authorize before parsing anything. animelayer serves the catalog to
+	// logged-out visitors too, so an unauthorized run still parses a full page
+	// of rows and only fails later, once per row, on the login-gated .torrent
+	// attachment — "parsed=35 added=0 failed=35" with nothing naming the cause.
+	// Reporting it once, up front, is the difference between a diagnosable
+	// failure and a silent one.
+	if err := p.authorize(ctx); err != nil {
+		log.Printf("%v", err)
+		return ParseResult{Status: "work_login"}, err
+	}
 	res := ParseResult{Status: "ok"}
 	for page := 1; page <= maxpage; page++ {
 		parsed, added, updated, skipped, failed, err := p.parsePage(ctx, page)
@@ -122,10 +147,6 @@ func (p *Parser) Parse(ctx context.Context, maxpage int) (ParseResult, error) {
 }
 
 func (p *Parser) parsePage(ctx context.Context, page int) (int, int, int, int, int, error) {
-	cookie, err := p.ensureCookie(ctx)
-	if err != nil {
-		return 0, 0, 0, 0, 0, err
-	}
 	baseHost := ensureHTTPS(firstNonEmpty(strings.TrimSpace(p.Config.Animelayer.Alias), strings.TrimSpace(p.Config.Animelayer.Host)))
 	if baseHost == "" {
 		return 0, 0, 0, 0, 0, nil
@@ -134,26 +155,20 @@ func (p *Parser) parsePage(ctx context.Context, page int) (int, int, int, int, i
 	if page > 1 {
 		rawURL = fmt.Sprintf("%s/torrents/anime/?page=%d", baseHost, page)
 	}
-	body, err := p.fetchHTML(ctx, rawURL, cookie)
+	cookie, body, err := p.fetchListing(ctx, rawURL, page)
 	if err != nil {
-		log.Printf("animelayer: fetchHTML error page=%d url=%s err=%v", page, rawURL, err)
 		return 0, 0, 0, 0, 0, err
 	}
-	if body == "" || !strings.Contains(body, `id="wrapper"`) {
-		log.Printf("animelayer: page %d empty or no wrapper, url=%s bodyLen=%d", page, rawURL, len(body))
-		return 0, 0, 0, 0, 0, nil
-	}
-	// Login form posts to /auth/login/ (see takeLogin) — that action attribute
-	// only appears on the login page, so its presence in a listing response
-	// means the saved cookie has expired and animelayer rendered the login
-	// page in place of the catalog. Skip when login isn't configured.
-	if strings.TrimSpace(p.Config.Animelayer.Login.U) != "" &&
-		(strings.Contains(body, `action="/auth/login/"`) || strings.Contains(body, `action='/auth/login/'`)) {
-		log.Printf("animelayer: page=%d returned login form (cookie expired, invalidating)", page)
-		p.invalidateCookie()
+	if body == "" {
 		return 0, 0, 0, 0, 0, nil
 	}
 
+	return p.saveTorrents(ctx, cookie, parseListing(body, baseHost, page))
+}
+
+// parseListing turns one catalog page into records. Split out from parsePage so
+// the markup contract can be pinned against a captured page.
+func parseListing(body, baseHost string, page int) []filedb.TorrentDetails {
 	rows := rowSplitRe.Split(html.UnescapeString(strings.ReplaceAll(body, "&nbsp;", "")), -1)
 	torrents := make([]filedb.TorrentDetails, 0, len(rows))
 	for _, row := range rows[1:] {
@@ -205,11 +220,12 @@ func (p *Parser) parsePage(ctx context.Context, page int) (int, int, int, int, i
 			Name:         name,
 			OriginalName: original,
 			Relased:      relased,
+			SizeName:     rowSizeName(row),
 			SearchName:   core.SearchName(name),
 			SearchOrig:   core.SearchName(firstNonEmpty(original, name)),
 		}.ToMap())
 	}
-	return p.saveTorrents(ctx, cookie, torrents)
+	return torrents
 }
 
 func (p *Parser) saveTorrents(ctx context.Context, cookie string, torrents []filedb.TorrentDetails) (int, int, int, int, int, error) {
@@ -218,6 +234,7 @@ func (p *Parser) saveTorrents(ctx context.Context, cookie string, torrents []fil
 	plog := core.NewParserLog(trackerName, filepath.Join(p.DB.DataDir, "log"), p.Config.LogParsers && p.Config.Animelayer.Log)
 	bucketCache := make(map[string]map[string]filedb.TorrentDetails, len(torrents))
 	changed := make(map[string]time.Time, len(torrents))
+	var abortErr error
 
 	for _, t := range torrents {
 		key := p.DB.KeyDb(asString(t["name"]), asString(t["originalname"]))
@@ -238,14 +255,33 @@ func (p *Parser) saveTorrents(ctx context.Context, cookie string, torrents []fil
 		existing, exists := bucket[urlv]
 		needMagnet := !exists || asString(existing["title"]) != asString(t["title"]) || strings.TrimSpace(asString(existing["magnet"])) == ""
 		if needMagnet {
-			torrentBytes, err := p.downloadTorrent(ctx, urlv+"download/", cookie)
+			torrentBytes, err := p.downloadTorrent(ctx, urlv+"download/", urlv, cookie)
+			if errors.Is(err, errUnauthorized) {
+				// The catalog is public but attachments are not, so this is not
+				// one bad row — every remaining download in the run will fail
+				// the same way. Stop and report it instead of grinding through
+				// the page to produce failed=N.
+				log.Printf("animelayer: .torrent download returned HTML — cookie is not authorized, aborting run")
+				p.invalidateCookie()
+				plog.WriteFailed(urlv, asString(t["title"]))
+				failedCount++
+				abortErr = err
+				break
+			}
 			if err != nil || len(torrentBytes) == 0 {
+				plog.WriteFailed(urlv, asString(t["title"]))
 				failedCount++
 				continue
 			}
 			magnet := core.TorrentBytesToMagnet(torrentBytes)
 			sizeName := torrentBytesToSizeName(torrentBytes)
+			if strings.TrimSpace(sizeName) == "" {
+				// The listing prints the size next to the leecher count, so a
+				// bencode that carries no usable length still yields a record.
+				sizeName = asString(t["sizeName"])
+			}
 			if strings.TrimSpace(magnet) == "" || strings.TrimSpace(sizeName) == "" {
+				plog.WriteFailed(urlv, asString(t["title"]))
 				failedCount++
 				continue
 			}
@@ -276,7 +312,7 @@ func (p *Parser) saveTorrents(ctx context.Context, cookie string, torrents []fil
 			return parsedCount, addedCount, updatedCount, skippedCount, failedCount, err
 		}
 	}
-	return parsedCount, addedCount, updatedCount, skippedCount, failedCount, nil
+	return parsedCount, addedCount, updatedCount, skippedCount, failedCount, abortErr
 }
 
 // invalidateCookie clears the in-memory and on-disk cookie and resets the
@@ -300,9 +336,11 @@ func (p *Parser) ensureCookie(ctx context.Context) (string, error) {
 		p.cookieMu.Unlock()
 		return c, nil
 	}
-	if time.Since(p.lastLoginAttempt) < time.Minute {
+	if since := time.Since(p.lastLoginAttempt); since < loginCooldown {
 		p.cookieMu.Unlock()
-		return "", nil
+		// Returning an empty cookie and a nil error here let the caller carry
+		// on unauthenticated for a whole minute after every failed login.
+		return "", fmt.Errorf("animelayer: login cooldown, retry in %s", (loginCooldown - since).Round(time.Second))
 	}
 	p.lastLoginAttempt = time.Now()
 	p.cookieMu.Unlock()
@@ -319,10 +357,157 @@ func (p *Parser) ensureCookie(ctx context.Context) (string, error) {
 	return cookie, nil
 }
 
+// loginConfigured reports whether init.yaml supplies something to authenticate
+// with — either a ready-made cookie or a username/password pair.
+func (p *Parser) loginConfigured() bool {
+	return strings.TrimSpace(p.Config.Animelayer.Cookie) != "" ||
+		(strings.TrimSpace(p.Config.Animelayer.Login.U) != "" && strings.TrimSpace(p.Config.Animelayer.Login.P) != "")
+}
+
+// authorize resolves a session cookie and proves it is actually logged in
+// before the run starts, re-authenticating once if the stored one has expired.
+func (p *Parser) authorize(ctx context.Context) error {
+	if !p.loginConfigured() {
+		return errNoCredentials
+	}
+	cookie, err := p.ensureCookie(ctx)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(cookie) == "" {
+		return fmt.Errorf("animelayer: login produced no session cookie")
+	}
+	ok, err := p.validateCookie(ctx, cookie)
+	if err != nil {
+		return fmt.Errorf("animelayer: cookie check failed: %w", err)
+	}
+	if ok {
+		return nil
+	}
+	if strings.TrimSpace(p.Config.Animelayer.Cookie) != "" {
+		// A cookie pinned in init.yaml cannot be refreshed from here.
+		return fmt.Errorf("%w: replace the cookie in init.yaml", errUnauthorized)
+	}
+	log.Printf("animelayer: stored cookie is no longer authorized, re-logging in")
+	p.invalidateCookie()
+	cookie, err = p.ensureCookie(ctx)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(cookie) == "" {
+		return fmt.Errorf("animelayer: re-login produced no session cookie")
+	}
+	if ok, err := p.validateCookie(ctx, cookie); err != nil {
+		return fmt.Errorf("animelayer: cookie check failed after re-login: %w", err)
+	} else if !ok {
+		p.invalidateCookie()
+		return fmt.Errorf("%w: a freshly issued cookie was still served the anonymous catalog", errUnauthorized)
+	}
+	return nil
+}
+
+// validateCookie fetches the catalog and reports whether animelayer treated the
+// request as logged in.
+func (p *Parser) validateCookie(ctx context.Context, cookie string) (bool, error) {
+	baseHost := ensureHTTPS(firstNonEmpty(strings.TrimSpace(p.Config.Animelayer.Alias), strings.TrimSpace(p.Config.Animelayer.Host)))
+	if baseHost == "" {
+		return false, fmt.Errorf("animelayer: host is not configured")
+	}
+	body, err := p.fetchHTML(ctx, baseHost+"/torrents/anime/", cookie)
+	if err != nil {
+		return false, err
+	}
+	if body == "" {
+		return false, fmt.Errorf("animelayer: empty response from %s", baseHost+"/torrents/anime/")
+	}
+	return strings.Contains(body, `id="wrapper"`) && !hasAnonymousMarkers(body), nil
+}
+
+// fetchListing gets one catalog page with an authorized cookie, re-logging in
+// and retrying once if animelayer answers with the anonymous page mid-run.
+func (p *Parser) fetchListing(ctx context.Context, rawURL string, page int) (string, string, error) {
+	var lastCookie string
+	for attempt := 0; attempt < 2; attempt++ {
+		cookie, err := p.ensureCookie(ctx)
+		if err != nil {
+			return "", "", err
+		}
+		lastCookie = cookie
+		body, err := p.fetchHTML(ctx, rawURL, cookie)
+		if err != nil {
+			log.Printf("animelayer: fetchHTML error page=%d url=%s err=%v", page, rawURL, err)
+			return "", "", err
+		}
+		if body == "" || !strings.Contains(body, `id="wrapper"`) {
+			log.Printf("animelayer: page %d empty or no wrapper, url=%s bodyLen=%d", page, rawURL, len(body))
+			return cookie, "", nil
+		}
+		if !hasAnonymousMarkers(body) {
+			return cookie, body, nil
+		}
+		marker := anonymousMarker(body)
+		if attempt == 0 && strings.TrimSpace(p.Config.Animelayer.Cookie) == "" {
+			log.Printf("animelayer: page %d was served anonymously (%s) — cookie expired, re-logging in", page, marker)
+			p.invalidateCookie()
+			continue
+		}
+		log.Printf("animelayer: page %d is still served anonymously (%s) — giving up", page, marker)
+		break
+	}
+	return lastCookie, "", nil
+}
+
+// hasAnonymousMarkers reports whether animelayer rendered the page for a
+// logged-out visitor. The catalog itself is public, so an unauthorized request
+// still returns a full listing with id="wrapper" and every row intact — the
+// header is the only difference, offering login and registration instead of the
+// account menu. That is why a *link* is the signal: the login form lives only on
+// /auth/login/, so the action="/auth/login/" this parser used to look for can
+// never appear on a listing page, and the check could not fire at all.
+func hasAnonymousMarkers(body string) bool {
+	return anonymousMarker(body) != ""
+}
+
+// anonymousMarker returns the marker that gave the page away, so a log line can
+// say why a session was judged unauthorized instead of only that it was.
+func anonymousMarker(body string) string {
+	for _, marker := range []string{`id="loginForm"`, "/auth/login/", "/auth/register/"} {
+		if strings.Contains(body, marker) {
+			return marker
+		}
+	}
+	return ""
+}
+
+// looksLikeHTML reports whether a supposed .torrent payload is really a web
+// page — what animelayer returns when the session is not authorized to download.
+func looksLikeHTML(data []byte) bool {
+	for i, b := range data {
+		if i >= 64 {
+			break
+		}
+		switch b {
+		case ' ', '\t', '\r', '\n':
+			continue
+		}
+		return b == '<'
+	}
+	return false
+}
+
+// rowSizeName reads the human-readable size the catalog prints next to the
+// leecher count, so a record has one without downloading the attachment.
+func rowSizeName(row string) string {
+	return strings.ReplaceAll(matchFirst(sizeNameRe, row), ",", ".")
+}
+
 func (p *Parser) takeLogin(ctx context.Context) (string, error) {
 	host := ensureHTTPS(strings.TrimSpace(p.Config.Animelayer.Host))
-	if host == "" || strings.TrimSpace(p.Config.Animelayer.Login.U) == "" || strings.TrimSpace(p.Config.Animelayer.Login.P) == "" {
-		return "", nil
+	if host == "" {
+		return "", fmt.Errorf("animelayer: host is not configured")
+	}
+	if strings.TrimSpace(p.Config.Animelayer.Login.U) == "" || strings.TrimSpace(p.Config.Animelayer.Login.P) == "" {
+		return "", errNoCredentials
 	}
 	vals := url.Values{}
 	vals.Set("login", p.Config.Animelayer.Login.U)
@@ -338,7 +523,7 @@ func (p *Parser) takeLogin(ctx context.Context) (string, error) {
 	client := &http.Client{Timeout: 20 * time.Second, CheckRedirect: func(req *http.Request, via []*http.Request) error { return http.ErrUseLastResponse }}
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("animelayer: login request failed: %w", err)
 	}
 	defer resp.Body.Close()
 	var layerHash, layerID, phpsess string
@@ -356,7 +541,10 @@ func (p *Parser) takeLogin(ctx context.Context) (string, error) {
 		}
 	}
 	if layerHash == "" || layerID == "" {
-		return "", nil
+		// A wrong password, a renamed cookie and an error page all end up here.
+		// Returning an empty cookie with a nil error made all three look exactly
+		// like "login is not configured", and the run carried on anonymously.
+		return "", fmt.Errorf("animelayer: login POST returned %d without layer_hash/layer_id cookies", resp.StatusCode)
 	}
 	cookie := fmt.Sprintf("layer_hash=%s;layer_id=%s", layerHash, layerID)
 	if phpsess != "" {
@@ -380,19 +568,33 @@ func (p *Parser) fetchHTML(ctx context.Context, rawURL, cookie string) (string, 
 	return body, nil
 }
 
-func (p *Parser) downloadTorrent(ctx context.Context, rawURL, cookie string) ([]byte, error) {
+func (p *Parser) downloadTorrent(ctx context.Context, rawURL, referer, cookie string) ([]byte, error) {
 	ts := p.Config.Animelayer
 	if cookie != "" {
 		ts.Cookie = cookie
 	}
-	data, status, err := p.Fetcher.Download(rawURL, ts)
+	res, err := p.Fetcher.Do(rawURL, ts, core.FetchOptions{
+		ExtraHeaders: map[string]string{
+			// The attachment is reached from the topic page; animelayer bounces
+			// requests that do not look like a browser following that link.
+			"Referer": referer,
+			"Accept":  "application/x-bittorrent,application/octet-stream,*/*",
+		},
+	})
 	if err != nil {
 		return nil, err
 	}
-	if status < 200 || status >= 300 {
-		return nil, nil
+	if res.StatusCode == http.StatusFound || res.StatusCode == http.StatusMovedPermanently {
+		// A logged-out download is redirected back to the topic page.
+		return nil, errUnauthorized
 	}
-	return data, nil
+	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		return nil, fmt.Errorf("animelayer: download %s returned status %d", rawURL, res.StatusCode)
+	}
+	if looksLikeHTML(res.Body) {
+		return nil, errUnauthorized
+	}
+	return res.Body, nil
 }
 
 func ensureHTTPS(host string) string {
