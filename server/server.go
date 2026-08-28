@@ -59,6 +59,31 @@ type VersionInfo struct {
 	BuildDate string `json:"buildDate"`
 }
 
+// Stamped by the linker: build_all.sh passes
+// -X 'jacred/server.Version=...' and one flag per variable below.
+//
+// These have to exist as package-level vars for that to do anything. They did
+// not, so -X silently matched no symbol — the Go linker does not fail on an
+// unknown one — and every released binary reported version "dev" from the
+// hardcoded literal in New(). The defaults here are what a plain `go build`
+// (no ldflags) should report, which is exactly "dev".
+var (
+	Version   = "dev"
+	GitSha    = "unknown"
+	GitBranch = "unknown"
+	BuildDate = ""
+)
+
+// buildVersion reports what the linker stamped, falling back to process start
+// for the build date so a `go build` still answers with something meaningful.
+func buildVersion() VersionInfo {
+	date := BuildDate
+	if strings.TrimSpace(date) == "" {
+		date = time.Now().UTC().Format("2006-01-02 15:04:05 UTC")
+	}
+	return VersionInfo{Version: Version, GitSha: GitSha, GitBranch: GitBranch, BuildDate: date}
+}
+
 type Server struct {
 	Config              app.Config
 	cfgMu               sync.RWMutex
@@ -122,7 +147,7 @@ func New(cfg app.Config, db *filedb.DB, tracksDB *tracks.DB, wwwroot string) *Se
 		tracksDB = tracks.New("Data")
 		_ = tracksDB.Load()
 	}
-	return &Server{Config: cfg, DB: db, WWWRoot: wwwroot, Version: VersionInfo{Version: "dev", GitSha: "unknown", GitBranch: "unknown", BuildDate: time.Now().UTC().Format("2006-01-02 15:04:05 UTC")}, KnabenParser: knaben.New(cfg, db), AnidubParser: anidub.New(cfg, db), AnilibertyParser: aniliberty.New(cfg, db), AnimelayerParser: animelayer.New(cfg, db), AnistarParser: anistar.New(cfg, db, "Data"), AnifilmParser: anifilm.New(cfg, db, "Data"), BitruParser: bitru.New(cfg, db, "Data"), BitruAPIParser: bitruapi.New(cfg, db, "Data"), RutorParser: rutor.New(cfg, db, "Data"), MegapeerParser: megapeer.New(cfg, db), TorrentByParser: torrentby.New(cfg, db, "Data"), NNMClubParser: nnmclub.New(cfg, db, "Data"), LostfilmParser: lostfilm.New(cfg, db), RutrackerParser: rutracker.New(cfg, db, "Data"), KinozalParser: kinozal.New(cfg, db, "Data"), TolokaParser: toloka.New(cfg, db, "Data"), SelezenParser: selezen.New(cfg, db, "Data"), LeproductionParser: leproduction.New(cfg, db, "Data"), MazepaParser: mazepa.New(cfg, db, "Data"), KorsarsParser: korsars.New(cfg, db, "Data"), UltradoxParser: ultradox.New(cfg, db, "Data"), ViruseprojectParser: viruseproject.New(cfg, db, "Data"), AnibelkaParser: anibelka.New(cfg, db, "Data"), TracksDB: tracksDB, Runs: newRunStore(db.DataDir), cache: newSearchCache(5*time.Minute, 10000)}
+	return &Server{Config: cfg, DB: db, WWWRoot: wwwroot, Version: buildVersion(), KnabenParser: knaben.New(cfg, db), AnidubParser: anidub.New(cfg, db), AnilibertyParser: aniliberty.New(cfg, db), AnimelayerParser: animelayer.New(cfg, db), AnistarParser: anistar.New(cfg, db, "Data"), AnifilmParser: anifilm.New(cfg, db, "Data"), BitruParser: bitru.New(cfg, db, "Data"), BitruAPIParser: bitruapi.New(cfg, db, "Data"), RutorParser: rutor.New(cfg, db, "Data"), MegapeerParser: megapeer.New(cfg, db), TorrentByParser: torrentby.New(cfg, db, "Data"), NNMClubParser: nnmclub.New(cfg, db, "Data"), LostfilmParser: lostfilm.New(cfg, db), RutrackerParser: rutracker.New(cfg, db, "Data"), KinozalParser: kinozal.New(cfg, db, "Data"), TolokaParser: toloka.New(cfg, db, "Data"), SelezenParser: selezen.New(cfg, db, "Data"), LeproductionParser: leproduction.New(cfg, db, "Data"), MazepaParser: mazepa.New(cfg, db, "Data"), KorsarsParser: korsars.New(cfg, db, "Data"), UltradoxParser: ultradox.New(cfg, db, "Data"), ViruseprojectParser: viruseproject.New(cfg, db, "Data"), AnibelkaParser: anibelka.New(cfg, db, "Data"), TracksDB: tracksDB, Runs: newRunStore(db.DataDir), cache: newSearchCache(5*time.Minute, 10000)}
 }
 
 // GetConfig returns a thread-safe copy of the current config.
