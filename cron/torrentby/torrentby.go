@@ -742,8 +742,8 @@ func (p *Parser) takeLogin(ctx context.Context) error {
 		log.Printf("torrentby: login OK")
 		return nil
 	}
-	log.Printf("torrentby: login FAILED — cookies: %s", cookieStr)
-	return fmt.Errorf("torrentby: login failed")
+	log.Printf("torrentby: login FAILED — cookies set: [%s]", core.CookieNames(cookieStr))
+	return fmt.Errorf("torrentby: login failed: %w", core.ErrNotAuthorized)
 }
 
 func (p *Parser) ensureLogin(ctx context.Context) {
@@ -753,16 +753,23 @@ func (p *Parser) ensureLogin(ctx context.Context) {
 	_ = p.takeLogin(ctx)
 }
 
-// loggedOut returns true when body is the login page rather than the
-// requested content. The login form posts to /login/ (see takeLogin), so
-// `action="/login/"` only appears when torrentby served the login page in
-// place of the listing — a reliable signal that the saved cookie has
-// expired. Skips the check when login isn't configured (guest mode).
+// loggedOut returns true when torrentby rendered a page for a guest.
+//
+// It cannot key off the login form: torrentby serves its listings publicly — a
+// logged-out request returns the full catalog, and the parser reads 900+ records
+// without any session at all — so the login form is never rendered in place of
+// the listing. Verified on the live listing: zero occurrences of
+// `action="/login/"` against one /login/ link, which means the old check could
+// not fire even once.
+//
+// Two-sided on purpose: the account menu must be absent *and* the login link
+// present, so a renamed logout path cannot by itself send every page into a
+// re-login loop. Skips the check when login isn't configured (guest mode).
 func (p *Parser) loggedOut(body string) bool {
 	if strings.TrimSpace(p.Config.TorrentBy.Login.U) == "" {
 		return false
 	}
-	return strings.Contains(body, `action="/login/"`) || strings.Contains(body, `action='/login/'`)
+	return !strings.Contains(body, "/logout") && strings.Contains(body, "/login/")
 }
 
 func (p *Parser) invalidateCookie() {

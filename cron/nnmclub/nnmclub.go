@@ -270,8 +270,8 @@ func (p *Parser) takeLogin(ctx context.Context) error {
 		log.Printf("nnmclub: login OK")
 		return nil
 	}
-	log.Printf("nnmclub: login FAILED — cookies: %s", authCookies)
-	return fmt.Errorf("nnmclub: login failed")
+	log.Printf("nnmclub: login FAILED — cookies set: [%s]", core.CookieNames(authCookies))
+	return fmt.Errorf("nnmclub: login failed: %w", core.ErrNotAuthorized)
 }
 
 func (p *Parser) ensureLogin(ctx context.Context) {

@@ -3,6 +3,7 @@ package toloka
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html"
 	"log"
@@ -23,6 +24,20 @@ import (
 )
 
 const trackerName = "toloka"
+
+// errNoCredentials separates "login is not configured" from "login was attempted
+// and did not work", so the reported status can tell them apart too.
+var errNoCredentials = fmt.Errorf("toloka: login credentials missing: %w", core.ErrNotAuthorized)
+
+// statusForError is deliberately thin: the cron handler derives the status from
+// the error itself (core.ErrNotAuthorized → core.StatusWorkLogin), so all this
+// has to do is stop res.Status from staying "ok" on a failed run.
+func statusForError(err error) string {
+	if errors.Is(err, core.ErrNotAuthorized) {
+		return core.StatusWorkLogin
+	}
+	return "error"
+}
 
 var parseCats = []string{"16", "96", "19", "139", "32", "173", "174", "44"}
 var taskCats = []string{
@@ -260,12 +275,14 @@ func (p *Parser) Parse(ctx context.Context, page int) (ParseResult, error) {
 			}
 			select {
 			case <-ctx.Done():
+				res.Status = "canceled"
 				return res, ctx.Err()
 			case <-time.After(delay):
 			}
 		}
 		items, err := p.parsePage(ctx, cat, page)
 		if err != nil {
+			res.Status = statusForError(err)
 			return res, err
 		}
 		res.Fetched += len(items)
@@ -275,6 +292,7 @@ func (p *Parser) Parse(ctx context.Context, page int) (ParseResult, error) {
 		}
 		a, u, s, f, err := p.saveTorrents(ctx, items)
 		if err != nil {
+			res.Status = statusForError(err)
 			return res, err
 		}
 		res.Added += a
@@ -753,7 +771,7 @@ func (p *Parser) takeLogin(ctx context.Context) (string, error) {
 	pass := strings.TrimSpace(p.Config.Toloka.Login.P)
 	if user == "" || pass == "" {
 		log.Printf("toloka: login skipped — username/password empty in config")
-		return "", fmt.Errorf("toloka: login credentials missing")
+		return "", errNoCredentials
 	}
 	log.Printf("toloka: login as user=%s host=%s", user, host)
 	vals := url.Values{}

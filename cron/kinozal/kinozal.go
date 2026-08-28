@@ -161,18 +161,12 @@ func (p *Parser) Parse(ctx context.Context, page int) (ParseResult, error) {
 		return ParseResult{Status: "disabled"}, nil
 	}
 	// Login before parsing — resolveMagnet requires auth
-	if p.getCookie() == "" {
-		if err := p.takeLogin(ctx); err != nil {
-			return ParseResult{Status: "login error: " + err.Error()}, nil
-		}
-		if p.getCookie() == "" {
-			return ParseResult{Status: "login failed"}, nil
-		}
+	if err := p.requireLogin(ctx); err != nil {
+		return ParseResult{Status: core.StatusWorkLogin}, err
 	}
 	res := ParseResult{Status: "ok", PerCategory: map[string]int{}}
 	{
-		c := p.getCookie()
-		log.Printf("kinozal: starting parse, cookie=%q", c[:min(len(c), 40)])
+		log.Printf("kinozal: starting parse, cookie=[%s]", core.CookieNames(p.getCookie()))
 	}
 	for _, cat := range parseCats {
 		items, err := p.parsePage(ctx, cat, page, "")
@@ -199,8 +193,8 @@ func (p *Parser) Parse(ctx context.Context, page int) (ParseResult, error) {
 }
 
 func (p *Parser) UpdateTasksParse(ctx context.Context) (map[string]map[string][]Task, error) {
-	if p.getCookie() == "" {
-		_ = p.takeLogin(ctx)
+	if err := p.requireLogin(ctx); err != nil {
+		return nil, err
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -247,8 +241,8 @@ func (p *Parser) UpdateTasksParse(ctx context.Context) (map[string]map[string][]
 }
 
 func (p *Parser) ParseAllTask(ctx context.Context, force bool) (string, error) {
-	if p.getCookie() == "" {
-		_ = p.takeLogin(ctx)
+	if err := p.requireLogin(ctx); err != nil {
+		return "", err
 	}
 	p.mu.Lock()
 	if p.allWork {
@@ -362,8 +356,8 @@ func (p *Parser) ParseLatest(ctx context.Context, pages int) (string, error) {
 		return "work", nil
 	}
 	defer p.latestMu.Unlock()
-	if p.getCookie() == "" {
-		_ = p.takeLogin(ctx)
+	if err := p.requireLogin(ctx); err != nil {
+		return "", err
 	}
 	if pages <= 0 {
 		pages = 100
@@ -453,7 +447,12 @@ func (p *Parser) parsePage(ctx context.Context, cat string, page int, arg string
 		return nil, nil
 	}
 	if p.getCookie() == "" || !strings.Contains(htmlBody, ">Выход</a>") {
-		_ = p.takeLogin(ctx)
+		// This page was served to a guest and cannot be salvaged; re-login so the
+		// next one is not. Discarding the error here used to hide a broken login
+		// behind a run that reported fetched=0 for every category.
+		if err := p.takeLogin(ctx); err != nil {
+			log.Printf("kinozal: re-login failed mid-run: %v", err)
+		}
 	}
 	rows := rowSplitRe.Split(replaceBadNames(htmlBody), -1)
 	out := make([]filedb.TorrentDetails, 0, len(rows))
@@ -644,9 +643,9 @@ func (p *Parser) resolveMagnet(ctx context.Context, detailURL string) (string, e
 	}
 	// Log first failures for debugging
 	if len(text) < 500 {
-		log.Printf("kinozal: resolveMagnet id=%s FAILED status=%d cookie=%q body=%q", id, res.StatusCode, cookie[:min(len(cookie), 30)], text)
+		log.Printf("kinozal: resolveMagnet id=%s FAILED status=%d cookie=[%s] body=%q", id, res.StatusCode, core.CookieNames(cookie), text)
 	} else {
-		log.Printf("kinozal: resolveMagnet id=%s FAILED status=%d cookie=%q bodyLen=%d", id, res.StatusCode, cookie[:min(len(cookie), 30)], len(text))
+		log.Printf("kinozal: resolveMagnet id=%s FAILED status=%d cookie=[%s] bodyLen=%d", id, res.StatusCode, core.CookieNames(cookie), len(text))
 	}
 	return "", nil
 }
@@ -704,7 +703,8 @@ func (p *Parser) takeLogin(ctx context.Context) error {
 	defer resp.Body.Close()
 	log.Printf("kinozal: login response status=%d", resp.StatusCode)
 	uid, pass := "", ""
-	for _, line := range resp.Header.Values("Set-Cookie") {
+	setCookies := resp.Header.Values("Set-Cookie")
+	for _, line := range setCookies {
 		if uid == "" && strings.Contains(line, "uid=") {
 			if m := inlineReC4d16cRe.FindStringSubmatch(line); len(m) > 1 {
 				uid = m[1]
@@ -722,9 +722,26 @@ func (p *Parser) takeLogin(ctx context.Context) error {
 		p.cookie = cookie
 		p.cookieMu.Unlock()
 		_ = core.DefaultSessionStore().SaveAuth(p.domainKey(), cookie)
-		log.Printf("kinozal: login OK — uid=%s", uid)
+		log.Printf("kinozal: login OK — got uid+pass cookies")
 	} else {
-		log.Printf("kinozal: login FAILED — uid=%q pass=%q", uid, pass)
+		// Names only: `pass` is the session credential itself.
+		log.Printf("kinozal: login FAILED — takelogin.php set [%s], need uid+pass", core.CookieNames(setCookies...))
+	}
+	return nil
+}
+
+// requireLogin resolves a session and names the reason when it cannot, so every
+// entrypoint fails the same way. takeLogin reports a nil error even when the
+// server refused the credentials, so the cookie has to be re-checked afterwards.
+func (p *Parser) requireLogin(ctx context.Context) error {
+	if p.getCookie() != "" {
+		return nil
+	}
+	if err := p.takeLogin(ctx); err != nil {
+		return fmt.Errorf("kinozal: login failed: %w: %v", core.ErrNotAuthorized, err)
+	}
+	if p.getCookie() == "" {
+		return fmt.Errorf("kinozal: login produced no session cookie: %w", core.ErrNotAuthorized)
 	}
 	return nil
 }

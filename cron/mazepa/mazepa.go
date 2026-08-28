@@ -24,6 +24,15 @@ import (
 
 const trackerName = "mazepa"
 
+// loggedOut reports whether mazepa rendered a page for a guest. Two-sided on
+// purpose: the account menu ("Вийти") must be absent *and* a login link present.
+// A one-sided positive check would turn a renamed logout link into a re-login
+// loop on every page, and a one-sided login-link check would misread any page
+// that happens to link to login.php.
+func loggedOut(body string) bool {
+	return !strings.Contains(body, "Вийти") && strings.Contains(body, "login.php")
+}
+
 // Forum categories: id -> types
 var categories = map[string][]string{
 	// Українські фільми
@@ -225,7 +234,7 @@ func (p *Parser) Parse(ctx context.Context) (ParseResult, error) {
 	}
 	if p.getCookie() == "" {
 		if !p.takeLogin(ctx) {
-			return ParseResult{Status: "login failed"}, nil
+			return ParseResult{Status: core.StatusWorkLogin}, fmt.Errorf("mazepa: login failed: %w", core.ErrNotAuthorized)
 		}
 	}
 
@@ -274,12 +283,15 @@ func (p *Parser) parseForumPage(ctx context.Context, pageURL string, types []str
 		return nil, "", nil
 	}
 
-	// Login form posts to /login.php (see takeLogin). If that action attribute
-	// shows up here, mazepa rendered the login page in place of the forum —
-	// saved bb_session has expired and we must re-authenticate.
-	if p.Config.Mazepa.Login.U != "" &&
-		(strings.Contains(body, `action="login.php"`) || strings.Contains(body, `action='login.php'`)) {
-		log.Printf("mazepa: %s returned login form (cookie expired, invalidating)", pageURL)
+	// mazepa serves the forum to logged-out visitors too — a guest request to
+	// viewforum.php returns 50 topic rows, just with no dl.php attachment links.
+	// So it never renders the login *form* in place of the listing, and the old
+	// `action="login.php"` check could not fire: verified on the live listing,
+	// zero occurrences of the attribute against one plain login.php link. The
+	// account menu is the honest signal, which is what the attachment-level
+	// check below already keys on ("Вийти" = logout).
+	if p.Config.Mazepa.Login.U != "" && loggedOut(body) {
+		log.Printf("mazepa: %s served to a guest (cookie expired, invalidating)", pageURL)
 		p.invalidateCookie()
 		return nil, "", nil
 	}
@@ -392,7 +404,7 @@ func (p *Parser) parseForumPage(ctx context.Context, pageURL string, types []str
 func (p *Parser) UpdateTasksParse(ctx context.Context) (map[string][]Task, error) {
 	if p.getCookie() == "" {
 		if !p.takeLogin(ctx) {
-			return nil, fmt.Errorf("mazepa: login failed")
+			return nil, fmt.Errorf("mazepa: login failed: %w", core.ErrNotAuthorized)
 		}
 	}
 	host := strings.TrimRight(p.Config.Mazepa.Host, "/")
@@ -461,7 +473,7 @@ func (p *Parser) ParseAllTask(ctx context.Context, force bool) (string, error) {
 
 	if p.getCookie() == "" {
 		if !p.takeLogin(ctx) {
-			return "", fmt.Errorf("mazepa: login failed")
+			return "", fmt.Errorf("mazepa: login failed: %w", core.ErrNotAuthorized)
 		}
 	}
 
@@ -571,7 +583,7 @@ func (p *Parser) ParseLatest(ctx context.Context, pages int) (string, error) {
 	}
 	if p.getCookie() == "" {
 		if !p.takeLogin(ctx) {
-			return "", fmt.Errorf("mazepa: login failed")
+			return "", fmt.Errorf("mazepa: login failed: %w", core.ErrNotAuthorized)
 		}
 	}
 	host := strings.TrimRight(p.Config.Mazepa.Host, "/")

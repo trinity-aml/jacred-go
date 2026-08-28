@@ -31,11 +31,11 @@ const loginCooldown = time.Minute
 var (
 	// errNoCredentials separates "login is not configured" from "login was
 	// attempted and did not work". Both used to surface as an empty cookie.
-	errNoCredentials = errors.New("animelayer: no cookie and no login credentials configured")
+	errNoCredentials = fmt.Errorf("animelayer: no cookie and no login credentials configured: %w", core.ErrNotAuthorized)
 	// errUnauthorized marks a response animelayer served to a logged-out
 	// visitor: the anonymous catalog page, or the topic page returned in
 	// place of a .torrent attachment.
-	errUnauthorized = errors.New("animelayer: session cookie is not authorized")
+	errUnauthorized = fmt.Errorf("animelayer: session cookie is not authorized: %w", core.ErrNotAuthorized)
 )
 
 var (
@@ -115,7 +115,7 @@ func (p *Parser) Parse(ctx context.Context, maxpage int) (ParseResult, error) {
 	// failure and a silent one.
 	if err := p.authorize(ctx); err != nil {
 		log.Printf("%v", err)
-		return ParseResult{Status: "work_login"}, err
+		return ParseResult{Status: core.StatusWorkLogin}, err
 	}
 	res := ParseResult{Status: "ok"}
 	for page := 1; page <= maxpage; page++ {

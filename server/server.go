@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -44,6 +45,7 @@ import (
 	"jacred/cron/viruseproject"
 	"sync"
 
+	"jacred/core"
 	"jacred/filedb"
 	"jacred/tracks"
 )
@@ -487,7 +489,7 @@ func (s *Server) handleCronAnidubParse(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	res, err := s.AnidubParser.Parse(context.Background(), parseOptionalInt(q, "parseFrom", 0), parseOptionalInt(q, "parseTo", 0))
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": res.Status})
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": cronErrorStatus(err, res.Status)})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": res.Status, "parsed": res.Parsed, "added": res.Added, "updated": res.Updated, "skipped": res.Skipped, "failed": res.Failed, "text": fmt.Sprintf("parsed=%d +%d ~%d =%d failed=%d", res.Parsed, res.Added, res.Updated, res.Skipped, res.Failed)})
@@ -501,7 +503,7 @@ func (s *Server) handleCronKnabenParse(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	res, err := s.KnabenParser.Parse(context.Background(), parseOptionalInt(q, "from", 0), parseOptionalInt(q, "size", 300), parseOptionalInt(q, "pages", 1), q.Get("query"), parseOptionalInt(q, "hours", 0), defaultString(q.Get("orderBy"), "date"), q.Get("categories"))
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": res.Status})
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": cronErrorStatus(err, res.Status)})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -522,7 +524,7 @@ func (s *Server) handleCronBitruParse(w http.ResponseWriter, r *http.Request) {
 	}
 	res, err := s.BitruParser.Parse(context.Background(), parseOptionalInt(r.URL.Query(), "page", 1))
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"status": res.Status, "error": err.Error()})
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"status": cronErrorStatus(err, res.Status), "error": err.Error()})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": res.Status, "fetched": res.Fetched, "added": res.Added, "updated": res.Updated, "skipped": res.Skipped, "failed": res.Failed, "by_category": res.PerCategory})
@@ -535,7 +537,7 @@ func (s *Server) handleCronBitruUpdateTasksParse(w http.ResponseWriter, r *http.
 	}
 	res, err := s.BitruParser.UpdateTasksParse(context.Background())
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": cronErrorStatus(err, "")})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "tasks": res})
@@ -548,7 +550,7 @@ func (s *Server) handleCronBitruParseAllTask(w http.ResponseWriter, r *http.Requ
 	}
 	res, err := s.BitruParser.ParseAllTask(context.Background(), parseBool(r.URL.Query().Get("force")))
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": cronErrorStatus(err, "")})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": res})
@@ -561,7 +563,7 @@ func (s *Server) handleCronBitruParseLatest(w http.ResponseWriter, r *http.Reque
 	}
 	res, err := s.BitruParser.ParseLatest(context.Background(), parseOptionalInt(r.URL.Query(), "pages", 5))
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": cronErrorStatus(err, "")})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": res})
@@ -575,7 +577,7 @@ func (s *Server) handleCronAnilibertyParse(w http.ResponseWriter, r *http.Reques
 	q := r.URL.Query()
 	res, err := s.AnilibertyParser.Parse(context.Background(), parseOptionalInt(q, "parseFrom", 0), parseOptionalInt(q, "parseTo", 0))
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": res.Status})
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": cronErrorStatus(err, res.Status)})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": res.Status, "parsed": res.Parsed, "added": res.Added, "updated": res.Updated, "skipped": res.Skipped, "failed": res.Failed, "lastPage": res.LastPage, "text": fmt.Sprintf("parsed=%d +%d ~%d =%d failed=%d", res.Parsed, res.Added, res.Updated, res.Skipped, res.Failed)})
@@ -588,7 +590,7 @@ func (s *Server) handleCronAnimelayerParse(w http.ResponseWriter, r *http.Reques
 	}
 	res, err := s.AnimelayerParser.Parse(context.Background(), parseOptionalInt(r.URL.Query(), "maxpage", 1))
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": res.Status})
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": cronErrorStatus(err, res.Status)})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": res.Status, "parsed": res.Parsed, "added": res.Added, "updated": res.Updated, "skipped": res.Skipped, "failed": res.Failed, "text": fmt.Sprintf("parsed=%d +%d ~%d =%d failed=%d", res.Parsed, res.Added, res.Updated, res.Skipped, res.Failed)})
@@ -602,7 +604,7 @@ func (s *Server) handleCronBitruAPIParse(w http.ResponseWriter, r *http.Request)
 	q := r.URL.Query()
 	res, err := s.BitruAPIParser.Parse(context.Background(), parseOptionalInt(q, "limit", 100))
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": res.Status})
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": cronErrorStatus(err, res.Status)})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -624,7 +626,7 @@ func (s *Server) handleCronBitruAPIParseFromDate(w http.ResponseWriter, r *http.
 	q := r.URL.Query()
 	res, err := s.BitruAPIParser.ParseFromDate(context.Background(), q.Get("lastnewtor"), parseOptionalInt(q, "limit", 100))
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": res.Status})
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": cronErrorStatus(err, res.Status)})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -645,7 +647,7 @@ func (s *Server) handleCronRutorParse(w http.ResponseWriter, r *http.Request) {
 	}
 	res, err := s.RutorParser.Parse(context.Background(), parseOptionalInt(r.URL.Query(), "page", 0))
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": res.Status})
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": cronErrorStatus(err, res.Status)})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -667,7 +669,7 @@ func (s *Server) handleCronRutorUpdateTasksParse(w http.ResponseWriter, r *http.
 	}
 	res, err := s.RutorParser.UpdateTasksParse(context.Background())
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": cronErrorStatus(err, "")})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "tasks": res})
@@ -680,7 +682,7 @@ func (s *Server) handleCronRutorParseAllTask(w http.ResponseWriter, r *http.Requ
 	}
 	text, err := s.RutorParser.ParseAllTask(context.Background(), parseBool(r.URL.Query().Get("force")))
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": cronErrorStatus(err, "")})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": text})
@@ -693,7 +695,7 @@ func (s *Server) handleCronRutorParseLatest(w http.ResponseWriter, r *http.Reque
 	}
 	text, err := s.RutorParser.ParseLatest(context.Background(), parseOptionalInt(r.URL.Query(), "pages", 5))
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": cronErrorStatus(err, "")})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": text})
@@ -706,7 +708,7 @@ func (s *Server) handleCronMegapeerParse(w http.ResponseWriter, r *http.Request)
 	}
 	res, err := s.MegapeerParser.Parse(context.Background(), parseOptionalInt(r.URL.Query(), "maxpage", 1))
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": res.Status})
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": cronErrorStatus(err, res.Status)})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -728,7 +730,7 @@ func (s *Server) handleCronTorrentByParse(w http.ResponseWriter, r *http.Request
 	}
 	res, err := s.TorrentByParser.Parse(context.Background(), parseOptionalInt(r.URL.Query(), "page", 0))
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": res.Status})
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": cronErrorStatus(err, res.Status)})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -750,7 +752,7 @@ func (s *Server) handleCronTorrentByUpdateTasksParse(w http.ResponseWriter, r *h
 	}
 	res, err := s.TorrentByParser.UpdateTasksParse(context.Background())
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": cronErrorStatus(err, "")})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "tasks": res})
@@ -763,7 +765,7 @@ func (s *Server) handleCronTorrentByParseAllTask(w http.ResponseWriter, r *http.
 	}
 	textRes, err := s.TorrentByParser.ParseAllTask(context.Background(), parseBool(r.URL.Query().Get("force")))
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": cronErrorStatus(err, "")})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "text": textRes})
@@ -776,7 +778,7 @@ func (s *Server) handleCronTorrentByParseLatest(w http.ResponseWriter, r *http.R
 	}
 	textRes, err := s.TorrentByParser.ParseLatest(context.Background(), parseOptionalInt(r.URL.Query(), "pages", 5))
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": cronErrorStatus(err, "")})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "text": textRes})
@@ -789,7 +791,7 @@ func (s *Server) handleCronRutrackerParse(w http.ResponseWriter, r *http.Request
 	}
 	res, err := s.RutrackerParser.Parse(context.Background(), parseOptionalInt(r.URL.Query(), "page", 0))
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": res.Status})
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": cronErrorStatus(err, res.Status)})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": res.Status, "fetched": res.Fetched, "added": res.Added, "updated": res.Updated, "skipped": res.Skipped, "duplicates": res.Duplicates, "failed": res.Failed, "by_category": res.PerCategory, "text": fmt.Sprintf("fetched=%d +%d ~%d =%d dup=%d failed=%d", res.Fetched, res.Added, res.Updated, res.Skipped, res.Duplicates, res.Failed)})
@@ -802,7 +804,7 @@ func (s *Server) handleCronRutrackerUpdateTasksParse(w http.ResponseWriter, r *h
 	}
 	res, err := s.RutrackerParser.UpdateTasksParse(context.Background())
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": cronErrorStatus(err, "")})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "tasks": res})
@@ -815,7 +817,7 @@ func (s *Server) handleCronRutrackerParseAllTask(w http.ResponseWriter, r *http.
 	}
 	textRes, err := s.RutrackerParser.ParseAllTask(context.Background(), parseBool(r.URL.Query().Get("force")))
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": cronErrorStatus(err, "")})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "text": textRes})
@@ -828,7 +830,7 @@ func (s *Server) handleCronRutrackerParseLatest(w http.ResponseWriter, r *http.R
 	}
 	textRes, err := s.RutrackerParser.ParseLatest(context.Background(), parseOptionalInt(r.URL.Query(), "pages", 5))
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": cronErrorStatus(err, "")})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "text": textRes})
@@ -841,7 +843,7 @@ func (s *Server) handleCronKorsarsParse(w http.ResponseWriter, r *http.Request) 
 	}
 	res, err := s.KorsarsParser.Parse(context.Background(), parseOptionalInt(r.URL.Query(), "page", 0))
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": res.Status})
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": cronErrorStatus(err, res.Status)})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": res.Status, "fetched": res.Fetched, "added": res.Added, "updated": res.Updated, "skipped": res.Skipped, "duplicates": res.Duplicates, "failed": res.Failed, "by_category": res.PerCategory, "text": fmt.Sprintf("fetched=%d +%d ~%d =%d dup=%d failed=%d", res.Fetched, res.Added, res.Updated, res.Skipped, res.Duplicates, res.Failed)})
@@ -854,7 +856,7 @@ func (s *Server) handleCronKorsarsUpdateTasksParse(w http.ResponseWriter, r *htt
 	}
 	res, err := s.KorsarsParser.UpdateTasksParse(context.Background())
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": cronErrorStatus(err, "")})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "tasks": res})
@@ -867,7 +869,7 @@ func (s *Server) handleCronKorsarsParseAllTask(w http.ResponseWriter, r *http.Re
 	}
 	textRes, err := s.KorsarsParser.ParseAllTask(context.Background(), parseBool(r.URL.Query().Get("force")))
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": cronErrorStatus(err, "")})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "text": textRes})
@@ -880,7 +882,7 @@ func (s *Server) handleCronKorsarsParseLatest(w http.ResponseWriter, r *http.Req
 	}
 	textRes, err := s.KorsarsParser.ParseLatest(context.Background(), parseOptionalInt(r.URL.Query(), "pages", 5))
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": cronErrorStatus(err, "")})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "text": textRes})
@@ -893,7 +895,7 @@ func (s *Server) handleCronUltradoxParse(w http.ResponseWriter, r *http.Request)
 	}
 	res, err := s.UltradoxParser.Parse(context.Background(), parseOptionalInt(r.URL.Query(), "page", 0))
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": res.Status})
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": cronErrorStatus(err, res.Status)})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": res.Status, "fetched": res.Fetched, "added": res.Added, "updated": res.Updated, "skipped": res.Skipped, "failed": res.Failed, "by_category": res.PerCategory, "text": fmt.Sprintf("fetched=%d +%d ~%d =%d failed=%d", res.Fetched, res.Added, res.Updated, res.Skipped, res.Failed)})
@@ -906,7 +908,7 @@ func (s *Server) handleCronUltradoxUpdateTasksParse(w http.ResponseWriter, r *ht
 	}
 	res, err := s.UltradoxParser.UpdateTasksParse(context.Background())
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": cronErrorStatus(err, "")})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "tasks": res})
@@ -919,7 +921,7 @@ func (s *Server) handleCronUltradoxParseAllTask(w http.ResponseWriter, r *http.R
 	}
 	textRes, err := s.UltradoxParser.ParseAllTask(context.Background(), parseBool(r.URL.Query().Get("force")))
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": cronErrorStatus(err, "")})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "text": textRes})
@@ -932,7 +934,7 @@ func (s *Server) handleCronUltradoxParseLatest(w http.ResponseWriter, r *http.Re
 	}
 	textRes, err := s.UltradoxParser.ParseLatest(context.Background(), parseOptionalInt(r.URL.Query(), "pages", 5))
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": cronErrorStatus(err, "")})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "text": textRes})
@@ -945,7 +947,7 @@ func (s *Server) handleCronKinozalParse(w http.ResponseWriter, r *http.Request) 
 	}
 	res, err := s.KinozalParser.Parse(context.Background(), parseOptionalInt(r.URL.Query(), "page", 0))
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": res.Status})
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": cronErrorStatus(err, res.Status)})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": res.Status, "fetched": res.Fetched, "added": res.Added, "updated": res.Updated, "skipped": res.Skipped, "failed": res.Failed, "by_category": res.PerCategory, "text": fmt.Sprintf("fetched=%d +%d ~%d =%d failed=%d", res.Fetched, res.Added, res.Updated, res.Skipped, res.Failed)})
@@ -958,7 +960,7 @@ func (s *Server) handleCronKinozalUpdateTasksParse(w http.ResponseWriter, r *htt
 	}
 	res, err := s.KinozalParser.UpdateTasksParse(context.Background())
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": cronErrorStatus(err, "")})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "tasks": res})
@@ -971,7 +973,7 @@ func (s *Server) handleCronKinozalParseAllTask(w http.ResponseWriter, r *http.Re
 	}
 	textRes, err := s.KinozalParser.ParseAllTask(context.Background(), parseBool(r.URL.Query().Get("force")))
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": cronErrorStatus(err, "")})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "text": textRes})
@@ -984,10 +986,34 @@ func (s *Server) handleCronKinozalParseLatest(w http.ResponseWriter, r *http.Req
 	}
 	textRes, err := s.KinozalParser.ParseLatest(context.Background(), parseOptionalInt(r.URL.Query(), "pages", 100))
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": cronErrorStatus(err, "")})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "text": textRes})
+}
+
+// cronErrorStatus derives the status a failed cron run reports.
+//
+// Two problems it fixes. Parsers initialise their ParseResult to Status "ok" and
+// most return that same value alongside an error, so the JSON carried
+// `"status":"ok"` next to an `"error"` — HTTP 500 said one thing and the field a
+// monitor reads said the opposite. And the handlers that take a plain
+// (string, error) result emitted no status at all on failure.
+//
+// Authorization failures are recognised from the error rather than from whatever
+// each parser left in its result struct, so every one of them reports
+// core.StatusWorkLogin with HTTP 500 — where three spellings and two HTTP codes
+// used to coexist. Any other status a parser sets deliberately on the failure
+// path ("cf-challenge", "canceled", …) passes through untouched.
+func cronErrorStatus(err error, status string) string {
+	if errors.Is(err, core.ErrNotAuthorized) {
+		return core.StatusWorkLogin
+	}
+	switch strings.TrimSpace(status) {
+	case "", "ok":
+		return "error"
+	}
+	return status
 }
 
 func (s *Server) handleCronTolokaParse(w http.ResponseWriter, r *http.Request) {
@@ -997,7 +1023,7 @@ func (s *Server) handleCronTolokaParse(w http.ResponseWriter, r *http.Request) {
 	}
 	res, err := s.TolokaParser.Parse(context.Background(), parseOptionalInt(r.URL.Query(), "page", 0))
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": res.Status})
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": cronErrorStatus(err, res.Status)})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": res.Status, "fetched": res.Fetched, "added": res.Added, "updated": res.Updated, "skipped": res.Skipped, "failed": res.Failed, "by_category": res.PerCategory, "text": fmt.Sprintf("fetched=%d +%d ~%d =%d failed=%d", res.Fetched, res.Added, res.Updated, res.Skipped, res.Failed)})
@@ -1010,7 +1036,7 @@ func (s *Server) handleCronTolokaUpdateTasksParse(w http.ResponseWriter, r *http
 	}
 	res, err := s.TolokaParser.UpdateTasksParse(context.Background())
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": cronErrorStatus(err, "")})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "tasks": res})
@@ -1023,7 +1049,7 @@ func (s *Server) handleCronTolokaParseAllTask(w http.ResponseWriter, r *http.Req
 	}
 	textRes, err := s.TolokaParser.ParseAllTask(context.Background(), parseBool(r.URL.Query().Get("force")))
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": cronErrorStatus(err, "")})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "text": textRes})
@@ -1036,7 +1062,7 @@ func (s *Server) handleCronTolokaParseLatest(w http.ResponseWriter, r *http.Requ
 	}
 	textRes, err := s.TolokaParser.ParseLatest(context.Background(), parseOptionalInt(r.URL.Query(), "pages", 5))
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": cronErrorStatus(err, "")})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "text": textRes})
@@ -1050,7 +1076,7 @@ func (s *Server) handleCronSelezenParse(w http.ResponseWriter, r *http.Request) 
 	q := r.URL.Query()
 	res, err := s.SelezenParser.Parse(context.Background(), parseOptionalInt(q, "parseFrom", 0), parseOptionalInt(q, "parseTo", 0))
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": res.Status})
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": cronErrorStatus(err, res.Status)})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": res.Status, "parsed": res.Parsed, "added": res.Added, "updated": res.Updated, "skipped": res.Skipped, "failed": res.Failed, "text": fmt.Sprintf("parsed=%d +%d ~%d =%d failed=%d", res.Parsed, res.Added, res.Updated, res.Skipped, res.Failed)})
@@ -1063,7 +1089,7 @@ func (s *Server) handleCronSelezenUpdateTasksParse(w http.ResponseWriter, r *htt
 	}
 	res, err := s.SelezenParser.UpdateTasksParse(context.Background())
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": cronErrorStatus(err, "")})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "tasks": res})
@@ -1076,7 +1102,7 @@ func (s *Server) handleCronSelezenParseAllTask(w http.ResponseWriter, r *http.Re
 	}
 	text, err := s.SelezenParser.ParseAllTask(context.Background(), parseBool(r.URL.Query().Get("force")))
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": cronErrorStatus(err, "")})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": text})
@@ -1089,7 +1115,7 @@ func (s *Server) handleCronSelezenParseLatest(w http.ResponseWriter, r *http.Req
 	}
 	text, err := s.SelezenParser.ParseLatest(context.Background(), parseOptionalInt(r.URL.Query(), "pages", 5))
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": cronErrorStatus(err, "")})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": text})
@@ -1106,7 +1132,7 @@ func (s *Server) handleCronAnistarParse(w http.ResponseWriter, r *http.Request) 
 	}
 	res, err := s.AnistarParser.Parse(context.Background(), lp)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": res.Status})
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": cronErrorStatus(err, res.Status)})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": res.Status, "fetched": res.Fetched, "added": res.Added, "updated": res.Updated, "skipped": res.Skipped, "failed": res.Failed, "text": fmt.Sprintf("fetched=%d +%d ~%d =%d failed=%d", res.Fetched, res.Added, res.Updated, res.Skipped, res.Failed)})
@@ -1120,7 +1146,7 @@ func (s *Server) handleCronAnifilmParse(w http.ResponseWriter, r *http.Request) 
 	fullparse := parseBool(r.URL.Query().Get("fullparse"))
 	res, err := s.AnifilmParser.Parse(context.Background(), fullparse)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": res.Status})
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": cronErrorStatus(err, res.Status)})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": res.Status, "fetched": res.Fetched, "added": res.Added, "updated": res.Updated, "skipped": res.Skipped, "failed": res.Failed, "text": fmt.Sprintf("fetched=%d +%d ~%d =%d failed=%d", res.Fetched, res.Added, res.Updated, res.Skipped, res.Failed)})
@@ -1133,7 +1159,7 @@ func (s *Server) handleCronLeproductionParse(w http.ResponseWriter, r *http.Requ
 	}
 	res, err := s.LeproductionParser.Parse(context.Background(), parseOptionalInt(r.URL.Query(), "limit_page", 0))
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": res.Status})
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": cronErrorStatus(err, res.Status)})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": res.Status, "fetched": res.Fetched, "added": res.Added, "updated": res.Updated, "skipped": res.Skipped, "failed": res.Failed, "text": fmt.Sprintf("fetched=%d +%d ~%d =%d failed=%d", res.Fetched, res.Added, res.Updated, res.Skipped, res.Failed)})
@@ -1146,7 +1172,7 @@ func (s *Server) handleCronViruseprojectParse(w http.ResponseWriter, r *http.Req
 	}
 	res, err := s.ViruseprojectParser.Parse(context.Background(), parseOptionalInt(r.URL.Query(), "limit_page", 1))
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": res.Status})
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": cronErrorStatus(err, res.Status)})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": res.Status, "fetched": res.Fetched, "added": res.Added, "updated": res.Updated, "skipped": res.Skipped, "failed": res.Failed, "text": fmt.Sprintf("fetched=%d +%d ~%d =%d failed=%d", res.Fetched, res.Added, res.Updated, res.Skipped, res.Failed)})
@@ -1159,7 +1185,7 @@ func (s *Server) handleCronAnibelkaParse(w http.ResponseWriter, r *http.Request)
 	}
 	res, err := s.AnibelkaParser.Parse(context.Background(), parseOptionalInt(r.URL.Query(), "page", 0))
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": res.Status})
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": cronErrorStatus(err, res.Status)})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": res.Status, "fetched": res.Fetched, "added": res.Added, "updated": res.Updated, "skipped": res.Skipped, "failed": res.Failed, "text": fmt.Sprintf("fetched=%d +%d ~%d =%d failed=%d", res.Fetched, res.Added, res.Updated, res.Skipped, res.Failed)})
@@ -1172,7 +1198,7 @@ func (s *Server) handleCronAnibelkaUpdateTasksParse(w http.ResponseWriter, r *ht
 	}
 	tasks, err := s.AnibelkaParser.UpdateTasksParse(context.Background())
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": cronErrorStatus(err, "")})
 		return
 	}
 	total := 0
@@ -1189,7 +1215,7 @@ func (s *Server) handleCronAnibelkaParseAllTask(w http.ResponseWriter, r *http.R
 	}
 	res, err := s.AnibelkaParser.ParseAllTask(context.Background(), parseBool(r.URL.Query().Get("force")))
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": cronErrorStatus(err, "")})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": res})
@@ -1202,7 +1228,7 @@ func (s *Server) handleCronAnibelkaParseLatest(w http.ResponseWriter, r *http.Re
 	}
 	res, err := s.AnibelkaParser.ParseLatest(context.Background(), parseOptionalInt(r.URL.Query(), "pages", 1))
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": cronErrorStatus(err, "")})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": res})
@@ -1215,7 +1241,7 @@ func (s *Server) handleCronMazepaParse(w http.ResponseWriter, r *http.Request) {
 	}
 	res, err := s.MazepaParser.Parse(context.Background())
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": res.Status})
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": cronErrorStatus(err, res.Status)})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": res.Status, "fetched": res.Fetched, "added": res.Added, "updated": res.Updated, "skipped": res.Skipped, "failed": res.Failed, "text": fmt.Sprintf("fetched=%d +%d ~%d =%d failed=%d", res.Fetched, res.Added, res.Updated, res.Skipped, res.Failed)})
@@ -1228,7 +1254,7 @@ func (s *Server) handleCronMazepaUpdateTasksParse(w http.ResponseWriter, r *http
 	}
 	res, err := s.MazepaParser.UpdateTasksParse(context.Background())
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": cronErrorStatus(err, "")})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "tasks": res})
@@ -1241,7 +1267,7 @@ func (s *Server) handleCronMazepaParseAllTask(w http.ResponseWriter, r *http.Req
 	}
 	text, err := s.MazepaParser.ParseAllTask(context.Background(), parseBool(r.URL.Query().Get("force")))
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": cronErrorStatus(err, "")})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": text})
@@ -1254,7 +1280,7 @@ func (s *Server) handleCronMazepaParseLatest(w http.ResponseWriter, r *http.Requ
 	}
 	text, err := s.MazepaParser.ParseLatest(context.Background(), parseOptionalInt(r.URL.Query(), "pages", 5))
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": cronErrorStatus(err, "")})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": text})
@@ -1562,7 +1588,7 @@ func (s *Server) handleCronNNMClubParse(w http.ResponseWriter, r *http.Request) 
 	}
 	res, err := s.NNMClubParser.Parse(context.Background(), parseOptionalInt(r.URL.Query(), "page", 0))
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": res.Status})
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": cronErrorStatus(err, res.Status)})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": res.Status, "fetched": res.Fetched, "added": res.Added, "updated": res.Updated, "skipped": res.Skipped, "failed": res.Failed})
@@ -1575,7 +1601,7 @@ func (s *Server) handleCronNNMClubUpdateTasksParse(w http.ResponseWriter, r *htt
 	}
 	res, err := s.NNMClubParser.UpdateTasksParse(context.Background())
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": cronErrorStatus(err, "")})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "tasks": res})
@@ -1588,7 +1614,7 @@ func (s *Server) handleCronNNMClubParseAllTask(w http.ResponseWriter, r *http.Re
 	}
 	text, err := s.NNMClubParser.ParseAllTask(context.Background(), parseBool(r.URL.Query().Get("force")))
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": cronErrorStatus(err, "")})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": text})
@@ -1601,7 +1627,7 @@ func (s *Server) handleCronNNMClubParseLatest(w http.ResponseWriter, r *http.Req
 	}
 	text, err := s.NNMClubParser.ParseLatest(context.Background(), parseOptionalInt(r.URL.Query(), "pages", 5))
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": cronErrorStatus(err, "")})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": text})
@@ -1665,7 +1691,7 @@ func (s *Server) handleCronLostfilmParse(w http.ResponseWriter, r *http.Request)
 	}
 	res, err := s.LostfilmParser.Parse(context.Background())
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": res.Status})
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": cronErrorStatus(err, res.Status)})
 		return
 	}
 	writeJSON(w, http.StatusOK, res)
@@ -1679,7 +1705,7 @@ func (s *Server) handleCronLostfilmParsePages(w http.ResponseWriter, r *http.Req
 	q := r.URL.Query()
 	res, err := s.LostfilmParser.ParsePages(context.Background(), parseOptionalInt(q, "pageFrom", 1), parseOptionalInt(q, "pageTo", 1))
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": res.Status})
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": cronErrorStatus(err, res.Status)})
 		return
 	}
 	writeJSON(w, http.StatusOK, res)
@@ -1692,7 +1718,7 @@ func (s *Server) handleCronLostfilmParseSeasonPacks(w http.ResponseWriter, r *ht
 	}
 	textRes, err := s.LostfilmParser.ParseSeasonPacks(context.Background(), r.URL.Query().Get("series"))
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": cronErrorStatus(err, "")})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": textRes})
@@ -1705,7 +1731,7 @@ func (s *Server) handleCronLostfilmVerifyPage(w http.ResponseWriter, r *http.Req
 	}
 	items, status, err := s.LostfilmParser.VerifyPage(context.Background(), r.URL.Query().Get("series"))
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": cronErrorStatus(err, "")})
 		return
 	}
 	if status != "ok" {

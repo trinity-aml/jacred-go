@@ -209,7 +209,7 @@ func (p *Parser) takeLogin(ctx context.Context) bool {
 	}
 	cookieStr := strings.Join(parts, "; ")
 	if !strings.Contains(cookieStr, "bb_data") {
-		log.Printf("korsars: login FAILED — no bb_data in cookies: %s", cookieStr)
+		log.Printf("korsars: login FAILED — no bb_data; cookies set: [%s]", core.CookieNames(cookieStr))
 		return false
 	}
 	p.cookieMu.Lock()
@@ -242,7 +242,7 @@ func (p *Parser) Parse(ctx context.Context, page int) (ParseResult, error) {
 		return ParseResult{Status: "disabled"}, nil
 	}
 	if !p.ensureLogin(ctx) {
-		return ParseResult{Status: "login failed"}, nil
+		return ParseResult{Status: core.StatusWorkLogin}, fmt.Errorf("korsars: login failed: %w", core.ErrNotAuthorized)
 	}
 	res := ParseResult{Status: "ok", PerCategory: map[string]int{}}
 	seenURLs := map[string]struct{}{}
@@ -275,7 +275,7 @@ func (p *Parser) Parse(ctx context.Context, page int) (ParseResult, error) {
 
 func (p *Parser) UpdateTasksParse(ctx context.Context) (map[string][]Task, error) {
 	if !p.ensureLogin(ctx) {
-		return nil, fmt.Errorf("login failed")
+		return nil, fmt.Errorf("korsars: login failed: %w", core.ErrNotAuthorized)
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -318,7 +318,7 @@ func (p *Parser) UpdateTasksParse(ctx context.Context) (map[string][]Task, error
 
 func (p *Parser) ParseAllTask(ctx context.Context, force bool) (string, error) {
 	if !p.ensureLogin(ctx) {
-		return "login failed", nil
+		return "", fmt.Errorf("korsars: login failed: %w", core.ErrNotAuthorized)
 	}
 	p.mu.Lock()
 	if p.allWork {
@@ -394,7 +394,7 @@ func (p *Parser) ParseLatest(ctx context.Context, pages int) (string, error) {
 	}
 	defer p.latestMu.Unlock()
 	if !p.ensureLogin(ctx) {
-		return "login failed", nil
+		return "", fmt.Errorf("korsars: login failed: %w", core.ErrNotAuthorized)
 	}
 	if pages <= 0 {
 		pages = 5

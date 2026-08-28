@@ -23,6 +23,18 @@ import (
 )
 
 const trackerName = "selezen"
+
+// loginCooldown throttles repeated login attempts after a failure.
+const loginCooldown = 2 * time.Minute
+
+var (
+	// errNoCredentials separates "login is not configured" from "login was
+	// attempted and did not work". Both used to surface as an empty cookie.
+	errNoCredentials = fmt.Errorf("selezen: no cookie and no login credentials configured: %w", core.ErrNotAuthorized)
+	// errUnauthorized marks a page selezen served to a logged-out visitor.
+	errUnauthorized = fmt.Errorf("selezen: session cookie is not authorized: %w", core.ErrNotAuthorized)
+)
+
 const selezenUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 
 var (
@@ -143,6 +155,14 @@ func (p *Parser) Parse(ctx context.Context, parseFrom, parseTo int) (ParseResult
 		startPage, endPage = endPage, startPage
 	}
 
+	// Authorize before parsing anything. parsePage used to return
+	// (0,0,0,0,0,nil) on an empty cookie, so a missing or dead session produced
+	// "parsed=0 added=0 skipped=0 failed=0 status=ok" — byte-for-byte what a
+	// quiet day looks like, with no log line naming a cause.
+	if err := p.authorize(ctx); err != nil {
+		log.Printf("%v", err)
+		return ParseResult{Status: core.StatusWorkLogin}, err
+	}
 	res := ParseResult{Status: "ok"}
 	for page := startPage; page <= endPage; page++ {
 		if page > startPage && p.Config.Selezen.ParseDelay > 0 {
@@ -167,25 +187,16 @@ func (p *Parser) Parse(ctx context.Context, parseFrom, parseTo int) (ParseResult
 }
 
 func (p *Parser) parsePage(ctx context.Context, page int) (int, int, int, int, int, error) {
-	cookie, err := p.ensureCookie(ctx)
-	if err != nil || strings.TrimSpace(cookie) == "" {
-		return 0, 0, 0, 0, 0, err
-	}
 	host := strings.TrimRight(strings.TrimSpace(p.Config.Selezen.Host), "/")
 	listURL := host + "/relizy-ot-selezen/"
 	if page > 1 {
 		listURL = fmt.Sprintf("%s/relizy-ot-selezen/page/%d/", host, page)
 	}
-	body, err := p.fetchText(ctx, listURL, cookie, host+"/")
+	cookie, body, err := p.fetchListing(ctx, listURL, host, page)
 	if err != nil {
 		return 0, 0, 0, 0, 0, err
 	}
-	if body == "" || !strings.Contains(body, "dle_root") {
-		return 0, 0, 0, 0, 0, nil
-	}
-	if loginUser := strings.TrimSpace(p.Config.Selezen.Login.U); loginUser != "" && !strings.Contains(body, ">"+loginUser+"<") {
-		log.Printf("selezen: page=%d missing user marker (cookie expired, invalidating)", page)
-		p.invalidateCookie()
+	if body == "" {
 		return 0, 0, 0, 0, 0, nil
 	}
 	torrents := parsePageHTML(body)
@@ -344,6 +355,76 @@ func (p *Parser) invalidateCookie() {
 	_ = core.DefaultSessionStore().DeleteAuth(p.domain)
 }
 
+// loginConfigured reports whether init.yaml supplies something to authenticate
+// with — either a ready-made cookie or a username/password pair.
+func (p *Parser) loginConfigured() bool {
+	return strings.TrimSpace(p.Config.Selezen.Cookie) != "" ||
+		(strings.TrimSpace(p.Config.Selezen.Login.U) != "" && strings.TrimSpace(p.Config.Selezen.Login.P) != "")
+}
+
+// authorize resolves a session cookie before the run starts and reports why it
+// could not, rather than letting the parse return a clean zero.
+func (p *Parser) authorize(ctx context.Context) error {
+	if !p.loginConfigured() {
+		return errNoCredentials
+	}
+	cookie, err := p.ensureCookie(ctx)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(cookie) == "" {
+		return fmt.Errorf("selezen: login produced no session cookie")
+	}
+	return nil
+}
+
+// loggedOut reports whether selezen rendered the page for a logged-out visitor.
+// The catalog itself is public — a logged-out request still returns dle_root and
+// a full set of cards — so the account name in the header is the only reliable
+// signal, which is why this is a positive marker rather than a login-form one.
+func (p *Parser) loggedOut(body string) bool {
+	user := strings.TrimSpace(p.Config.Selezen.Login.U)
+	if user == "" {
+		return false
+	}
+	return !strings.Contains(body, ">"+user+"<")
+}
+
+// fetchListing gets one catalog page with an authorized cookie, re-logging in
+// and retrying once if selezen answers with the logged-out page mid-run.
+func (p *Parser) fetchListing(ctx context.Context, listURL, host string, page int) (string, string, error) {
+	var lastCookie string
+	for attempt := 0; attempt < 2; attempt++ {
+		cookie, err := p.ensureCookie(ctx)
+		if err != nil {
+			return "", "", err
+		}
+		if strings.TrimSpace(cookie) == "" {
+			return "", "", fmt.Errorf("selezen: page %d has no session cookie", page)
+		}
+		lastCookie = cookie
+		body, err := p.fetchText(ctx, listURL, cookie, host+"/")
+		if err != nil {
+			return "", "", err
+		}
+		if body == "" || !strings.Contains(body, "dle_root") {
+			log.Printf("selezen: page %d empty or not a catalog page, url=%s bodyLen=%d", page, listURL, len(body))
+			return cookie, "", nil
+		}
+		if !p.loggedOut(body) {
+			return cookie, body, nil
+		}
+		if attempt == 0 && strings.TrimSpace(p.Config.Selezen.Cookie) == "" {
+			log.Printf("selezen: page %d missing the user marker — cookie expired, re-logging in", page)
+			p.invalidateCookie()
+			continue
+		}
+		log.Printf("selezen: page %d is still missing the user marker — giving up", page)
+		break
+	}
+	return lastCookie, "", nil
+}
+
 func (p *Parser) ensureCookie(ctx context.Context) (string, error) {
 	if cfg := strings.TrimSpace(p.Config.Selezen.Cookie); cfg != "" {
 		return cfg, nil
@@ -354,9 +435,11 @@ func (p *Parser) ensureCookie(ctx context.Context) (string, error) {
 		p.cookieMu.Unlock()
 		return cookie, nil
 	}
-	if time.Since(p.lastLoginAttempt) < 2*time.Minute {
+	if since := time.Since(p.lastLoginAttempt); since < loginCooldown {
 		p.cookieMu.Unlock()
-		return "", nil
+		// Returning an empty cookie and a nil error here let the caller carry on
+		// unauthenticated for two minutes after every failed login.
+		return "", fmt.Errorf("selezen: login cooldown, retry in %s", (loginCooldown - since).Round(time.Second))
 	}
 	p.lastLoginAttempt = time.Now()
 	p.cookieMu.Unlock()
@@ -376,8 +459,11 @@ func (p *Parser) ensureCookie(ctx context.Context) (string, error) {
 
 func (p *Parser) takeLogin(ctx context.Context) (string, error) {
 	host := strings.TrimRight(strings.TrimSpace(p.Config.Selezen.Host), "/")
-	if host == "" || strings.TrimSpace(p.Config.Selezen.Login.U) == "" || strings.TrimSpace(p.Config.Selezen.Login.P) == "" {
-		return "", nil
+	if host == "" {
+		return "", fmt.Errorf("selezen: host is not configured")
+	}
+	if strings.TrimSpace(p.Config.Selezen.Login.U) == "" || strings.TrimSpace(p.Config.Selezen.Login.P) == "" {
+		return "", errNoCredentials
 	}
 	vals := url.Values{}
 	vals.Set("login_name", p.Config.Selezen.Login.U)
@@ -411,7 +497,11 @@ func (p *Parser) takeLogin(ctx context.Context) (string, error) {
 			return fmt.Sprintf("PHPSESSID=%s; _ym_isad=2;", strings.TrimSpace(m[1])), nil
 		}
 	}
-	return "", nil
+	// A wrong password, a renamed cookie and an error page all end up here.
+	// Returning an empty cookie with a nil error made all three look exactly
+	// like "login is not configured", and the run carried on anonymously.
+	return "", fmt.Errorf("selezen: login POST returned %d without a session cookie; set: [%s]",
+		resp.StatusCode, core.CookieNames(resp.Header.Values("Set-Cookie")...))
 }
 
 // fetchText routes through the shared Fetcher so the tracker's fetchmode

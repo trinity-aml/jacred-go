@@ -24,6 +24,13 @@ import (
 
 const trackerName = "anifilm"
 
+// loggedOut reports whether anifilm rendered a page for a guest. Two-sided on
+// purpose: the account menu must be absent *and* the login link present, so a
+// renamed logout path cannot by itself send every page into a re-login loop.
+func loggedOut(body string) bool {
+	return !strings.Contains(body, "/account/logout") && strings.Contains(body, "/account/login")
+}
+
 var catPages = []struct {
 	cat      string
 	types    []string
@@ -495,7 +502,7 @@ func (p *Parser) takeLogin(ctx context.Context) error {
 		return nil
 	}
 	log.Printf("anifilm: login FAILED — no cookies in response")
-	return fmt.Errorf("anifilm: login failed")
+	return fmt.Errorf("anifilm: login failed: %w", core.ErrNotAuthorized)
 }
 
 // invalidateCookie clears the in-memory + on-disk auth cookie and resets the
@@ -540,13 +547,16 @@ func (p *Parser) httpGet(_ context.Context, rawURL, referer string) (string, err
 		}
 		return "", fmt.Errorf("anifilm: 403 Forbidden (cookie expired?)")
 	}
-	// 200 but body is the login page — happens when session is expired but
-	// the site responds with a redirect-rendered login form rather than 403.
-	if p.Config.Anifilm.Login.U != "" &&
-		(strings.Contains(body, `action="/account/login"`) || strings.Contains(body, `action='/account/login'`)) {
-		log.Printf("anifilm: %s returned login form (cookie expired, invalidating)", rawURL)
+	// 200 but the page was rendered for a guest. anifilm serves the release
+	// catalog publicly — a logged-out request returns a full page of cards — so
+	// it does not put the login form in place of the listing, and the old
+	// `action="/account/login"` check could not fire: verified on the live
+	// listing, zero occurrences of the attribute against one /account/login
+	// link. Upstream's AnifilmSyncService.LooksLikeLoginForm has the same gap.
+	if p.Config.Anifilm.Login.U != "" && loggedOut(body) {
+		log.Printf("anifilm: %s served to a guest (cookie expired, invalidating)", rawURL)
 		p.invalidateCookie()
-		return "", fmt.Errorf("anifilm: login form returned (cookie expired)")
+		return "", fmt.Errorf("anifilm: page served to a guest (cookie expired)")
 	}
 	return body, nil
 }

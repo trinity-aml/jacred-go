@@ -111,3 +111,33 @@ func TestTopicURLFormIsStable(t *testing.T) {
 		t.Error("fixture lacks the SEO topic links this guard is about")
 	}
 }
+
+// forum_f12_guest.html is the same forum captured 2026-08-28 without a session.
+// It is the page the expired-cookie check has to recognise, and it is why that
+// check could not be written against the login form: mazepa serves the forum to
+// guests too, so the listing renders in full either way.
+func TestGuestListingIsDetected(t *testing.T) {
+	guest := loadFixture(t, "forum_f12_guest.html")
+	authed := loadFixture(t, "forum_f12.html")
+
+	// The guest page is a real listing, not a login page — "did it render"
+	// cannot tell the two apart, which is the whole reason for a header check.
+	if n := len(rowRe.FindAllString(guest, -1)); n == 0 {
+		t.Fatal("guest listing parsed no rows — fixture no longer represents the failure")
+	}
+
+	if !loggedOut(guest) {
+		t.Error("guest listing not detected as logged out")
+	}
+	if loggedOut(authed) {
+		t.Error("authorized listing flagged as logged out — every page would trigger a re-login")
+	}
+
+	// Regression guard: the check used to key off the login form's action
+	// attribute, which appears on neither page. It could never fire.
+	for name, body := range map[string]string{"guest": guest, "authorized": authed} {
+		if strings.Contains(body, `action="login.php"`) {
+			t.Errorf("%s page now carries action=\"login.php\"; the old detection would have worked after all", name)
+		}
+	}
+}
