@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -25,6 +26,19 @@ const (
 	apiGetTorrents = "torrents"
 	apiDelayMs     = 250
 )
+
+// errRateLimited marks bitru answering 429. It is not a broken row: the torrent
+// is fine and the next pass will pick it up, so it must not be treated like a
+// download that produced garbage.
+var errRateLimited = errors.New("bitru: rate limited (429)")
+
+// rateLimitBackoff is what a run waits before retrying a throttled download.
+// bitru does not limit by interval — 8 back-to-back downloads pass at any
+// spacing — it limits by quota over a window, so a run of ~120 sails through the
+// first ninety and then hits a wall. Waiting out the window is the only thing
+// that helps; a bigger apiDelay just makes every run slower without raising the
+// ceiling.
+var rateLimitBackoff = []time.Duration{5 * time.Second, 15 * time.Second, 30 * time.Second}
 
 var detailsIDRe = regexp.MustCompile(`\?id=(\d+)`)
 
@@ -190,6 +204,14 @@ func (p *Parser) parseInternal(ctx context.Context, lastnewtor string, limit int
 
 func (p *Parser) fetchTorrentsFromAPI(ctx context.Context, limit int, afterDate *int64) ([]filedb.TorrentDetails, error) {
 	all := make([]filedb.TorrentDetails, 0, limit)
+	// bitru's before_date cursor does not reliably advance the window: asking
+	// for the page after the one just read returns the same torrents again
+	// (measured: page 1 was 99 records, 99 of them repeats of page 0). Paging on
+	// alone therefore doubles the API load and makes a run report twice the
+	// records it actually has — 199 fetched, 100 distinct, 99 merged unchanged
+	// and counted as skipped. Track what has been seen and stop when a page
+	// brings nothing new, which is correct whether or not the cursor works.
+	seen := make(map[string]bool, limit)
 	currentParams := map[string]any{"limit": limit, "category": []string{"movie", "serial"}}
 	if afterDate != nil {
 		currentParams["after_date"] = strconv.FormatInt(*afterDate, 10)
@@ -202,15 +224,24 @@ func (p *Parser) fetchTorrentsFromAPI(ctx context.Context, limit int, afterDate 
 		if resp == nil || resp.Error || resp.Result == nil || resp.Result.Items == nil {
 			break
 		}
+		fresh := 0
 		for _, wrap := range resp.Result.Items {
 			if wrap.Item == nil {
 				continue
 			}
-			if t := p.mapToTorrentDetails(wrap.Item); t != nil {
-				all = append(all, t)
+			t := p.mapToTorrentDetails(wrap.Item)
+			if t == nil {
+				continue
 			}
+			key := strings.TrimSpace(asString(t["url"]))
+			if key == "" || seen[key] {
+				continue
+			}
+			seen[key] = true
+			all = append(all, t)
+			fresh++
 		}
-		if len(resp.Result.Items) == 0 {
+		if len(resp.Result.Items) == 0 || fresh == 0 {
 			break
 		}
 		beforeUnix := parseAnyInt64(resp.Result.BeforeDate)
@@ -324,6 +355,7 @@ func (p *Parser) mapToTorrentDetails(item *apiItem) filedb.TorrentDetails {
 
 func (p *Parser) saveTorrentsAndMagnets(ctx context.Context, torrents []filedb.TorrentDetails) (int, int, int, int, error) {
 	added, updated, skipped, failed := 0, 0, 0, 0
+	rateLimited := false
 	plog := core.NewParserLog("bitruapi", filepath.Join(p.DB.DataDir, "log"), p.Config.LogParsers && p.Config.Bitru.Log)
 	bucketCache := make(map[string]map[string]filedb.TorrentDetails, len(torrents))
 	changed := make(map[string]time.Time, len(torrents))
@@ -357,6 +389,8 @@ func (p *Parser) saveTorrentsAndMagnets(ctx context.Context, torrents []filedb.T
 				}
 			}
 			if strings.TrimSpace(downloadURL) == "" {
+				log.Printf("bitruapi: %s has no download URL", urlv)
+				plog.WriteFailed(urlv, asString(incoming["title"]))
 				failed++
 				continue
 			}
@@ -365,12 +399,40 @@ func (p *Parser) saveTorrentsAndMagnets(ctx context.Context, torrents []filedb.T
 				return added, updated, skipped, failed, ctx.Err()
 			case <-time.After(apiDelay()):
 			}
-			b, err := p.download(ctx, downloadURL, strings.TrimRight(p.Config.Bitru.Host, "/")+"/")
+			b, err := p.downloadWithBackoff(ctx, downloadURL, strings.TrimRight(p.Config.Bitru.Host, "/")+"/")
+			if errors.Is(err, errRateLimited) {
+				// The quota is spent. Every remaining row would answer 429 too,
+				// so stop asking: the rows keep their place and the next run
+				// picks them up, which is what already happens for a row whose
+				// download fails.
+				log.Printf("bitruapi: bitru is rate limiting (429) and did not recover after %s — "+
+					"stopping downloads for this run, the rest will be picked up next time",
+					totalBackoff())
+				plog.WriteFailed(urlv, asString(incoming["title"]))
+				failed++
+				rateLimited = true
+				break
+			}
 			magnet := ""
 			if err == nil {
 				magnet = core.TorrentBytesToMagnet(b)
 			}
 			if strings.TrimSpace(magnet) == "" {
+				// Both halves used to be silent: the error was discarded and the
+				// counter was bumped, so a run reported failed=N and nothing
+				// else. Report the first few in full — a systematic cause looks
+				// identical on every row, and repeating it 80 times only buries
+				// the rest of the log.
+				if failed < 3 {
+					reason := "torrent carried no magnet"
+					if err != nil {
+						reason = err.Error()
+					}
+					log.Printf("bitruapi: %s: %s", urlv, reason)
+				} else if failed == 3 {
+					log.Printf("bitruapi: further download failures are not logged individually")
+				}
+				plog.WriteFailed(urlv, asString(incoming["title"]))
 				failed++
 				continue
 			}
@@ -401,14 +463,53 @@ func (p *Parser) saveTorrentsAndMagnets(ctx context.Context, torrents []filedb.T
 			return added, updated, skipped, failed, err
 		}
 	}
+	if rateLimited {
+		log.Printf("bitruapi: %d record(s) saved before the rate limit stopped the run", added+updated)
+	}
 	return added, updated, skipped, failed, nil
 }
 
+// downloadWithBackoff waits out bitru's quota window rather than discarding the
+// row on the first 429. Anything other than a rate limit is returned as-is —
+// backing off would not help and would only slow the run down.
+func (p *Parser) downloadWithBackoff(ctx context.Context, rawURL, referer string) ([]byte, error) {
+	b, err := p.download(ctx, rawURL, referer)
+	if !errors.Is(err, errRateLimited) {
+		return b, err
+	}
+	for _, wait := range rateLimitBackoff {
+		log.Printf("bitruapi: rate limited, waiting %s before retrying", wait)
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(wait):
+		}
+		b, err = p.download(ctx, rawURL, referer)
+		if !errors.Is(err, errRateLimited) {
+			return b, err
+		}
+	}
+	return nil, errRateLimited
+}
+
+func totalBackoff() time.Duration {
+	var total time.Duration
+	for _, d := range rateLimitBackoff {
+		total += d
+	}
+	return total
+}
+
 func (p *Parser) download(ctx context.Context, rawURL, referer string) ([]byte, error) {
-	// bitruapi must not trigger its own flaresolverr solves (that's bitru
-	// parser's job), so force standard HTTP. If the bitru parser has already
-	// solved CF for this domain, piggyback on those cookies — they're
-	// domain-scoped and cover /download.php too.
+	// Standard HTTP on purpose, piggybacking on whatever clearance the bitru
+	// parser has already cached for this domain.
+	//
+	// It is tempting to route this like every other fetch and let it fall back
+	// to the browser when a replay is refused — but this runs once per torrent,
+	// ~120 times a run. A browser render per row is the shape that buried
+	// rutracker (one cold solve per page until the browser stopped responding);
+	// paying it here would be worse. Downloads that cannot be had this pass are
+	// retried on the next one, which is the cheaper trade.
 	tracker := p.Config.Bitru
 	tracker.FetchMode = "standard"
 	if cookie, _, ok := p.Fetcher.PeekFlareCookies(rawURL); ok && cookie != "" {
@@ -418,10 +519,34 @@ func (p *Parser) download(ctx context.Context, rawURL, referer string) ([]byte, 
 	if err != nil {
 		return nil, err
 	}
+	if status == http.StatusTooManyRequests {
+		return nil, errRateLimited
+	}
 	if status < 200 || status >= 300 {
-		return nil, fmt.Errorf("download status %d", status)
+		return nil, fmt.Errorf("download %s: status %d", rawURL, status)
+	}
+	// A Cloudflare interstitial arrives as a perfectly ordinary body; only the
+	// payload distinguishes it from a .torrent, and bencode always opens with
+	// 'd'. Naming it here is the difference between "failed=80" and a reason.
+	if looksLikeHTML(data) {
+		return nil, fmt.Errorf("download %s: got HTML, not a torrent (Cloudflare or an error page)", rawURL)
 	}
 	return data, nil
+}
+
+// looksLikeHTML reports whether a supposed .torrent payload is really a web page.
+func looksLikeHTML(data []byte) bool {
+	for i, b := range data {
+		if i >= 64 {
+			break
+		}
+		switch b {
+		case ' ', '\t', '\r', '\n':
+			continue
+		}
+		return b == '<'
+	}
+	return false
 }
 
 func (p *Parser) writeLastNewTor(torrents []filedb.TorrentDetails) error {
