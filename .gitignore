@@ -7,3 +7,6 @@ init.yaml
 # which builds against the versions pinned in go.mod.
 go.work
 go.work.sum
+
+# build_css.sh may drop a local Tailwind CLI here; it is never part of a release
+node_modules

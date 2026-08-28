@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="ru">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="Состояние парсеров jacred-go" />
+  <meta name="theme-color" content="#0a0a0f" />
+  <title>Трекеры | jacred-go</title>
+  <link rel="icon" type="image/png" href="./img/jacred.png" />
+  <link rel="icon" type="image/x-icon" href="./img/favicon.ico" />
+  <link rel="apple-touch-icon" href="./img/icon-192.png" />
+
+  <script>
+    // Runs before first paint, so the page never flashes the wrong theme. It has
+    // to be inline for that reason — assets/app.js owns everything else about
+    // the theme. Keep these three copies identical.
+    (function () {
+      try {
+        var storedTheme = localStorage.getItem('theme');
+        var prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+        document.documentElement.classList.toggle('dark', storedTheme === 'dark' || (storedTheme === null && prefersDark));
+      } catch (e) {
+        if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+          document.documentElement.classList.add('dark');
+        }
+      }
+    })();
+  </script>
+
+  <link rel="stylesheet" href="./assets/app.css" />
+  <script defer src="./assets/app.js"></script>
+
+  <style>
+    .tk-grid {
+      display: grid;
+      grid-template-columns: minmax(150px, 1fr) 140px minmax(220px, 2fr) 130px 108px;
+      gap: 16px;
+      align-items: center;
+      padding: 12px 20px;
+    }
+
+    .tk-head {
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .tk-row { border-top: 1px solid var(--surface-border); }
+    .tk-row--attention { background: rgba(245, 158, 11, 0.05); box-shadow: inset 2px 0 0 #f59e0b; }
+    .tk-row--muted { opacity: 0.55; }
+
+    .tk-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 500;
+      white-space: nowrap;
+    }
+
+    .tk-dot { width: 6px; height: 6px; border-radius: 999px; flex-shrink: 0; }
+    .tk-tag {
+      font-size: 12px;
+      padding: 3px 8px;
+      border-radius: 6px;
+      font-family: ui-monospace, SFMono-Regular, monospace;
+      white-space: nowrap;
+    }
+
+    .tk-num { font-variant-numeric: tabular-nums; font-family: ui-monospace, SFMono-Regular, monospace; font-size: 13px; }
+
+    /* Below the table's natural width the columns stop being a table and become
+     * stacked cards — a five-column grid on a phone is unreadable at any font
+     * size, and this page has to be usable from one. */
+    @media (max-width: 900px) {
+      .tk-grid {
+        grid-template-columns: 1fr;
+        gap: 8px;
+        padding: 14px 16px;
+      }
+      .tk-grid--head { display: none; }
+      .tk-actions { justify-content: flex-start !important; }
+    }
+  </style>
+</head>
+
+<body class="text-gray-900 dark:text-gray-100 font-sans min-h-screen antialiased">
+  <!-- Filled in by assets/app.js — one navigation for all pages. -->
+  <header id="appHeader" data-page="trackers"></header>
+
+  <div id="app" class="max-w-6xl mx-auto px-3 sm:px-4 md:px-6 py-4 sm:py-6">
+    <main>
+      <header class="mb-4 sm:mb-6 flex items-start justify-between gap-3 flex-wrap">
+        <div class="min-w-0">
+          <h1
+            class="text-xl sm:text-2xl font-bold bg-gradient-to-r from-red-400 to-amber-400 bg-clip-text text-transparent">
+            Трекеры
+          </h1>
+          <p class="text-xs sm:text-sm text-gray-500 dark:text-gray-400 mt-0.5">
+            Состояние парсеров · расписание задаёт <code class="font-mono">crontab</code>
+          </p>
+        </div>
+        <div class="flex items-center gap-2">
+          <input id="filter" type="search" placeholder="Фильтр по имени"
+            class="field-input toolbar-field" style="width: 200px" aria-label="Фильтр по имени трекера" />
+          <button type="button" id="refresh"
+            class="tap-target inline-flex items-center justify-center gap-1.5 h-9 px-3 rounded-lg bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 text-sm font-medium transition-colors">
+            <svg id="refreshIcon" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"
+              aria-hidden="true">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-3-6.7L21 8" />
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 3v5h-5" />
+            </svg>
+            <span class="hidden sm:inline">Обновить</span>
+          </button>
+        </div>
+      </header>
+
+      <div id="summary" class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4"></div>
+
+      <div id="tableWrap"
+        class="rounded-2xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 shadow-sm overflow-hidden">
+        <div class="tk-grid tk-grid--head bg-gray-50 dark:bg-gray-800/40">
+          <div class="tk-head">Трекер</div>
+          <div class="tk-head">Состояние</div>
+          <div class="tk-head">Последний прогон</div>
+          <div class="tk-head">Маршрут</div>
+          <div class="tk-head" style="text-align: right">Действия</div>
+        </div>
+        <div id="rows"></div>
+      </div>
+
+      <p id="note" class="text-xs text-gray-500 dark:text-gray-400 mt-3"></p>
+    </main>
+  </div>
+
+  <div id="toast"
+    class="fixed bottom-4 left-1/2 -translate-x-1/2 px-4 py-2.5 rounded-xl text-sm font-medium shadow-lg opacity-0 pointer-events-none transition-opacity z-50 bg-gray-900 text-white dark:bg-gray-100 dark:text-gray-900"></div>
+
+  <script>
+    (function () {
+      'use strict';
+
+      var REFRESH_MS = 30000;
+      var state = { trackers: [], filter: '', busy: {} };
+
+      var el = {
+        rows: document.getElementById('rows'),
+        summary: document.getElementById('summary'),
+        filter: document.getElementById('filter'),
+        refresh: document.getElementById('refresh'),
+        refreshIcon: document.getElementById('refreshIcon'),
+        note: document.getElementById('note'),
+        toast: document.getElementById('toast')
+      };
+
+      function esc(s) {
+        return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+          return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+        });
+      }
+
+      function toast(msg) {
+        el.toast.textContent = msg;
+        el.toast.style.opacity = '1';
+        clearTimeout(toast._t);
+        toast._t = setTimeout(function () { el.toast.style.opacity = '0'; }, 3200);
+      }
+
+      function ago(iso) {
+        if (!iso) return '';
+        var d = new Date(iso);
+        if (isNaN(d)) return '';
+        var s = Math.max(0, (Date.now() - d.getTime()) / 1000);
+        if (s < 90) return Math.round(s) + ' с назад';
+        if (s < 5400) return Math.round(s / 60) + ' мин назад';
+        if (s < 172800) return Math.round(s / 3600) + ' ч назад';
+        return Math.round(s / 86400) + ' д назад';
+      }
+
+      function duration(sec) {
+        if (!sec && sec !== 0) return '';
+        if (sec < 60) return sec.toFixed(1) + ' с';
+        var m = Math.floor(sec / 60);
+        return m + ' м ' + String(Math.round(sec - m * 60)).padStart(2, '0') + ' с';
+      }
+
+      // A run is only "ok" when the endpoint said so. The three statuses that
+      // mean "a human has to do something" are separated from a plain error,
+      // because the fix differs: work_login needs credentials, cf-challenge
+      // needs the browser, an error needs the log.
+      function health(t) {
+        if (t.disabled) return { key: 'disabled', label: 'выключен', fg: '#9ca3af', bg: 'rgba(107,114,128,0.14)', dot: '#6b7280' };
+        var r = (t.runs || [])[0];
+        if (!r) return { key: 'unknown', label: 'нет данных', fg: '#9ca3af', bg: 'rgba(107,114,128,0.14)', dot: '#6b7280' };
+        if (r.status === 'work_login') return { key: 'auth', label: 'нет входа', fg: '#fbbf24', bg: 'rgba(245,158,11,0.14)', dot: '#f59e0b' };
+        if (r.status === 'cf-challenge') return { key: 'cf', label: 'CF challenge', fg: '#fbbf24', bg: 'rgba(245,158,11,0.14)', dot: '#f59e0b' };
+        if (r.http >= 400 || r.error || r.status === 'error') return { key: 'error', label: 'ошибка', fg: '#f87171', bg: 'rgba(239,68,68,0.14)', dot: '#ef4444' };
+        if (r.failed > 0) return { key: 'partial', label: 'частично', fg: '#fbbf24', bg: 'rgba(245,158,11,0.14)', dot: '#f59e0b' };
+        return { key: 'ok', label: 'работает', fg: '#34d399', bg: 'rgba(16,185,129,0.14)', dot: '#10b981' };
+      }
+
+      function lastRunCell(t) {
+        var r = (t.runs || [])[0];
+        if (t.disabled) return '<span class="text-sm text-gray-500 dark:text-gray-400">выключен в disable_trackers</span>';
+        if (!r) return '<span class="text-sm text-gray-500 dark:text-gray-400">ещё не запускался</span>';
+        if (r.error) {
+          return '<div class="min-w-0">' +
+            '<div class="text-sm" style="color:#fbbf24">' + esc(r.error) + '</div>' +
+            '<div class="tk-num text-gray-500 dark:text-gray-400">' + ago(r.at) + ' · HTTP ' + r.http + '</div>' +
+            '</div>';
+        }
+        var parts = '<span class="tk-num text-gray-700 dark:text-gray-300">' + r.fetched + '</span>';
+        if (r.added) parts += ' <span class="tk-num" style="color:#34d399">+' + r.added + '</span>';
+        if (r.updated) parts += ' <span class="tk-num text-gray-500 dark:text-gray-400">~' + r.updated + '</span>';
+        if (r.skipped) parts += ' <span class="tk-num text-gray-500 dark:text-gray-400">=' + r.skipped + '</span>';
+        if (r.failed) parts += ' <span class="tk-num" style="color:#f87171">!' + r.failed + '</span>';
+        return '<div class="min-w-0"><div class="flex items-baseline gap-2 flex-wrap">' + parts + '</div>' +
+          '<div class="tk-num text-gray-500 dark:text-gray-400">' + esc(r.op) + ' · ' + ago(r.at) + ' · ' + duration(r.seconds) + '</div></div>';
+      }
+
+      function routeCell(t) {
+        var out = '';
+        if (t.route === 'flare') {
+          out += '<span class="tk-tag" style="color:#93c5fd;background:rgba(59,130,246,0.14)">flare</span>';
+          if (t.cfSince) out += ' <span class="tk-tag text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-gray-800">CF</span>';
+        } else {
+          out += '<span class="tk-tag text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-gray-800">standard</span>';
+        }
+        if (t.auth === 'session') out += ' <span class="tk-tag" style="color:#34d399;background:rgba(16,185,129,0.14)">auth</span>';
+        else if (t.auth !== 'none') out += ' <span class="tk-tag text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-gray-800">' + esc(t.auth) + '</span>';
+        return out;
+      }
+
+      function rowHTML(t) {
+        var h = health(t);
+        var cls = 'tk-grid tk-row';
+        if (h.key === 'auth' || h.key === 'error' || h.key === 'cf') cls += ' tk-row--attention';
+        if (t.disabled) cls += ' tk-row--muted';
+        var busy = state.busy[t.name];
+        return '<div class="' + cls + '" data-name="' + esc(t.name) + '">' +
+          '<div class="min-w-0">' +
+            '<div class="font-medium text-sm text-gray-900 dark:text-gray-100">' + esc(t.name) + '</div>' +
+            '<div class="text-xs text-gray-500 dark:text-gray-400 truncate">' + esc(t.host) + '</div>' +
+          '</div>' +
+          '<div><span class="tk-pill" style="color:' + h.fg + ';background:' + h.bg + '">' +
+            '<span class="tk-dot" style="background:' + h.dot + '"></span>' + h.label + '</span></div>' +
+          '<div>' + lastRunCell(t) + '</div>' +
+          '<div class="flex gap-1.5 flex-wrap">' + routeCell(t) + '</div>' +
+          '<div class="tk-actions flex gap-1.5 justify-end">' +
+            '<button type="button" class="tap-target inline-flex items-center justify-center w-9 h-9 rounded-lg border border-gray-300 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors" ' +
+              'data-run="' + esc(t.name) + '"' + (busy ? ' disabled' : '') + ' title="Запустить parse" aria-label="Запустить ' + esc(t.name) + '">' +
+              (busy
+                ? '<svg class="w-4 h-4 spinner" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 11-6.2-8.6" stroke-linecap="round"/></svg>'
+                : '<svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3l14 9-14 9V3z"/></svg>') +
+            '</button>' +
+          '</div>' +
+        '</div>';
+      }
+
+      function summaryHTML(list) {
+        var n = { ok: 0, attention: 0, disabled: 0, flare: 0 };
+        list.forEach(function (t) {
+          var k = health(t).key;
+          if (t.disabled) n.disabled++;
+          else if (k === 'ok') n.ok++;
+          else if (k === 'auth' || k === 'error' || k === 'cf' || k === 'partial') n.attention++;
+          if (t.route === 'flare') n.flare++;
+        });
+        function tile(label, value, color, border) {
+          return '<div class="rounded-xl border ' + (border || 'border-gray-200 dark:border-gray-800') +
+            ' bg-white dark:bg-gray-900 shadow-sm px-4 py-3">' +
+            '<div class="text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">' + label + '</div>' +
+            '<div class="tk-num mt-1" style="font-size:24px;font-weight:600;line-height:1;color:' + color + '">' + value + '</div></div>';
+        }
+        return tile('Всего', list.length, 'var(--text)') +
+          tile('Работают', n.ok, '#10b981') +
+          tile('Требуют внимания', n.attention, n.attention ? '#f59e0b' : 'var(--text-muted)',
+            n.attention ? 'border-amber-300 dark:border-amber-900/50' : '') +
+          tile('Через браузер', n.flare, '#3b82f6');
+      }
+
+      function render() {
+        var q = state.filter.trim().toLowerCase();
+        var list = state.trackers.filter(function (t) { return !q || t.name.indexOf(q) !== -1; });
+
+        // Anything needing attention first — the whole point is that a broken
+        // tracker is visible without scrolling or reading a log.
+        var order = { auth: 0, error: 0, cf: 0, partial: 1, unknown: 2, ok: 3, disabled: 4 };
+        list.sort(function (a, b) {
+          var d = order[health(a).key] - order[health(b).key];
+          return d !== 0 ? d : a.name.localeCompare(b.name);
+        });
+
+        el.summary.innerHTML = summaryHTML(state.trackers);
+        el.rows.innerHTML = list.length
+          ? list.map(rowHTML).join('')
+          : '<div class="px-5 py-10 text-center text-sm text-gray-500 dark:text-gray-400">Ничего не найдено</div>';
+        el.note.textContent = q
+          ? 'Показано ' + list.length + ' из ' + state.trackers.length
+          : 'Обновляется каждые ' + (REFRESH_MS / 1000) + ' с. Запуск вручную не меняет расписание в crontab.';
+      }
+
+      function load(showSpinner) {
+        if (showSpinner) el.refreshIcon.classList.add('spinner');
+        return fetch('/stats/parsers', { headers: { 'Accept': 'application/json' } })
+          .then(function (r) { return r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)); })
+          .then(function (d) { state.trackers = d.trackers || []; render(); })
+          .catch(function (e) { toast('Не удалось получить состояние: ' + e.message); })
+          .then(function () { el.refreshIcon.classList.remove('spinner'); });
+      }
+
+      function run(name) {
+        if (state.busy[name]) return;
+        state.busy[name] = true;
+        render();
+        // A full parse can take minutes (rutracker is ~4.5), so this deliberately
+        // does not race a timeout — the row shows a spinner until it answers.
+        fetch('/cron/' + encodeURIComponent(name) + '/parse')
+          .then(function (r) { return r.json().catch(function () { return {}; }).then(function (b) { return { ok: r.ok, body: b }; }); })
+          .then(function (res) {
+            var b = res.body || {};
+            if (!res.ok || b.error) toast(name + ': ' + (b.error || 'ошибка'));
+            else toast(name + ': ' + (b.text || b.status || 'готово'));
+          })
+          .catch(function (e) { toast(name + ': ' + e.message); })
+          .then(function () { delete state.busy[name]; return load(false); });
+      }
+
+      el.filter.addEventListener('input', function () { state.filter = el.filter.value; render(); });
+      el.refresh.addEventListener('click', function () { load(true); });
+      el.rows.addEventListener('click', function (ev) {
+        var btn = ev.target.closest('[data-run]');
+        if (btn && !btn.disabled) run(btn.getAttribute('data-run'));
+      });
+
+      load(true);
+      setInterval(function () {
+        if (!document.hidden) load(false);
+      }, REFRESH_MS);
+    })();
+  </script>
+</body>
+
+</html>

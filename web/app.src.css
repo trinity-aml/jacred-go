@@ -1,0 +1,356 @@
+/*
+ * Source for server/wwwroot/assets/app.css — regenerate with ./build_css.sh.
+ *
+ * Everything the three pages used to pull from a CDN at runtime lives here:
+ * the Tailwind utilities they use (previously compiled in the browser by
+ * cdn.tailwindcss.com), the Inter faces (previously fonts.googleapis.com) and
+ * the styles all three duplicated. The admin UI of a self-hosted service must
+ * render with no outbound network — the pages themselves are already baked into
+ * the binary by go:embed, and the stylesheet was the one thing that was not.
+ */
+
+/* ---------------------------------------------------------------- fonts --
+ * Inter, variable weight 300-700, self-hosted from server/wwwroot/assets/fonts.
+ * Only the cyrillic and latin subsets ship (67 KB together): the UI is Russian,
+ * tracker names are Latin, and the cyrillic range covers the Ukrainian glyphs
+ * toloka and mazepa bring in (і U+0456, ї U+0457, є U+0454, ґ U+0491).
+ * unicode-range values are Google's own, so a character outside them falls back
+ * exactly as it did before.
+ */
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 300 700;
+  font-display: swap;
+  src: url('./fonts/inter-cyrillic.woff2') format('woff2');
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 300 700;
+  font-display: swap;
+  src: url('./fonts/inter-latin.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+    U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193,
+    U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* --------------------------------------------------------------- tokens --
+ * The palette was already consistent across the three pages; it was just
+ * written out as literal hex in three places. Naming it once is what lets a
+ * later page (and variant B's shell) extend the design instead of re-deriving
+ * it. Values are lifted verbatim from the pages they replace.
+ */
+:root {
+  --bg: #f9fafb;
+  --surface: #ffffff;
+  --surface-border: #e5e7eb;
+  --field-bg: #ffffff;
+  --field-border: #e5e7eb;
+  --text: #111827;
+  --text-body: #374151;
+  --text-muted: #6b7280;
+  --accent: #3b82f6;
+  --accent-ring: rgba(59, 130, 246, 0.15);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
+  --sb-track: #f3f4f6;
+  --sb-thumb: #d1d5db;
+  --sb-thumb-hover: #9ca3af;
+}
+
+:root.dark {
+  --bg: #0a0a0f;
+  --surface: #111827;
+  --surface-border: #1f2937;
+  --field-bg: #111827;
+  --field-border: #374151;
+  --text: #f3f4f6;
+  --text-body: #e5e7eb;
+  --text-muted: #9ca3af;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.2);
+  --sb-track: #1f2937;
+  --sb-thumb: #4b5563;
+  --sb-thumb-hover: #6b7280;
+}
+
+body {
+  background-color: var(--bg);
+}
+
+/* ------------------------------------------------------------- chrome --- */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: var(--sb-track); }
+::-webkit-scrollbar-thumb { background: var(--sb-thumb); border-radius: 5px; }
+::-webkit-scrollbar-thumb:hover { background: var(--sb-thumb-hover); }
+
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+a:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+.spinner { animation: spin 0.7s linear infinite; }
+
+.toolbar-field { box-shadow: var(--shadow-sm); }
+
+/* 44px is the floor for a touch target; the pages also bump font-size to 16px
+ * so iOS does not zoom the viewport when a field takes focus. */
+.tap-target { min-height: 44px; min-width: 44px; }
+
+@media (max-width: 480px) {
+  input, select, button, textarea { min-height: 44px; font-size: 16px; }
+}
+
+/* -------------------------------------------------------- form controls --
+ * Written out with literal hex twice in settings.html (light and .dark). The
+ * tokens resolve to exactly those values, so this is the same design expressed
+ * once — and it is what let the trackers page reuse the controls instead of
+ * copying them a third time.
+ */
+.field-label {
+  display: block;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--text-muted);
+  margin-bottom: 0.25rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.field-input,
+.field-select,
+.field-textarea {
+  width: 100%;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.875rem;
+  background: var(--field-bg);
+  border: 1px solid var(--field-border);
+  border-radius: 0.5rem;
+  color: var(--text);
+  transition: border-color 150ms, box-shadow 150ms;
+}
+
+.field-input:focus,
+.field-select:focus,
+.field-textarea:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-ring);
+  outline: none;
+}
+
+.field-textarea {
+  min-height: 5rem;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 0.8125rem;
+  resize: vertical;
+}
+
+.checkbox-row { display: flex; align-items: center; gap: 0.625rem; padding: 0.5rem 0; }
+.checkbox-row input[type='checkbox'] { width: 1.125rem; height: 1.125rem; accent-color: var(--accent); }
+.checkbox-row label { font-size: 0.875rem; color: var(--text-body); cursor: pointer; }
+
+/* -------------------------------------------------------------- shell ---
+ * `#appHeader` is a side panel on a desktop and a bottom bar on a phone. Both
+ * are the same DOM, rendered once by assets/app.js — the pages themselves know
+ * nothing about it beyond the empty element, which is why the shell could change
+ * shape without touching a line of page markup.
+ */
+:root { --shell-w: 236px; }
+
+#appHeader {
+  position: fixed;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  width: var(--shell-w);
+  z-index: 40;
+  background: var(--surface);
+  border-right: 1px solid var(--surface-border);
+}
+
+/* The panel is fixed, so the page has to be inset by hand. Set on <html> by
+ * app.js rather than in a page's own stylesheet, so a new page inherits it. */
+:root.has-shell body { padding-left: var(--shell-w); }
+
+.app-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 20px 12px;
+  overflow-y: auto;
+}
+
+.app-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 4px 8px 20px 8px;
+  text-decoration: none;
+  flex-shrink: 0;
+}
+
+.app-brand-mark {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  background: linear-gradient(to bottom right, #ef4444, #dc2626, #f59e0b);
+  box-shadow: 0 10px 15px -3px rgba(127, 29, 29, 0.5);
+  color: #ffffff;
+  flex-shrink: 0;
+}
+
+.app-brand-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.app-brand-name { font-size: 15px; font-weight: 600; color: var(--text); letter-spacing: -0.01em; }
+.app-brand-version { font-size: 11px; color: var(--text-muted); }
+
+.app-nav { display: flex; flex-direction: column; gap: 2px; }
+
+.app-nav-title {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 14px 10px 6px 10px;
+}
+
+.app-nav a {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 9px 10px;
+  border-radius: 8px;
+  font-size: 14px;
+  color: var(--text-muted);
+  text-decoration: none;
+  transition: background-color 150ms, color 150ms;
+}
+
+.app-nav a:hover { color: var(--text-body); background: rgba(107, 114, 128, 0.1); }
+
+.app-nav a[aria-current='page'] {
+  font-weight: 500;
+  color: #1d4ed8;
+  background: rgba(59, 130, 246, 0.1);
+}
+
+:root.dark .app-nav a[aria-current='page'] { color: #93c5fd; background: rgba(59, 130, 246, 0.12); }
+
+.app-nav-label { flex-grow: 1; }
+
+/* The count of trackers wanting attention, from /stats/parsers. It is the one
+ * number worth carrying into every page: a dead parser is otherwise invisible
+ * until someone opens the log. Hidden when zero. */
+.app-badge {
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 999px;
+  padding: 2px 7px;
+  color: #b45309;
+  background: rgba(245, 158, 11, 0.18);
+  font-variant-numeric: tabular-nums;
+}
+
+:root.dark .app-badge { color: #fbbf24; background: rgba(245, 158, 11, 0.15); }
+
+.app-spacer { flex-grow: 1; min-height: 16px; }
+
+.app-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 8px 4px 8px;
+  border-top: 1px solid var(--surface-border);
+  flex-shrink: 0;
+}
+
+.app-foot-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex-grow: 1; }
+.app-foot-line { font-size: 12px; color: var(--text-body); }
+.app-foot-sub { font-size: 11px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+
+.app-dot { width: 7px; height: 7px; border-radius: 999px; background: #10b981; flex-shrink: 0; }
+.app-dot--down { background: #ef4444; }
+
+.app-icon-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  border: 1px solid var(--field-border);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background-color 150ms, color 150ms, border-color 150ms;
+}
+
+.app-icon-btn:hover { color: var(--text-body); border-color: var(--text-muted); }
+
+/* ------------------------------------------------------------- phone ---
+ * Below the breakpoint the same panel becomes a bottom bar: a 236px column
+ * would eat more than half a phone screen. The brand, the group headings and
+ * the service footer drop out — on a phone the navigation is the only part that
+ * earns its space.
+ */
+@media (max-width: 900px) {
+  :root { --shell-w: 0px; }
+
+  #appHeader {
+    top: auto;
+    right: 0;
+    width: auto;
+    border-right: none;
+    border-top: 1px solid var(--surface-border);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+
+  :root.has-shell body { padding-left: 0; padding-bottom: 76px; }
+
+  .app-shell { flex-direction: row; align-items: center; padding: 6px 8px; overflow: visible; }
+  /* The status dot only means something next to its label. */
+  .app-brand, .app-nav-title, .app-spacer, .app-foot-text, .app-dot { display: none; }
+  .app-foot { border-top: none; padding: 0; }
+
+  .app-nav {
+    flex-direction: row;
+    flex-grow: 1;
+    gap: 2px;
+  }
+
+  .app-nav a {
+    flex-direction: column;
+    justify-content: center;
+    gap: 4px;
+    flex: 1 1 0;
+    min-width: 0;
+    min-height: 52px;
+    padding: 6px 4px;
+    font-size: 11px;
+    text-align: center;
+  }
+
+  .app-nav-label { flex-grow: 0; }
+  .app-badge { position: absolute; margin: -30px 0 0 18px; }
+  .app-icon-btn { width: 44px; height: 44px; }
+}
+
+/* Four labels plus a theme button on a narrow phone: the labels go, the icons
+ * and each link's title attribute carry the meaning. */
+@media (max-width: 420px) {
+  .app-nav-label { display: none; }
+  .app-nav a { min-height: 48px; }
+}

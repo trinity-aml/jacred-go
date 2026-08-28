@@ -4,8 +4,10 @@ import (
 	"context"
 	"crypto/subtle"
 	"encoding/json"
+	"encoding/xml"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -86,8 +88,11 @@ type Server struct {
 	UltradoxParser      *ultradox.Parser
 	ViruseprojectParser *viruseproject.Parser
 	AnibelkaParser      *anibelka.Parser
-	TracksDB            *tracks.DB
-	cache               *searchCache // search result cache (5 min TTL)
+	// Runs remembers the outcome of every cron call so /stats/parsers can
+	// answer "is this tracker still working" without anyone reading the log.
+	Runs     *runStore
+	TracksDB *tracks.DB
+	cache    *searchCache // search result cache (5 min TTL)
 
 	// bgWG tracks Server-owned background goroutines (RunStatsLoop and
 	// ad-hoc /stats/refresh fires). On shutdown, main.go calls Wait() to
@@ -117,7 +122,7 @@ func New(cfg app.Config, db *filedb.DB, tracksDB *tracks.DB, wwwroot string) *Se
 		tracksDB = tracks.New("Data")
 		_ = tracksDB.Load()
 	}
-	return &Server{Config: cfg, DB: db, WWWRoot: wwwroot, Version: VersionInfo{Version: "dev", GitSha: "unknown", GitBranch: "unknown", BuildDate: time.Now().UTC().Format("2006-01-02 15:04:05 UTC")}, KnabenParser: knaben.New(cfg, db), AnidubParser: anidub.New(cfg, db), AnilibertyParser: aniliberty.New(cfg, db), AnimelayerParser: animelayer.New(cfg, db), AnistarParser: anistar.New(cfg, db, "Data"), AnifilmParser: anifilm.New(cfg, db, "Data"), BitruParser: bitru.New(cfg, db, "Data"), BitruAPIParser: bitruapi.New(cfg, db, "Data"), RutorParser: rutor.New(cfg, db, "Data"), MegapeerParser: megapeer.New(cfg, db), TorrentByParser: torrentby.New(cfg, db, "Data"), NNMClubParser: nnmclub.New(cfg, db, "Data"), LostfilmParser: lostfilm.New(cfg, db), RutrackerParser: rutracker.New(cfg, db, "Data"), KinozalParser: kinozal.New(cfg, db, "Data"), TolokaParser: toloka.New(cfg, db, "Data"), SelezenParser: selezen.New(cfg, db, "Data"), LeproductionParser: leproduction.New(cfg, db, "Data"), MazepaParser: mazepa.New(cfg, db, "Data"), KorsarsParser: korsars.New(cfg, db, "Data"), UltradoxParser: ultradox.New(cfg, db, "Data"), ViruseprojectParser: viruseproject.New(cfg, db, "Data"), AnibelkaParser: anibelka.New(cfg, db, "Data"), TracksDB: tracksDB, cache: newSearchCache(5*time.Minute, 10000)}
+	return &Server{Config: cfg, DB: db, WWWRoot: wwwroot, Version: VersionInfo{Version: "dev", GitSha: "unknown", GitBranch: "unknown", BuildDate: time.Now().UTC().Format("2006-01-02 15:04:05 UTC")}, KnabenParser: knaben.New(cfg, db), AnidubParser: anidub.New(cfg, db), AnilibertyParser: aniliberty.New(cfg, db), AnimelayerParser: animelayer.New(cfg, db), AnistarParser: anistar.New(cfg, db, "Data"), AnifilmParser: anifilm.New(cfg, db, "Data"), BitruParser: bitru.New(cfg, db, "Data"), BitruAPIParser: bitruapi.New(cfg, db, "Data"), RutorParser: rutor.New(cfg, db, "Data"), MegapeerParser: megapeer.New(cfg, db), TorrentByParser: torrentby.New(cfg, db, "Data"), NNMClubParser: nnmclub.New(cfg, db, "Data"), LostfilmParser: lostfilm.New(cfg, db), RutrackerParser: rutracker.New(cfg, db, "Data"), KinozalParser: kinozal.New(cfg, db, "Data"), TolokaParser: toloka.New(cfg, db, "Data"), SelezenParser: selezen.New(cfg, db, "Data"), LeproductionParser: leproduction.New(cfg, db, "Data"), MazepaParser: mazepa.New(cfg, db, "Data"), KorsarsParser: korsars.New(cfg, db, "Data"), UltradoxParser: ultradox.New(cfg, db, "Data"), ViruseprojectParser: viruseproject.New(cfg, db, "Data"), AnibelkaParser: anibelka.New(cfg, db, "Data"), TracksDB: tracksDB, Runs: newRunStore(db.DataDir), cache: newSearchCache(5*time.Minute, 10000)}
 }
 
 // GetConfig returns a thread-safe copy of the current config.
@@ -192,6 +197,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/", s.handleRoot)
 	mux.HandleFunc("/stats", s.handleStats)
 	mux.HandleFunc("/settings", s.handleSettings)
+	mux.HandleFunc("/trackers", s.handleTrackersPage)
+	mux.HandleFunc("/opensearch.xml", s.handleOpenSearch)
 	mux.HandleFunc("/health", s.handleHealth)
 	mux.HandleFunc("/version", s.handleVersion)
 	mux.HandleFunc("/lastupdatedb", s.handleLastUpdateDB)
@@ -245,6 +252,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/debug/memstats", handleMemStats)
 	mux.HandleFunc("/debug/freeosmem", handleFreeOSMem)
 	mux.HandleFunc("/cron/knaben/parse", s.handleCronKnabenParse)
+	mux.HandleFunc("/stats/parsers", s.handleStatsParsers)
 	mux.HandleFunc("/stats/refresh", s.handleStatsRefresh)
 	mux.HandleFunc("/cron/anidub/parse", s.handleCronAnidubParse)
 	mux.HandleFunc("/cron/aniliberty/parse", s.handleCronAnilibertyParse)
@@ -309,7 +317,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/cron/anibelka/updatetasksparse", s.handleCronAnibelkaUpdateTasksParse)
 	mux.HandleFunc("/cron/anibelka/parsealltask", s.handleCronAnibelkaParseAllTask)
 	mux.HandleFunc("/cron/anibelka/parselatest", s.handleCronAnibelkaParseLatest)
-	return s.middleware(mux)
+	return s.middleware(s.recordCronRuns(mux))
 }
 
 func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
@@ -325,6 +333,78 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.serveHTMLFile(w, r, "stats.html")
+}
+
+// handleOpenSearch describes the search page to a browser, so it can be added
+// as a search engine and queried from the address bar.
+//
+// index.html has advertised this with <link rel="search"> from the start, but
+// nothing served it — and the page had no searchable URL to point at either,
+// since the form searched in place without touching the address bar. Both
+// halves are fixed together; one without the other is still broken.
+//
+// The template is built from the request's own host because a self-hosted
+// instance has no canonical address: it is reached by LAN IP, by hostname, or
+// through a reverse proxy, and OpenSearch requires an absolute URL.
+func (s *Server) handleOpenSearch(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	base := requestBaseURL(r)
+	doc := `<?xml version="1.0" encoding="UTF-8"?>
+<OpenSearchDescription xmlns="http://a9.com/-/spec/opensearch/1.1/">
+  <ShortName>jacred-go</ShortName>
+  <Description>Поиск торрентов по нескольким трекерам</Description>
+  <InputEncoding>UTF-8</InputEncoding>
+  <Image width="32" height="32" type="image/png">` + xmlEscape(base+"/img/icon-32.png") + `</Image>
+  <Url type="text/html" method="get" template="` + xmlEscape(base+"/?s={searchTerms}") + `"/>
+  <moz:SearchForm xmlns:moz="http://www.mozilla.org/2006/browser/search/">` + xmlEscape(base+"/") + `</moz:SearchForm>
+</OpenSearchDescription>
+`
+	w.Header().Set("Content-Type", "application/opensearchdescription+xml; charset=utf-8")
+	w.Header().Set("Cache-Control", "public, max-age=3600")
+	if r.Method == http.MethodHead {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	_, _ = io.WriteString(w, doc)
+}
+
+// requestBaseURL reconstructs the address the client used, honouring the
+// forwarding headers a reverse proxy sets — behind one, r.Host and the missing
+// TLS state both describe the proxy's back end, not the URL a browser can reach.
+func requestBaseURL(r *http.Request) string {
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	if v := strings.TrimSpace(r.Header.Get("X-Forwarded-Proto")); v != "" {
+		scheme = strings.ToLower(strings.TrimSpace(strings.Split(v, ",")[0]))
+	}
+	host := r.Host
+	if v := strings.TrimSpace(r.Header.Get("X-Forwarded-Host")); v != "" {
+		host = strings.TrimSpace(strings.Split(v, ",")[0])
+	}
+	if scheme != "http" && scheme != "https" {
+		scheme = "http"
+	}
+	return scheme + "://" + host
+}
+
+// xmlEscape keeps a hostile Host header from breaking out of an attribute.
+func xmlEscape(s string) string {
+	var b strings.Builder
+	_ = xml.EscapeText(&b, []byte(s))
+	return b.String()
+}
+
+func (s *Server) handleTrackersPage(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/trackers" && r.URL.Path != "/trackers/" {
+		s.serveMaybeStatic(w, r)
+		return
+	}
+	s.serveHTMLFile(w, r, "trackers.html")
 }
 func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path != "/settings" && r.URL.Path != "/settings/" {

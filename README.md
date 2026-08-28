@@ -1,8 +1,29 @@
 # jacred-go
 
-Go-based multi-tracker torrent aggregator. Port of C# project jacred (mainly from https://github.com/jacred-fdb/jacred)
+A multi-tracker torrent aggregator in a single Go binary. 23 parsers cover 22
+Russian and Ukrainian trackers, feeding one flat-file database behind search,
+sync and stats APIs, with a Jackett-compatible endpoint for clients that expect
+one.
 
-Collects torrent metadata from 22 Russian/Ukrainian trackers (23 parsers — bitru has both an HTML and an API parser) into a unified flat-file database with search, sync, and stats APIs.
+Three things it does that a plain indexer proxy does not:
+
+- **Cloudflare bypass is part of the program.** An embedded flaresolverr-go
+  drives a fingerprint-patched Chromium that clears managed challenges, and
+  per-domain detection is automatic — a tracker that goes behind Cloudflare
+  starts being routed through the browser without a config change.
+- **One binary, and it works offline.** The web UI, every parser and the
+  database engine are compiled in; there is no Node, no Python and no companion
+  service at runtime. The admin UI loads nothing from a CDN, so it renders on a
+  box with no outbound internet. The only thing fetched on demand is the patched
+  Chromium, and only for trackers that need it.
+- **Parser health is visible.** `/trackers` shows every parser's last run, the
+  route it actually took and whether its session still authorizes — so a tracker
+  that quietly stopped returning records shows up without anyone reading a log.
+
+Ported from the C# project [jacred](https://github.com/jacred-fdb/jacred) and
+still compatible with it, but no longer a translation of it: the Cloudflare
+stack, the authorization handling and the parser dashboard are specific to this
+port.
 
 ## Table of Contents
 
@@ -808,6 +829,39 @@ curl "http://127.0.0.1:9117/stats/trackers/Kinozal/updated"
 
 ---
 
+
+### `GET /stats/parsers`
+
+Per-parser health for the `/trackers` page: what the config says, how CF
+auto-detect is actually routing the domain, whether a session is stored, and the
+outcome of the last run of each cron op.
+
+```json
+{
+  "count": 23,
+  "trackers": [
+    {
+      "name": "rutracker", "host": "https://rutracker.org", "disabled": false,
+      "route": "flare", "cfSince": "2026-08-01T19:58:43Z",
+      "auth": "session", "authSince": "2026-08-28T09:12:00Z",
+      "runs": [
+        { "op": "parse", "at": "2026-08-28T10:04:22Z", "seconds": 272.4,
+          "http": 200, "status": "ok",
+          "fetched": 3008, "added": 33, "updated": 2371, "skipped": 604, "failed": 0 }
+      ]
+    }
+  ]
+}
+```
+
+`route` is what the request will actually take — `Data/temp/cf_auto.json` is the
+authority, `fetchmode` only a hint. `auth` is `none` / `cookie` / `login` /
+`session`; cookie **values** are never returned, only whether one exists and
+when it was stored.
+
+Runs are recorded by observing the response of every `/cron/<tracker>/<op>` call
+and kept in `Data/temp/tracker_runs.json`, so the history survives a restart.
+
 ## Sync API
 
 Multi-instance synchronization. Enabled by `opensync: true` in config.
@@ -1128,6 +1182,8 @@ When `web: true`, three pages are served. The UI assets (HTML, icons, manifest) 
 | `/` | `index.html` — torrent search (Kinopoisk / IMDB / title), filters, magnet links, TorrServer launcher |
 | `/stats` | `stats.html` — per-tracker statistics dashboard (new/updated/checked counts, last run time) |
 | `/settings` | `settings.html` — editor for the full `init.yaml` config (server, logging, sync, trackers, proxies) |
+| `/trackers` | `trackers.html` — health of all 23 parsers: last run, route, authorization, run-now |
+| `/opensearch.xml` | OpenSearch description, so the browser can search this instance from its address bar |
 
 The Settings page talks to `/admin/config` (GET to load, POST to save) and is local-only (`127.0.0.1` / RFC1918 / link-local / ULA). On save the server writes `init.yaml` atomically, re-parses it with the same loader used on startup, and calls `UpdateConfig` to apply new values to the running server, DB, and all 21 parsers — no restart needed.
 
@@ -1179,6 +1235,35 @@ curl -X DELETE "http://127.0.0.1:9117/admin/cf-domains?domain=megapeer.vip"
 # Clear all
 curl -X DELETE "http://127.0.0.1:9117/admin/cf-domains"
 ```
+
+
+### UI assets
+
+The pages have no runtime dependency on the network. Tailwind is compiled ahead
+of time into `server/wwwroot/assets/app.css`, Inter is self-hosted from
+`assets/fonts/` (cyrillic + latin subsets, 67 KB), and the handful of icons that
+used to come from Font Awesome are inline SVG. Previously all three pulled
+Tailwind from `cdn.tailwindcss.com` — a compiler that rebuilt the stylesheet in
+the browser on every open — so the admin UI of a self-hosted service came up
+unstyled whenever the box had no internet or those hosts were blocked.
+
+`assets/app.js` holds the shared shell: the theme (one `dark` class on `<html>`,
+stored in `localStorage`) and the navigation rendered into
+`<header id="appHeader" data-page="...">` on every page — a side panel on a
+desktop, a bottom bar on a phone. It also carries a badge with the number of
+parsers needing attention and a footer showing service health, version and the
+last database update.
+
+Regenerate the stylesheet after adding or removing a Tailwind class anywhere
+under `server/wwwroot/`:
+
+```bash
+./build_css.sh          # needs the tailwindcss v3 CLI, or npx
+```
+
+This is **not** part of the release build — `go build ./cmd` and `build_all.sh`
+stay sufficient, because `app.css` is committed like any other asset. Sources
+live in `web/` (`app.src.css`, `tailwind.config.js`).
 
 ## Config Hot-Reload
 

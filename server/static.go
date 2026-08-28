@@ -15,6 +15,16 @@ import (
 // start so the embedded FS exposes a stable timestamp for caching.
 var buildTime = time.Now().UTC().Truncate(time.Second)
 
+func init() {
+	// mime.TypeByExtension reads the system table (/etc/mime.types), which a
+	// minimal container image does not ship. A font served without a
+	// Content-Type is refused by the browser because of the nosniff header we
+	// also set, so the self-hosted Inter faces would silently fall back to
+	// system-ui on exactly the deployments that cannot reach a CDN either.
+	_ = mime.AddExtensionType(".woff2", "font/woff2")
+	_ = mime.AddExtensionType(".woff", "font/woff")
+}
+
 // readStatic resolves a slash-separated path to its bytes, mod time, and a
 // flag indicating whether it was found. Disk override (s.WWWRoot) wins when
 // the file exists; otherwise the embedded FS is used.
@@ -194,7 +204,17 @@ func setStaticHeaders(w http.ResponseWriter, name string, modTime time.Time) {
 		w.Header().Set("Expires", "0")
 	case ".json", ".webmanifest":
 		w.Header().Set("Cache-Control", "public, max-age=300")
-	case ".js", ".css", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico", ".woff", ".woff2", ".ttf":
+	case ".js", ".css":
+		// assets/app.css and assets/app.js are regenerated in place, under a
+		// name that never changes, so a day-long max-age would serve a stale
+		// stylesheet for a day after an update. no-cache still returns 304 on
+		// an unchanged file — it costs one conditional request, not a refetch.
+		if strings.HasPrefix(strings.ToLower(name), "assets/") {
+			w.Header().Set("Cache-Control", "no-cache")
+		} else {
+			w.Header().Set("Cache-Control", "public, max-age=86400")
+		}
+	case ".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico", ".woff", ".woff2", ".ttf":
 		w.Header().Set("Cache-Control", "public, max-age=86400")
 	default:
 		w.Header().Set("Cache-Control", "public, max-age=300")

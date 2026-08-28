@@ -1,6 +1,6 @@
 {
-  "name": "JacRed — Поиск торрентов",
-  "short_name": "JacRed",
+  "name": "jacred-go — поиск торрентов",
+  "short_name": "jacred-go",
   "description": "Торрент агрегатор. Поиск торрентов",
   "start_url": "/",
   "display": "standalone",

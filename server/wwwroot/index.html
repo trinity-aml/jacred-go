@@ -1,84 +1,43 @@
 <!DOCTYPE html>
-<html lang="ru" class="dark">
+<html lang="ru">
 
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <meta name="description"
-    content="JacRed - Торрент агрегатор. Поиск торрентов по нескольким трекерам в BDRip и HDRip качестве" />
+    content="jacred-go — торрент-агрегатор. Поиск торрентов по нескольким трекерам в BDRip и HDRip качестве" />
   <meta name="theme-color" content="#0a0a0f" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <title>Поиск торрентов | JacRed</title>
+  <title>Поиск торрентов | jacred-go</title>
   <link rel="icon" type="image/png" href="./img/jacred.png" />
   <link rel="icon" type="image/x-icon" href="./img/favicon.ico" />
   <link rel="apple-touch-icon" href="./img/icon-192.png" />
   <link rel="manifest" href="./manifest.json" />
-  <link rel="search" type="application/opensearchdescription+xml" title="JacRed" href="/opensearch.xml" />
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" />
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
-  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="search" type="application/opensearchdescription+xml" title="jacred-go" href="/opensearch.xml" />
+
   <script>
-    tailwind.config = {
-      darkMode: 'class',
-      theme: {
-        extend: {
-          fontFamily: { sans: ['Inter', 'system-ui', '-apple-system', 'sans-serif'] },
-          animation: {
-            'fade-in': 'fadeIn 0.2s ease-out',
-            'slide-up': 'slideUp 0.25s ease-out',
-          },
-          keyframes: {
-            fadeIn: { '0%': { opacity: '0' }, '100%': { opacity: '1' } },
-            slideUp: { '0%': { transform: 'translateY(8px)', opacity: '0' }, '100%': { transform: 'translateY(0)', opacity: '1' } }
-          }
+    // Runs before first paint, so the page never flashes the wrong theme. It has
+    // to be inline for that reason — assets/app.js owns everything else about
+    // the theme. Keep these three copies identical.
+    (function () {
+      try {
+        var storedTheme = localStorage.getItem('theme');
+        var prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+        document.documentElement.classList.toggle('dark', storedTheme === 'dark' || (storedTheme === null && prefersDark));
+      } catch (e) {
+        if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+          document.documentElement.classList.add('dark');
         }
       }
-    }
+    })();
   </script>
+
+  <link rel="stylesheet" href="./assets/app.css" />
+  <script defer src="./assets/app.js"></script>
   <style>
-    ::-webkit-scrollbar {
-      width: 10px;
-      height: 10px;
-    }
 
-    .dark ::-webkit-scrollbar-track {
-      background: #1f2937;
-    }
-
-    .dark ::-webkit-scrollbar-thumb {
-      background: #4b5563;
-      border-radius: 5px;
-    }
-
-    .dark ::-webkit-scrollbar-thumb:hover {
-      background: #6b7280;
-    }
-
-    ::-webkit-scrollbar-track {
-      background: #f3f4f6;
-    }
-
-    ::-webkit-scrollbar-thumb {
-      background: #d1d5db;
-      border-radius: 5px;
-    }
-
-    ::-webkit-scrollbar-thumb:hover {
-      background: #9ca3af;
-    }
-
-    @keyframes spin {
-      to {
-        transform: rotate(360deg);
-      }
-    }
-
-    .spinner {
-      animation: spin 0.7s linear infinite;
-    }
+    
 
     .transition-ui,
     .transition-ui * {
@@ -162,24 +121,11 @@
       }
     }
 
-    .tap-target {
-      min-height: 44px;
-      min-width: 44px;
-    }
-
     button,
     a.magneto,
     .btn-copy-magnet {
       -webkit-tap-highlight-color: transparent;
       touch-action: manipulation;
-    }
-
-    .toolbar-field {
-      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
-    }
-
-    .dark .toolbar-field {
-      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
     }
 
     @media (max-width: 767px) {
@@ -302,6 +248,8 @@
 </head>
 
 <body class="text-gray-900 dark:text-gray-100 font-sans min-h-screen antialiased">
+  <!-- Filled in by assets/app.js — one navigation for all three pages. -->
+  <header id="appHeader" data-page="search"></header>
   <div id="app" class="transition-ui container mx-auto px-3 sm:px-4 py-3 sm:py-5 max-w-5xl">
     <noscript>
       <p
@@ -313,14 +261,6 @@
       <header class="mb-4 sm:mb-6 animate-slide-up">
         <div class="flex items-center justify-between gap-3">
           <div class="flex items-center gap-3 sm:gap-4 min-w-0 flex-1">
-            <a href="/"
-              class="flex-shrink-0 w-10 h-10 sm:w-12 sm:h-12 flex items-center justify-center bg-gradient-to-br from-red-500 via-red-600 to-amber-500 rounded-xl shadow-lg shadow-red-900/50"
-              aria-label="На главную">
-              <svg class="w-5 h-5 sm:w-6 sm:h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                  d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-              </svg>
-            </a>
             <div class="min-w-0">
               <h1
                 class="text-xl sm:text-2xl font-bold bg-gradient-to-r from-red-400 to-amber-400 bg-clip-text text-transparent truncate">
@@ -331,26 +271,6 @@
             </div>
           </div>
           <div class="flex items-center gap-2 flex-shrink-0">
-            <a href="/stats"
-              class="tap-target inline-flex items-center justify-center gap-1.5 h-9 min-w-[44px] px-2.5 sm:px-3 rounded-lg bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 text-sm font-medium no-underline transition-colors"
-              aria-label="Статистика трекеров">
-              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                  d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-              </svg>
-              <span class="hidden sm:inline">Статистика</span>
-            </a>
-            <a href="/settings"
-              class="tap-target inline-flex items-center justify-center gap-1.5 h-9 min-w-[44px] px-2.5 sm:px-3 rounded-lg bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 text-sm font-medium no-underline transition-colors"
-              aria-label="Настройки" title="Настройки">
-              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                  d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                  d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-              </svg>
-              <span class="hidden sm:inline">Настройки</span>
-            </a>
             <button type="button" id="apiKeyBtn"
               class="tap-target inline-flex items-center justify-center gap-1.5 h-9 min-w-[44px] px-2.5 sm:px-3 rounded-lg bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 text-sm font-medium transition-colors border border-transparent"
               aria-label="Установить API ключ" title="Установить API ключ">
@@ -368,21 +288,6 @@
                   d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01" />
               </svg>
               <span class="hidden sm:inline">TorrServer</span>
-            </button>
-            <button id="toggleTheme"
-              class="tap-target p-3 rounded-xl bg-gray-200 dark:bg-gray-800 hover:bg-gray-300 dark:hover:bg-gray-700 border border-gray-300 dark:border-gray-700 transition-all group"
-              aria-label="Переключить тему" type="button">
-              <svg id="iconMoon"
-                class="w-5 h-5 text-gray-600 dark:text-gray-400 group-hover:text-gray-800 dark:group-hover:text-gray-200"
-                fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                  d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
-              </svg>
-              <svg id="iconSun" class="w-5 h-5 text-yellow-500 hidden" fill="none" stroke="currentColor"
-                viewBox="0 0 24 24" aria-hidden="true">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                  d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
-              </svg>
             </button>
           </div>
         </div>
@@ -633,7 +538,7 @@
           <a href="https://github.com/trinity-aml/jacred-go" target="_blank" rel="noopener noreferrer"
             class="text-gray-600 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
             aria-label="GitHub">
-            <i class="fab fa-github text-xl"></i>
+            <svg class="w-5 h-5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .5A11.5 11.5 0 00.5 12a11.5 11.5 0 007.86 10.92c.58.1.79-.25.79-.56 v-2c-3.2.7-3.88-1.37-3.88-1.37-.53-1.34-1.29-1.7-1.29-1.7-1.05-.72.08-.7.08-.7 1.16.08 1.77 1.2 1.77 1.2 1.03 1.77 2.7 1.26 3.36.96.1-.75.4-1.26.73-1.55 -2.55-.29-5.24-1.28-5.24-5.7 0-1.26.45-2.29 1.19-3.1-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.18 1.18a11 11 0 015.8 0c2.2-1.5 3.17-1.18 3.17-1.18.63 1.59.23 2.76.11 3.05 .74.81 1.19 1.84 1.19 3.1 0 4.43-2.7 5.4-5.27 5.69.42.36.79 1.07.79 2.16v3.2 c0 .31.2.67.8.56A11.5 11.5 0 0023.5 12 11.5 11.5 0 0012 .5z"></path></svg>
           </a>
         </div>
         <div class="text-sm text-gray-600 dark:text-gray-400">
@@ -734,9 +639,6 @@
           filterToggleIcon: null,
           filterContainer: null,
           forcedSearch: null,
-          toggleTheme: null,
-          iconMoon: null,
-          iconSun: null,
           backToTop: null
         };
 
@@ -785,28 +687,6 @@
               if (idx === -1 || idx >= focusables.length - 1) { focusables[0].focus(); e.preventDefault(); }
             }
           });
-        };
-
-        const updateThemeIcons = (isDark) => {
-          elements.iconMoon.classList.toggle('hidden', !isDark);
-          elements.iconSun.classList.toggle('hidden', isDark);
-        };
-
-        const toggleTheme = () => {
-          document.documentElement.classList.toggle('dark');
-          const isDark = document.documentElement.classList.contains('dark');
-          updateThemeIcons(isDark);
-          const meta = document.querySelector('meta[name="theme-color"]');
-          if (meta) meta.setAttribute('content', isDark ? '#0a0a0f' : '#f9fafb');
-          LS.set('theme', isDark ? 'dark' : 'light');
-        };
-
-        const initTheme = () => {
-          const isDark = LS.get('theme') !== 'light';
-          document.documentElement.classList.toggle('dark', isDark);
-          updateThemeIcons(isDark);
-          const meta = document.querySelector('meta[name="theme-color"]');
-          if (meta) meta.setAttribute('content', isDark ? '#0a0a0f' : '#f9fafb');
         };
 
         const updateClearButton = () => {
@@ -915,7 +795,7 @@
           <svg class="w-4 h-4 sm:w-5 sm:h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/></svg>
         </a>
         <button type="button" class="btn-copy-magnet tap-target flex items-center justify-center w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-gray-100 dark:bg-gray-800 hover:bg-amber-500 dark:hover:bg-amber-500/90 text-gray-600 dark:text-gray-400 hover:text-white active:bg-amber-600" data-magnet="${magnetAttr}" title="Копировать магнит-ссылку" aria-label="Копировать магнит">
-          <i class="far fa-copy text-sm sm:text-base"></i>
+          <svg class="w-4 h-4 sm:w-5 sm:h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2"></rect><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"></path></svg>
         </button>
         <button type="button" class="btn-copy-hash tap-target flex items-center justify-center w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-gray-100 dark:bg-gray-800 hover:bg-emerald-500 dark:hover:bg-emerald-500/90 text-gray-600 dark:text-gray-400 hover:text-white active:bg-emerald-600" data-magnet="${magnetAttr}" title="Копировать хеш торрента" aria-label="Копировать хеш">
           <svg class="w-4 h-4 sm:w-[18px] sm:h-[18px] shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 20l4-16m2 16l4-16M6 9h14M4 15h14"/></svg>
@@ -1120,6 +1000,15 @@
           }
           if (state.isLoading) return;
           LS.set('search', query);
+          // Put the query in the address bar. The form searches in place, so
+          // until now no URL ever described a result set: it could not be
+          // bookmarked, shared, or reached from the browser's search box —
+          // which is what the <link rel="search"> in <head> promises.
+          try {
+            var u = new URL(window.location.href);
+            u.searchParams.set('s', query);
+            window.history.replaceState(null, '', u.toString());
+          } catch (err) { /* older browser: the search itself still works */ }
           setSearchLoading(true);
           elements.validateError.classList.add('hidden');
           try {
@@ -1165,7 +1054,7 @@
             state.filteredItems = applyClientFilters(state.allItems);
             state.displayCount = PAGE_SIZE;
             elements.resultsDiv.innerHTML = buildResultsFromJson(state.filteredItems, PAGE_SIZE).html;
-            document.title = `Скачать торрент - ${query} | JacRed`;
+            document.title = `Скачать торрент - ${query} | jacred-go`;
             try { history.replaceState({}, document.title, '/'); } catch (_) { }
           } catch (error) {
             let msg = 'Ошибка выполнения поиска';
@@ -1219,7 +1108,7 @@
           };
           write().then(() => {
             const old = btn.innerHTML;
-            btn.innerHTML = successHtml || '<i class="fas fa-check text-green-600"></i>';
+            btn.innerHTML = successHtml || '<svg class="w-4 h-4 text-green-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6L9 17l-5-5"></path></svg>';
             setTimeout(() => { btn.innerHTML = old; }, 1500);
           }).catch(console.warn);
         };
@@ -1250,16 +1139,12 @@
           elements.filterToggleIcon = document.getElementById('filterToggleIcon');
           elements.filterContainer = document.getElementById('filterContainer');
           elements.forcedSearch = document.getElementById('forcedSearch');
-          elements.toggleTheme = document.getElementById('toggleTheme');
-          elements.iconMoon = document.getElementById('iconMoon');
-          elements.iconSun = document.getElementById('iconSun');
           elements.backToTop = document.getElementById('backToTop');
 
           elements.resultsDiv.innerHTML = getHelpHtml();
 
           window.addEventListener('unhandledrejection', (e) => console.error('Unhandled rejection:', e.reason));
 
-          initTheme();
 
           elements.searchForm.addEventListener('submit', handleSubmit);
           elements.searchInput.addEventListener('input', () => { updateClearButton(); elements.validateError.classList.add('hidden'); });
@@ -1277,7 +1162,6 @@
           }
 
           updateFilterCountBadge();
-          elements.toggleTheme.addEventListener('click', toggleTheme);
           elements.backToTop.addEventListener('click', (e) => { e.preventDefault(); window.scrollTo({ top: 0, behavior: 'smooth' }); });
 
           const clearSearchStorageBtn = document.getElementById('clearSearchStorage');
@@ -1428,7 +1312,7 @@
             if (!btn) return;
             e.preventDefault();
             e.stopPropagation();
-            copyToClipboard(btn.getAttribute('data-magnet'), btn, '<i class="fas fa-check text-green-600"></i>');
+            copyToClipboard(btn.getAttribute('data-magnet'), btn, '<svg class="w-4 h-4 text-green-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6L9 17l-5-5"></path></svg>');
           });
 
           document.addEventListener('click', (e) => {
@@ -1437,7 +1321,7 @@
             e.preventDefault();
             e.stopPropagation();
             const hash = extractInfoHash(btn.getAttribute('data-magnet'));
-            if (hash) copyToClipboard(hash, btn, '<i class="fas fa-check text-green-600 text-sm"></i>');
+            if (hash) copyToClipboard(hash, btn, '<svg class="w-4 h-4 text-green-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6L9 17l-5-5"></path></svg>');
           });
 
           document.addEventListener('click', async (e) => {
@@ -1589,9 +1473,17 @@
           }
           if (LS.get('exact') === '1' && elements.forcedSearch) elements.forcedSearch.checked = true;
 
-          const savedSearch = LS.get('search').trim();
-          if (savedSearch) {
-            elements.searchInput.value = savedSearch;
+          // A query in the URL wins over the remembered one: arriving at
+          // /?s=… is an explicit request, restoring the last search is a
+          // convenience.
+          var urlQuery = '';
+          try {
+            urlQuery = (new URL(window.location.href).searchParams.get('s') || '').trim();
+          } catch (err) { urlQuery = ''; }
+
+          const initialSearch = urlQuery || LS.get('search').trim();
+          if (initialSearch) {
+            elements.searchInput.value = initialSearch;
             updateClearButton();
             elements.searchForm.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
           }
