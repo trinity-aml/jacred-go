@@ -384,7 +384,7 @@ curl "http://127.0.0.1:9117/cron/kinozal/updatetasksparse"
 
 # Step 2: Parse all discovered tasks (can take a long time)
 curl "http://127.0.0.1:9117/cron/kinozal/parsealltask"
-curl "http://127.0.0.1:9117/cron/kinozal/parsealltask?force=true"  # ignore "updated today" flag
+curl "http://127.0.0.1:9117/cron/kinozal/parsealltask?force=true"  # re-visit pages already done this cycle
 
 # Or: Parse only the latest N pages (quick daily update)
 curl "http://127.0.0.1:9117/cron/kinozal/parselatest"           # default pages=100 (kinozal); others default pages=5
@@ -394,7 +394,12 @@ curl "http://127.0.0.1:9117/cron/kinozal/parselatest?pages=10"
 curl "http://127.0.0.1:9117/cron/kinozal/parse?page=0"
 ```
 
-Task state is persisted — interrupted `parsealltask` resumes from where it stopped.
+Task state is persisted — an interrupted `parsealltask` resumes from where it
+stopped, and it resumes across midnight. Progress belongs to a **sweep cycle**
+(`Data/temp/<tracker>_parseAllCycle.json`), not to a calendar day: a page is
+outstanding until the current cycle has visited it, and the cycle rotates only
+once every page has been. A page whose fetch keeps failing is given up on after
+three consecutive tries, so one broken page cannot hold a cycle open forever.
 
 #### 5. Full vs. incremental (`fullparse=true/false`)
 

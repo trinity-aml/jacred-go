@@ -61,6 +61,8 @@ var (
 type Task struct {
 	UpdateTime string `json:"updateTime"`
 	Page       int    `json:"page"`
+	// Cycle bookkeeping; embedded so the stored list stays flat.
+	core.CycleFields
 }
 
 func (t Task) UpdatedToday() bool {
@@ -586,6 +588,40 @@ func (p *Parser) UpdateTasksParse(ctx context.Context) ([]Task, error) {
 	return cloneTasks(p.tasks), nil
 }
 
+// beginCycleLocked opens (or rotates) the sweep cycle. Caller holds p.mu.
+// selezen keeps one flat list of pages rather than a map of categories.
+func (p *Parser) beginCycleLocked() (*core.ParseAllCycle, int, int) {
+	slots, keys := core.CycleSlotsFromSlice[Task](p.tasks, func(t Task) int { return t.Page })
+	cycle, pending := core.BeginParseAllCycle(
+		core.ParseAllCyclePath(p.DataDir, trackerName),
+		core.MapFingerprint(keys),
+		slots,
+		func(i int) bool { return slots[i].(*Task).UpdatedToday() },
+		true,
+	)
+	if pending != len(slots) {
+		_ = p.saveTasksLocked()
+	}
+	return cycle, pending, len(slots)
+}
+
+// settle records one page's outcome. A failure spends its budget instead of
+// settling the page, so a transient error is retried while a permanently
+// broken page cannot hold the cycle open forever.
+func (p *Parser) settle(cycle *core.ParseAllCycle, page int, ok bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for i := range p.tasks {
+		if p.tasks[i].Page == page {
+			if core.NoteParseAllAttempt(trackerName, &p.tasks[i], cycle, ok) && ok {
+				p.tasks[i].MarkToday()
+			}
+			break
+		}
+	}
+	_ = p.saveTasksLocked()
+}
+
 func (p *Parser) ParseAllTask(ctx context.Context, force bool) (string, error) {
 	p.mu.Lock()
 	if p.allWork {
@@ -607,10 +643,18 @@ func (p *Parser) ParseAllTask(ctx context.Context, force bool) (string, error) {
 		p.mu.Unlock()
 	}
 
+	// Opened against p.tasks rather than the snapshot: the first run stamps
+	// the day's existing progress into the cycle, and that must be persisted
+	// before the snapshot is taken.
+	p.mu.Lock()
+	cycle, pendingAtStart, cycleTotal := p.beginCycleLocked()
+	snapshot = cloneTasks(p.tasks)
+	p.mu.Unlock()
+
 	totalPages := len(snapshot)
 	processed, fetched, totalAdded, totalUpdated, totalSkipped, totalFailed, errs := 0, 0, 0, 0, 0, 0, 0
 	for _, task := range snapshot {
-		if !force && task.UpdatedToday() {
+		if !force && !core.PendingInCycle(&task, cycle) {
 			continue
 		}
 		if p.Config.Selezen.ParseDelay > 0 {
@@ -623,21 +667,14 @@ func (p *Parser) ParseAllTask(ctx context.Context, force bool) (string, error) {
 		parsed, added, updated, skipped, failed, err := p.parsePage(ctx, task.Page)
 		if err != nil {
 			log.Printf("selezen: parsealltask page=%d error: %v", task.Page, err)
+			p.settle(cycle, task.Page, false)
 			errs++
 			continue
 		}
 		processed++
 		if parsed == 0 {
-			log.Printf("selezen: parsealltask page=%d empty (marking today)", task.Page)
-			p.mu.Lock()
-			for i := range p.tasks {
-				if p.tasks[i].Page == task.Page {
-					p.tasks[i].MarkToday()
-					break
-				}
-			}
-			_ = p.saveTasksLocked()
-			p.mu.Unlock()
+			log.Printf("selezen: parsealltask page=%d empty (settling)", task.Page)
+			p.settle(cycle, task.Page, true)
 			continue
 		}
 		fetched += parsed
@@ -646,19 +683,13 @@ func (p *Parser) ParseAllTask(ctx context.Context, force bool) (string, error) {
 		totalSkipped += skipped
 		totalFailed += failed
 		log.Printf("selezen: parsealltask page=%d fetched=%d added=%d skipped=%d failed=%d", task.Page, parsed, added, skipped, failed)
-		p.mu.Lock()
-		for i := range p.tasks {
-			if p.tasks[i].Page == task.Page {
-				p.tasks[i].MarkToday()
-				break
-			}
-		}
-		if err2 := p.saveTasksLocked(); err2 != nil {
-			p.mu.Unlock()
-			return "", err2
-		}
-		p.mu.Unlock()
+		p.settle(cycle, task.Page, true)
 	}
+	p.mu.Lock()
+	cycleSlots, _ := core.CycleSlotsFromSlice[Task](p.tasks, func(t Task) int { return t.Page })
+	pendingLeft := core.CountPendingInCycle(cycleSlots, cycle)
+	p.mu.Unlock()
+	log.Printf("selezen: parsealltask cycle=%s pending=%d->%d/%d", cycle.CycleID, pendingAtStart, pendingLeft, cycleTotal)
 	log.Printf("selezen: parsealltask done processed=%d/%d fetched=%d added=%d updated=%d skipped=%d failed=%d errors=%d", processed, totalPages, fetched, totalAdded, totalUpdated, totalSkipped, totalFailed, errs)
 	return "ok", nil
 }

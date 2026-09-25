@@ -87,6 +87,8 @@ var ruMonths = map[string]time.Month{
 type Task struct {
 	UpdateTime string `json:"updateTime"`
 	Page       int    `json:"page"`
+	// Cycle bookkeeping; embedded so the stored map keeps its flat shape.
+	core.CycleFields
 }
 
 func (t Task) UpdatedToday() bool {
@@ -583,6 +585,11 @@ func (p *Parser) ParseAllTask(ctx context.Context, force bool) (string, error) {
 		p.mu.Unlock()
 	}
 
+	p.mu.Lock()
+	cycle, pendingAtStart, cycleTotal := p.beginCycleLocked()
+	snapshot = cloneTasks(p.tasks)
+	p.mu.Unlock()
+
 	processed, fetched, added, updated, skipped, failed, errs := 0, 0, 0, 0, 0, 0, 0
 	for secID, list := range snapshot {
 		sec := sectionByID(secID)
@@ -590,7 +597,7 @@ func (p *Parser) ParseAllTask(ctx context.Context, force bool) (string, error) {
 			continue
 		}
 		for _, task := range list {
-			if !force && task.UpdatedToday() {
+			if !force && !core.PendingInCycle(&task, cycle) {
 				skipped++
 				continue
 			}
@@ -600,12 +607,13 @@ func (p *Parser) ParseAllTask(ctx context.Context, force bool) (string, error) {
 			torrents, _, err := p.parseSectionPage(ctx, *sec, task.Page)
 			if err != nil {
 				log.Printf("anibelka: parsealltask f=%s page=%d error: %v", sec.id, task.Page, err)
+				p.settle(cycle, sec.id, task.Page, false)
 				errs++
 				continue
 			}
 			processed++
 			if len(torrents) == 0 {
-				p.markPageToday(sec.id, task.Page)
+				p.settle(cycle, sec.id, task.Page, true)
 				continue
 			}
 			a, u, s, f, err := p.saveTorrents(torrents)
@@ -620,11 +628,15 @@ func (p *Parser) ParseAllTask(ctx context.Context, force bool) (string, error) {
 			failed += f
 			log.Printf("anibelka: parsealltask f=%s page=%d torrents=%d added=%d skipped=%d failed=%d",
 				sec.id, task.Page, len(torrents), a, s, f)
-			p.markPageToday(sec.id, task.Page)
+			p.settle(cycle, sec.id, task.Page, true)
 		}
 	}
-	log.Printf("anibelka: parsealltask done processed=%d fetched=%d added=%d updated=%d skipped=%d failed=%d errors=%d",
-		processed, fetched, added, updated, skipped, failed, errs)
+	p.mu.Lock()
+	slots, _ := core.CycleSlotsFromMap[Task](p.tasks, func(t Task) int { return t.Page })
+	pendingLeft := core.CountPendingInCycle(slots, cycle)
+	p.mu.Unlock()
+	log.Printf("anibelka: parsealltask done processed=%d fetched=%d added=%d updated=%d skipped=%d failed=%d errors=%d cycle=%s pending=%d->%d/%d",
+		processed, fetched, added, updated, skipped, failed, errs, cycle.CycleID, pendingAtStart, pendingLeft, cycleTotal)
 	return "ok", nil
 }
 
@@ -670,13 +682,34 @@ func (p *Parser) ParseLatest(ctx context.Context, pages int) (string, error) {
 	return "ok", nil
 }
 
-func (p *Parser) markPageToday(secID string, page int) {
+// beginCycleLocked opens (or rotates) the sweep cycle. Caller holds p.mu.
+func (p *Parser) beginCycleLocked() (*core.ParseAllCycle, int, int) {
+	slots, keys := core.CycleSlotsFromMap[Task](p.tasks, func(t Task) int { return t.Page })
+	cycle, pending := core.BeginParseAllCycle(
+		core.ParseAllCyclePath(p.DataDir, trackerName),
+		core.MapFingerprint(keys),
+		slots,
+		func(i int) bool { return slots[i].(*Task).UpdatedToday() },
+		true,
+	)
+	if pending != len(slots) {
+		_ = p.saveTasksLocked()
+	}
+	return cycle, pending, len(slots)
+}
+
+// settle records one page's outcome. A failure spends its budget rather than
+// settling it, so a transient error is retried while a permanently broken page
+// cannot hold the cycle open forever.
+func (p *Parser) settle(cycle *core.ParseAllCycle, secID string, page int, ok bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if list, ok := p.tasks[secID]; ok {
+	if list, found := p.tasks[secID]; found {
 		for i := range list {
 			if list[i].Page == page {
-				list[i].MarkToday()
+				if core.NoteParseAllAttempt(trackerName, &list[i], cycle, ok) && ok {
+					list[i].MarkToday()
+				}
 			}
 		}
 		p.tasks[secID] = list

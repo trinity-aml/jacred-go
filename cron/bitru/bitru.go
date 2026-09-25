@@ -46,6 +46,8 @@ var (
 type Task struct {
 	UpdateTime string `json:"updateTime"`
 	Page       int    `json:"page"`
+	// Cycle bookkeeping; embedded so the stored map stays flat.
+	core.CycleFields
 }
 
 func (t Task) UpdatedToday() bool {
@@ -191,6 +193,38 @@ func (p *Parser) UpdateTasksParse(ctx context.Context) (map[string][]Task, error
 	return cloneTasks(p.tasks), nil
 }
 
+// beginCycleLocked opens (or rotates) the sweep cycle. Caller holds p.mu.
+func (p *Parser) beginCycleLocked() (*core.ParseAllCycle, int, int) {
+	slots, keys := core.CycleSlotsFromMap[Task](p.tasks, func(t Task) int { return t.Page })
+	cycle, pending := core.BeginParseAllCycle(
+		core.ParseAllCyclePath(p.DataDir, trackerName),
+		core.MapFingerprint(keys),
+		slots,
+		func(i int) bool { return slots[i].(*Task).UpdatedToday() },
+		true,
+	)
+	if pending != len(slots) {
+		_ = p.saveTasksLocked()
+	}
+	return cycle, pending, len(slots)
+}
+
+// settle records one page's outcome. A failure spends its budget instead of
+// settling the page, so a transient error is retried while a permanently
+// broken page cannot hold the cycle open forever.
+func (p *Parser) settle(cycle *core.ParseAllCycle, key string, page int, ok bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for i := range p.tasks[key] {
+		if p.tasks[key][i].Page == page {
+			if core.NoteParseAllAttempt(trackerName, &p.tasks[key][i], cycle, ok) && ok {
+				p.tasks[key][i].MarkToday()
+			}
+		}
+	}
+	_ = p.saveTasksLocked()
+}
+
 func (p *Parser) ParseAllTask(ctx context.Context, force bool) (string, error) {
 	p.mu.Lock()
 	if p.allWork {
@@ -212,6 +246,14 @@ func (p *Parser) ParseAllTask(ctx context.Context, force bool) (string, error) {
 		p.mu.Unlock()
 	}
 
+	// Opened against p.tasks rather than the snapshot: the first run stamps
+	// the day's existing progress into the cycle, and that must be persisted
+	// before the snapshot is taken.
+	p.mu.Lock()
+	cycle, pendingAtStart, cycleTotal := p.beginCycleLocked()
+	snapshot = cloneTasks(p.tasks)
+	p.mu.Unlock()
+
 	totalPages := 0
 	for _, tasks := range snapshot {
 		totalPages += len(tasks)
@@ -219,7 +261,7 @@ func (p *Parser) ParseAllTask(ctx context.Context, force bool) (string, error) {
 	processed, fetched, added, updated, skipped, failed, errs := 0, 0, 0, 0, 0, 0, 0
 	for cat, tasks := range snapshot {
 		for _, task := range tasks {
-			if !force && task.UpdatedToday() {
+			if !force && !core.PendingInCycle(&task, cycle) {
 				skipped++
 				continue
 			}
@@ -233,20 +275,14 @@ func (p *Parser) ParseAllTask(ctx context.Context, force bool) (string, error) {
 			items, err := p.parsePage(ctx, cat, task.Page)
 			if err != nil {
 				log.Printf("bitru: parsealltask cat=%s page=%d error: %v", cat, task.Page, err)
+				p.settle(cycle, cat, task.Page, false)
 				errs++
 				continue
 			}
 			processed++
 			if len(items) == 0 {
-				log.Printf("bitru: parsealltask cat=%s page=%d empty (marking today)", cat, task.Page)
-				p.mu.Lock()
-				for i := range p.tasks[cat] {
-					if p.tasks[cat][i].Page == task.Page {
-						p.tasks[cat][i].MarkToday()
-					}
-				}
-				_ = p.saveTasksLocked()
-				p.mu.Unlock()
+				log.Printf("bitru: parsealltask cat=%s page=%d empty (settling)", cat, task.Page)
+				p.settle(cycle, cat, task.Page, true)
 				continue
 			}
 			a, u, s, f, err := p.saveTorrents(ctx, items)
@@ -261,20 +297,15 @@ func (p *Parser) ParseAllTask(ctx context.Context, force bool) (string, error) {
 			skipped += s
 			failed += f
 			log.Printf("bitru: parsealltask cat=%s page=%d fetched=%d added=%d skipped=%d failed=%d", cat, task.Page, len(items), a, s, f)
-			p.mu.Lock()
-			for i := range p.tasks[cat] {
-				if p.tasks[cat][i].Page == task.Page {
-					p.tasks[cat][i].MarkToday()
-				}
-			}
-			if err := p.saveTasksLocked(); err != nil {
-				p.mu.Unlock()
-				return "", err
-			}
-			p.mu.Unlock()
+			p.settle(cycle, cat, task.Page, true)
 		}
 	}
+	p.mu.Lock()
+	cycleSlots, _ := core.CycleSlotsFromMap[Task](p.tasks, func(t Task) int { return t.Page })
+	pendingLeft := core.CountPendingInCycle(cycleSlots, cycle)
+	p.mu.Unlock()
 	log.Printf("bitru: parsealltask done processed=%d/%d fetched=%d added=%d updated=%d skipped=%d failed=%d errors=%d", processed, totalPages, fetched, added, updated, skipped, failed, errs)
+	log.Printf("bitru: parsealltask cycle=%s pending=%d->%d/%d", cycle.CycleID, pendingAtStart, pendingLeft, cycleTotal)
 	return "ok", nil
 }
 

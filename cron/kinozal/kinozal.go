@@ -96,6 +96,8 @@ var monthSubsts = func() []monthSubst {
 type Task struct {
 	UpdateTime string `json:"updateTime"`
 	Page       int    `json:"page"`
+	// Cycle bookkeeping; embedded so the stored map stays flat.
+	core.CycleFields
 }
 
 type ParseResult struct {
@@ -248,6 +250,45 @@ func (p *Parser) UpdateTasksParse(ctx context.Context) (map[string]map[string][]
 	return cloneTasks(p.tasks), nil
 }
 
+// beginCycleLocked opens (or rotates) the sweep cycle. Caller holds p.mu.
+// kinozal's map is nested: category, then the browse argument, then pages.
+func (p *Parser) beginCycleLocked() (*core.ParseAllCycle, int, int) {
+	slots, keys := core.CycleSlotsFromNestedMap[Task](p.tasks, func(t Task) int { return t.Page })
+	cycle, pending := core.BeginParseAllCycle(
+		core.ParseAllCyclePath(p.DataDir, trackerName),
+		core.MapFingerprint(keys),
+		slots,
+		func(i int) bool { return slots[i].(*Task).UpdatedToday(p.loc) },
+		true,
+	)
+	if pending != len(slots) {
+		_ = p.saveTasksLocked()
+	}
+	return cycle, pending, len(slots)
+}
+
+// settle records one page's outcome. A failure spends its budget instead of
+// settling the page, so a transient error is retried while a permanently
+// broken page cannot hold the cycle open forever.
+func (p *Parser) settle(cycle *core.ParseAllCycle, cat, arg string, page int, ok bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if argMap, found := p.tasks[cat]; found {
+		if list, found := argMap[arg]; found {
+			for i := range list {
+				if list[i].Page == page {
+					if core.NoteParseAllAttempt(trackerName, &list[i], cycle, ok) && ok {
+						list[i].MarkToday(p.loc)
+					}
+				}
+			}
+			argMap[arg] = list
+			p.tasks[cat] = argMap
+		}
+	}
+	_ = p.saveTasksLocked()
+}
+
 func (p *Parser) ParseAllTask(ctx context.Context, force bool) (string, error) {
 	if err := p.requireLogin(ctx); err != nil {
 		return "", err
@@ -272,6 +313,14 @@ func (p *Parser) ParseAllTask(ctx context.Context, force bool) (string, error) {
 		p.mu.Unlock()
 	}
 
+	// Opened against p.tasks rather than the snapshot: the first run stamps
+	// the day's existing progress into the cycle, and that must be persisted
+	// before the snapshot is taken.
+	p.mu.Lock()
+	cycle, pendingAtStart, cycleTotal := p.beginCycleLocked()
+	snapshot = cloneTasks(p.tasks)
+	p.mu.Unlock()
+
 	totalPages := 0
 	for _, byArg := range snapshot {
 		for arg, list := range byArg {
@@ -288,7 +337,7 @@ func (p *Parser) ParseAllTask(ctx context.Context, force bool) (string, error) {
 				continue
 			}
 			for _, task := range list {
-				if !force && task.UpdatedToday(p.loc) {
+				if !force && !core.PendingInCycle(&task, cycle) {
 					continue
 				}
 				if p.Config.Kinozal.ParseDelay > 0 {
@@ -301,26 +350,14 @@ func (p *Parser) ParseAllTask(ctx context.Context, force bool) (string, error) {
 				items, err := p.parsePage(ctx, cat, task.Page, arg)
 				if err != nil {
 					log.Printf("kinozal: parsealltask cat=%s arg=%s page=%d error: %v", cat, arg, task.Page, err)
+					p.settle(cycle, cat, arg, task.Page, false)
 					errs++
 					continue
 				}
 				processed++
 				if len(items) == 0 {
 					log.Printf("kinozal: parsealltask cat=%s arg=%s page=%d empty (marking today)", cat, arg, task.Page)
-					p.mu.Lock()
-					if argMap, ok := p.tasks[cat]; ok {
-						if list2, ok := argMap[arg]; ok {
-							for i := range list2 {
-								if list2[i].Page == task.Page {
-									list2[i].MarkToday(p.loc)
-								}
-							}
-							argMap[arg] = list2
-							p.tasks[cat] = argMap
-						}
-					}
-					_ = p.saveTasksLocked()
-					p.mu.Unlock()
+					p.settle(cycle, cat, arg, task.Page, true)
 					continue
 				}
 				a, u, s, f, err := p.saveTorrents(ctx, items)
@@ -335,26 +372,15 @@ func (p *Parser) ParseAllTask(ctx context.Context, force bool) (string, error) {
 				skipped += s
 				failed += f
 				log.Printf("kinozal: parsealltask cat=%s arg=%s page=%d fetched=%d added=%d skipped=%d failed=%d", cat, arg, task.Page, len(items), a, s, f)
-				p.mu.Lock()
-				if argMap, ok := p.tasks[cat]; ok {
-					if list2, ok := argMap[arg]; ok {
-						for i := range list2 {
-							if list2[i].Page == task.Page {
-								list2[i].MarkToday(p.loc)
-							}
-						}
-						argMap[arg] = list2
-						p.tasks[cat] = argMap
-					}
-				}
-				if err := p.saveTasksLocked(); err != nil {
-					p.mu.Unlock()
-					return "", err
-				}
-				p.mu.Unlock()
+				p.settle(cycle, cat, arg, task.Page, true)
 			}
 		}
 	}
+	p.mu.Lock()
+	cycleSlots, _ := core.CycleSlotsFromNestedMap[Task](p.tasks, func(t Task) int { return t.Page })
+	pendingLeft := core.CountPendingInCycle(cycleSlots, cycle)
+	p.mu.Unlock()
+	log.Printf("kinozal: parsealltask cycle=%s pending=%d->%d/%d", cycle.CycleID, pendingAtStart, pendingLeft, cycleTotal)
 	log.Printf("kinozal: parsealltask done processed=%d/%d fetched=%d added=%d updated=%d skipped=%d failed=%d errors=%d", processed, totalPages, fetched, added, updated, skipped, failed, errs)
 	return "ok", nil
 }

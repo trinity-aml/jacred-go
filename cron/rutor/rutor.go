@@ -62,6 +62,9 @@ var categories = []string{"1", "5", "4", "16", "12", "6", "7", "10", "17", "13",
 type Task struct {
 	UpdateTime string `json:"updateTime"`
 	Page       int    `json:"page"`
+	// Cycle bookkeeping. Embedded, so the stored file keeps its flat shape
+	// and an existing rutor_taskParse.json still loads.
+	core.CycleFields
 }
 
 func (t Task) UpdatedToday() bool {
@@ -352,6 +355,43 @@ func (p *Parser) UpdateTasksParse(ctx context.Context) (map[string][]Task, error
 	return cloneTasks(p.tasks), nil
 }
 
+// beginCycleLocked opens (or rotates) the sweep cycle. Caller holds p.mu.
+func (p *Parser) beginCycleLocked() (*core.ParseAllCycle, int, int) {
+	slots, keys := core.CycleSlotsFromMap[Task](p.tasks, func(t Task) int { return t.Page })
+	cycle, pending := core.BeginParseAllCycle(
+		core.ParseAllCyclePath(p.DataDir, trackerName),
+		core.MapFingerprint(keys),
+		slots,
+		// Consulted only on the very first run, to adopt the progress the
+		// old date stamps had already recorded for today.
+		func(i int) bool { return slots[i].(*Task).UpdatedToday() },
+		true,
+	)
+	if pending != len(slots) {
+		_ = p.saveTasksLocked()
+	}
+	return cycle, pending, len(slots)
+}
+
+// settle records the outcome of one page and persists it. ok=false spends a
+// slot's failure budget instead of settling it, so a transient error is retried
+// while a permanently broken page cannot hold the cycle open.
+func (p *Parser) settle(cycle *core.ParseAllCycle, cat string, page int, ok bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if list, found := p.tasks[cat]; found {
+		for i := range list {
+			if list[i].Page == page {
+				if core.NoteParseAllAttempt(trackerName, &list[i], cycle, ok) && ok {
+					list[i].MarkToday()
+				}
+			}
+		}
+		p.tasks[cat] = list
+	}
+	_ = p.saveTasksLocked()
+}
+
 func (p *Parser) ParseAllTask(ctx context.Context, force bool) (string, error) {
 	p.mu.Lock()
 	if p.allWork {
@@ -359,6 +399,10 @@ func (p *Parser) ParseAllTask(ctx context.Context, force bool) (string, error) {
 		return "work", nil
 	}
 	p.allWork = true
+	// The cycle is opened against p.tasks, not the snapshot, because the
+	// first run stamps the day's existing progress into it and that has to
+	// be persisted before the snapshot is taken.
+	cycle, pendingAtStart, cycleTotal := p.beginCycleLocked()
 	snapshot := cloneTasks(p.tasks)
 	p.mu.Unlock()
 	defer func() { p.mu.Lock(); p.allWork = false; p.mu.Unlock() }()
@@ -380,7 +424,7 @@ func (p *Parser) ParseAllTask(ctx context.Context, force bool) (string, error) {
 	processed, fetched, added, updated, skipped, failed, errs := 0, 0, 0, 0, 0, 0, 0
 	for cat, list := range snapshot {
 		for _, task := range list {
-			if !force && task.UpdatedToday() {
+			if !force && !core.PendingInCycle(&task, cycle) {
 				skipped++
 				continue
 			}
@@ -394,23 +438,14 @@ func (p *Parser) ParseAllTask(ctx context.Context, force bool) (string, error) {
 			items, err := p.fetchPage(ctx, cat, task.Page)
 			if err != nil {
 				log.Printf("rutor: parsealltask cat=%s page=%d error: %v", cat, task.Page, err)
+				p.settle(cycle, cat, task.Page, false)
 				errs++
 				continue
 			}
 			processed++
 			if len(items) == 0 {
-				log.Printf("rutor: parsealltask cat=%s page=%d empty (marking today)", cat, task.Page)
-				p.mu.Lock()
-				if list2, ok := p.tasks[cat]; ok {
-					for i := range list2 {
-						if list2[i].Page == task.Page {
-							list2[i].MarkToday()
-						}
-					}
-					p.tasks[cat] = list2
-				}
-				_ = p.saveTasksLocked()
-				p.mu.Unlock()
+				log.Printf("rutor: parsealltask cat=%s page=%d empty (settling)", cat, task.Page)
+				p.settle(cycle, cat, task.Page, true)
 				continue
 			}
 			a, u, s, f, err := p.saveTorrents(items)
@@ -425,23 +460,15 @@ func (p *Parser) ParseAllTask(ctx context.Context, force bool) (string, error) {
 			skipped += s
 			failed += f
 			log.Printf("rutor: parsealltask cat=%s page=%d fetched=%d added=%d skipped=%d failed=%d", cat, task.Page, len(items), a, s, f)
-			p.mu.Lock()
-			if list2, ok := p.tasks[cat]; ok {
-				for i := range list2 {
-					if list2[i].Page == task.Page {
-						list2[i].MarkToday()
-					}
-				}
-				p.tasks[cat] = list2
-			}
-			if err := p.saveTasksLocked(); err != nil {
-				p.mu.Unlock()
-				return "", err
-			}
-			p.mu.Unlock()
+			p.settle(cycle, cat, task.Page, true)
 		}
 	}
-	log.Printf("rutor: parsealltask done processed=%d/%d fetched=%d added=%d updated=%d skipped=%d failed=%d errors=%d", processed, totalPages, fetched, added, updated, skipped, failed, errs)
+	p.mu.Lock()
+	slots, _ := core.CycleSlotsFromMap[Task](p.tasks, func(t Task) int { return t.Page })
+	pendingLeft := core.CountPendingInCycle(slots, cycle)
+	p.mu.Unlock()
+	log.Printf("rutor: parsealltask done processed=%d/%d fetched=%d added=%d updated=%d skipped=%d failed=%d errors=%d cycle=%s pending=%d->%d/%d",
+		processed, totalPages, fetched, added, updated, skipped, failed, errs, cycle.CycleID, pendingAtStart, pendingLeft, cycleTotal)
 	return "ok", nil
 }
 
