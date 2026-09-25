@@ -49,6 +49,59 @@ type Parser struct {
 
 	mu      sync.Mutex
 	working bool
+
+	// vPageReported keeps the "no magnets on the V page" diagnosis to one line
+	// per run: a rejected session looks identical on every episode, and
+	// repeating it a hundred times only buries the rest of the log.
+	vPageReported bool
+}
+
+// errNoCookie separates "lostfilm is not configured" from "lostfilm answered
+// badly". lostfilm has no username/password flow — the session is a cookie
+// copied from a browser — so this is the only way in.
+var errNoCookie = fmt.Errorf("lostfilm: no session cookie configured (lf_session/lf_udv/PHPSESSID — see the tracker docs): %w", core.ErrNotAuthorized)
+
+// hasAuthCookie reports whether the configured value can be a cookie at all.
+//
+// Deliberately stricter than "is it non-empty", which is what upstream checks:
+// the deployed init.yaml here carried a 15-character note in `cookie` with no
+// '=' in it, which passes a non-empty test, is sent as a Cookie header, does
+// nothing, and leaves the parser running anonymously. One name=value pair is
+// the cheapest thing that cannot be satisfied by prose.
+func hasAuthCookie(cookie string) bool {
+	for _, part := range strings.Split(cookie, ";") {
+		name, value, ok := strings.Cut(strings.TrimSpace(part), "=")
+		if ok && strings.TrimSpace(name) != "" && strings.TrimSpace(value) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// authorize refuses to start a run that cannot produce magnets.
+//
+// lostfilm serves its listings to anyone, so an unauthenticated run parses every
+// page, finds every episode, and then fails to get a magnet for each one —
+// reported as failed=N/withoutMag=N with nothing naming the cause. Worse, on a
+// warm database most episodes are served from the stored-magnet cache, so a dead
+// session shows up only on new episodes and looks like an ordinary quiet day.
+func (p *Parser) authorize() error {
+	if !hasAuthCookie(p.Config.Lostfilm.Cookie) {
+		return errNoCookie
+	}
+	return nil
+}
+
+// noteVPageWithoutMagnets reports, once per run, that a V page came back without
+// the magnet block. With a cookie configured that means the session was refused;
+// the no-cookie case never gets here because authorize() stops the run first.
+func (p *Parser) noteVPageWithoutMagnets(url string) {
+	if p.vPageReported {
+		return
+	}
+	p.vPageReported = true
+	log.Printf("lostfilm: %s returned no magnet links — the session cookie was refused; "+
+		"further episodes this run are not reported individually", url)
 }
 
 type ParseResult struct {
@@ -136,6 +189,11 @@ func (p *Parser) parseRange(ctx context.Context, pageFrom, pageTo int) (ParseRes
 	if host == "" {
 		return ParseResult{Status: "conf"}, nil
 	}
+	if err := p.authorize(); err != nil {
+		log.Printf("%v", err)
+		return ParseResult{Status: core.StatusWorkLogin}, err
+	}
+	p.vPageReported = false
 	cookie := strings.TrimSpace(p.Config.Lostfilm.Cookie)
 
 	firstHTML, err := p.fetchText(ctx, strings.TrimRight(host, "/")+"/new/", cookie, strings.TrimRight(host, "/")+"/")
@@ -210,6 +268,14 @@ func (p *Parser) ParseSeasonPacks(ctx context.Context, series string) (string, e
 	if series == "" {
 		return "series required", nil
 	}
+	// Season packs are magnets, so this needs a session. VerifyPage deliberately
+	// does not: it only reads air dates off the public /new/ page, and gating it
+	// would break a diagnostic that works fine anonymously.
+	if err := p.authorize(); err != nil {
+		log.Printf("%v", err)
+		return "", err
+	}
+	p.vPageReported = false
 	cookie := strings.TrimSpace(p.Config.Lostfilm.Cookie)
 	body, err := p.fetchText(ctx, strings.TrimRight(host, "/")+"/series/"+strings.Trim(series, "/")+"/seasons/", cookie, strings.TrimRight(host, "/")+"/")
 	if err != nil {
@@ -702,6 +768,7 @@ func (p *Parser) getMagnet(ctx context.Context, host, cookie, episodeURL string)
 		return magnetQuality{}, err
 	}
 	if !strings.Contains(searchHTML, "inner-box--link") {
+		p.noteVPageWithoutMagnets(episodeURL)
 		return magnetQuality{}, nil
 	}
 	list, err := p.parseVPageQualityLinks(ctx, host, cookie, searchHTML)
@@ -713,8 +780,12 @@ func (p *Parser) getMagnet(ctx context.Context, host, cookie, episodeURL string)
 
 func (p *Parser) getMagnetsFromVPage(ctx context.Context, host, cookie, vPageURL string) ([]magnetQuality, error) {
 	searchHTML, err := p.fetchVPageHTML(ctx, host, cookie, vPageURL, "")
-	if err != nil || !strings.Contains(searchHTML, "inner-box--link") {
+	if err != nil {
 		return nil, err
+	}
+	if !strings.Contains(searchHTML, "inner-box--link") {
+		p.noteVPageWithoutMagnets(vPageURL)
+		return nil, nil
 	}
 	return p.parseVPageQualityLinks(ctx, host, cookie, searchHTML)
 }

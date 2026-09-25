@@ -97,3 +97,112 @@ func TestDecodeRutrackerBodyHandlesBothCharsets(t *testing.T) {
 		t.Errorf("UTF-8 body decoded to %q, want %q — CP1251 mapping applied twice", got, want)
 	}
 }
+
+// The category table is the single source for five derived values, and the
+// invariants below are the ones whose violation is silent rather than loud.
+func TestCategoryTableIsWellFormed(t *testing.T) {
+	seen := map[string]bool{}
+	for i, c := range rutrackerCategories {
+		if c.id == "" {
+			t.Errorf("row %d has no id", i)
+			continue
+		}
+		if seen[c.id] {
+			t.Errorf("category %s appears twice", c.id)
+		}
+		seen[c.id] = true
+
+		// parsePage drops a row whose category resolves to no types, so a forum
+		// listed without them is parsed and thrown away in silence.
+		if len(c.types) == 0 {
+			t.Errorf("category %s has no types; every row of that forum would be dropped", c.id)
+		}
+		for _, ty := range c.types {
+			switch ty {
+			case "movie", "serial", "multfilm", "multserial", "anime",
+				"documovie", "docuserial", "tvshow", "sport":
+			default:
+				t.Errorf("category %s carries unknown type %q", c.id, ty)
+			}
+		}
+		if c.kind != kindMovie && c.kind != kindSerial && c.kind != kindOther {
+			t.Errorf("category %s has an unknown title kind %d", c.id, c.kind)
+		}
+	}
+}
+
+// Each derived value has to stay consistent with the table it comes from —
+// these five used to be maintained by hand, which is how they drifted apart.
+func TestDerivedCategoryListsMatchTheTable(t *testing.T) {
+	if len(allTaskCats) != len(rutrackerCategories) {
+		t.Errorf("allTaskCats has %d ids for %d categories", len(allTaskCats), len(rutrackerCategories))
+	}
+	if len(categoryTypeMap) != len(rutrackerCategories) {
+		t.Errorf("categoryTypeMap has %d entries for %d categories", len(categoryTypeMap), len(rutrackerCategories))
+	}
+
+	inAll := map[string]bool{}
+	for _, id := range allTaskCats {
+		inAll[id] = true
+	}
+	for _, id := range firstPageCats {
+		if !inAll[id] {
+			t.Errorf("%s is in the hourly pass but not in the full sweep", id)
+		}
+	}
+
+	for _, c := range rutrackerCategories {
+		// parseTitle branches on exactly these three sets; a category in none of
+		// them gets no title grammar, in two of them gets the wrong one.
+		n := 0
+		for _, in := range []bool{movieCats[c.id], serialCats[c.id], otherNamedCats[c.id]} {
+			if in {
+				n++
+			}
+		}
+		if n != 1 {
+			t.Errorf("category %s belongs to %d title-kind sets, want exactly 1", c.id, n)
+		}
+		if got := categoryTypes(c.id); len(got) == 0 {
+			t.Errorf("categoryTypes(%s) is empty", c.id)
+		}
+	}
+}
+
+// categoryTypes hands its slice to a record, so it must not expose the table's
+// own backing array — a caller appending to it would rewrite the category.
+func TestCategoryTypesReturnsACopy(t *testing.T) {
+	const id = "549"
+	got := categoryTypes(id)
+	if len(got) == 0 {
+		t.Fatalf("no types for %s", id)
+	}
+	got[0] = "mutated"
+	if again := categoryTypes(id); again[0] == "mutated" {
+		t.Error("categoryTypes exposes the table's slice; a caller can rewrite a category")
+	}
+}
+
+// Coverage pin. 35 forums were missing relative to the C# original — 17 serial,
+// 10 movie, 3 multfilm, 2 anime, 2 documovie, 1 multserial — and the gap was
+// invisible because nothing reports a forum that is simply never visited.
+// Lowering these numbers should be a deliberate act, not a merge accident.
+func TestCategoryCoverageDoesNotShrink(t *testing.T) {
+	const (
+		wantAll   = 246
+		wantQuick = 98
+	)
+	if len(allTaskCats) < wantAll {
+		t.Errorf("full sweep covers %d forums, was %d — coverage regressed", len(allTaskCats), wantAll)
+	}
+	if len(firstPageCats) < wantQuick {
+		t.Errorf("hourly pass covers %d forums, was %d — coverage regressed", len(firstPageCats), wantQuick)
+	}
+
+	// A sample of the forums that were missing, one per type they brought in.
+	for _, id := range []string{"7", "33", "84", "498", "1202", "1463"} {
+		if len(categoryTypes(id)) == 0 {
+			t.Errorf("forum %s is not covered again", id)
+		}
+	}
+}

@@ -680,6 +680,7 @@ func (f *Fetcher) GetExt(rawURL string, tracker app.TrackerSettings, extraCookie
 			markDomainCF(domain)
 			return f.fetchViaFlare(rawURL, cookie, nil, profile)
 		}
+		noteNonCFBlock(domain, rawURL, res.StatusCode)
 		return res, nil
 	}
 }
@@ -811,6 +812,9 @@ func (f *Fetcher) Do(rawURL string, tracker app.TrackerSettings, opts FetchOptio
 			retryUA = defaultUserAgent
 		}
 		return f.doHTTP(method, rawURL, cookie, retryUA, opts.ContentType, opts.Body, opts.ExtraHeaders, profile)
+	}
+	if mode != "flaresolverr" {
+		noteNonCFBlock(domain, rawURL, res.StatusCode)
 	}
 	return res, nil
 }
@@ -979,6 +983,56 @@ func (f *Fetcher) fetchViaFlare(rawURL, cookie string, extraHeaders map[string]s
 		return direct, nil
 	}
 	return res, err
+}
+
+// nonCFBlockWindow re-arms the diagnosis below, so a block that persists shows
+// up in every hour's log while a burst of requests still costs one line.
+const nonCFBlockWindow = time.Hour
+
+var (
+	nonCFBlockMu   sync.Mutex
+	nonCFBlockSeen = map[string]time.Time{}
+)
+
+// noteNonCFBlock reports a 403 or 503 whose body carries no Cloudflare markers.
+//
+// CF auto-detect only promotes a domain when the body *is* an interstitial, so a
+// refusal without those markers takes no branch at all: it goes back to the
+// parser as an ordinary failed fetch, and nothing anywhere says why. The part
+// worth stating is the negative one — there is no challenge to solve, so routing
+// the domain through the browser will not help. Without it the obvious next move
+// is to reach for flaresolverr and lose a day.
+//
+// This codebase has already paid for that lesson: ultradox answers 503 unless
+// the Referer looks like a search engine, which is neither a challenge nor
+// something a browser fixes.
+func noteNonCFBlock(domain, rawURL string, status int) {
+	if !shouldReportNonCFBlock(domain, status, time.Now()) {
+		return
+	}
+	log.Printf("fetcher: %s answered %d with no Cloudflare markers for %s — "+
+		"this is the site refusing the client (TLS fingerprint, a missing header, an IP block), "+
+		"not a challenge; the browser fallback will not help",
+		domain, status, rawURL)
+}
+
+// shouldReportNonCFBlock decides whether this refusal is worth a line, and
+// records that it was. Split out from the logging so the rate limiting can be
+// tested without capturing log output.
+func shouldReportNonCFBlock(domain string, status int, now time.Time) bool {
+	if status != http.StatusForbidden && status != http.StatusServiceUnavailable {
+		return false
+	}
+	if strings.TrimSpace(domain) == "" {
+		return false
+	}
+	nonCFBlockMu.Lock()
+	defer nonCFBlockMu.Unlock()
+	if last, seen := nonCFBlockSeen[domain]; seen && now.Sub(last) < nonCFBlockWindow {
+		return false
+	}
+	nonCFBlockSeen[domain] = now
+	return true
 }
 
 // isCloudflareChallenge returns true if the response body is a CF interstitial

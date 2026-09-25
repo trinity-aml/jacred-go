@@ -26,9 +26,6 @@ import (
 
 const trackerName = "rutracker"
 
-var firstPageCats = []string{"549", "22", "1666", "941", "1950", "2090", "2221", "2091", "2092", "2093", "2200", "2540", "934", "505", "252", "124", "1213", "2343", "930", "2365", "208", "539", "209", "921", "815", "1460", "1457", "2199", "313", "312", "1247", "2201", "2339", "140", "842", "235", "242", "819", "1531", "721", "1102", "1120", "1214", "489", "387", "9", "81", "915", "1939", "119", "1803", "266", "193", "1690", "1459", "825", "1248", "1288", "325", "534", "694", "704", "1105", "2491", "1389"}
-var allTaskCats = []string{"549", "22", "1666", "941", "1950", "2090", "2221", "2091", "2092", "2093", "2200", "2540", "934", "505", "252", "124", "1213", "2343", "930", "2365", "208", "539", "209", "921", "815", "1460", "1457", "2199", "313", "312", "1247", "2201", "2339", "140", "842", "235", "242", "819", "1531", "721", "1102", "1120", "1214", "489", "387", "9", "81", "915", "1939", "119", "1803", "266", "193", "1690", "1459", "825", "1248", "1288", "325", "534", "694", "704", "1105", "2491", "1389", "709", "2109", "46", "671", "2177", "2538", "251", "98", "97", "851", "2178", "821", "2076", "56", "2123", "876", "2139", "1467", "1469", "249", "552", "500", "2112", "1327", "1468", "2168", "2160", "314", "1281", "2110", "979", "2169", "2164", "2166", "2163", "24", "1959", "939", "1481", "113", "115", "882", "1482", "393", "2537", "532", "827", "1392", "2475", "2493", "2113", "2482", "2103", "2522", "2485", "2486", "2479", "2089", "1794", "845", "2312", "343", "2111", "1527", "2069", "1323", "2009", "2000", "2010", "2006", "2007", "2005", "259", "2004", "1999", "2001", "2002", "283", "1997", "2003", "1608", "1609", "2294", "1229", "1693", "2532", "136", "592", "2533", "1952", "1621", "2075", "1668", "1613", "1614", "1623", "1615", "1630", "2425", "2514", "1616", "2014", "1442", "1491", "1987", "1617", "1620", "1998", "1343", "751", "1697", "255", "260", "261", "256", "1986", "660", "1551", "626", "262", "1326", "978", "1287", "1188", "1667", "1675", "257", "875", "263", "2073", "550", "2124", "1470", "528", "486", "854", "2079", "1336", "2171", "1339", "2455", "1434", "2350", "1472", "2068", "2016"}
-
 var (
 	rowDateRe     = regexp.MustCompile(`<p>([0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2})</p>`)
 	rowTopicIDRe  = regexp.MustCompile(`<a id="tt-([0-9]+)"`)
@@ -951,47 +948,316 @@ func replaceBadNames(s string) string {
 	return strings.NewReplacer("Ё", "Е", "ё", "е").Replace(s)
 }
 
+// titleKind selects which grammar parseTitle applies to a forum's titles.
+type titleKind uint8
+
+const (
+	kindMovie titleKind = iota
+	kindSerial
+	kindOther
+)
+
+// rutrackerCategory is one forum: the types its records carry, how titles are
+// written there, and whether the hourly first-page pass visits it.
+//
+// One table replaces the five structures this used to be — two id slices plus
+// three kind sets assembled in init(). Spreading it out is how 35 forums went
+// missing relative to upstream: a slice could gain an id without gaining types,
+// and categoryTypes returning nil makes parsePage drop every row of that forum
+// without a word. Here a forum cannot exist without both.
+//
+// Order is meaningful and preserved deliberately. A rutracker run that hits the
+// flaresolverr cooldown abandons whatever it has not reached yet, so the head of
+// this table keeps its priority; forums added later are appended rather than
+// interleaved, so existing coverage cannot regress in a truncated run.
+type rutrackerCategory struct {
+	id    string
+	types []string
+	kind  titleKind
+	quick bool // visited by the hourly pass too, not only ParseAllTask
+}
+
+var rutrackerCategories = []rutrackerCategory{
+	{"549", []string{"movie"}, kindMovie, true},
+	{"22", []string{"movie"}, kindMovie, true},
+	{"1666", []string{"movie"}, kindMovie, true},
+	{"941", []string{"movie"}, kindMovie, true},
+	{"1950", []string{"movie"}, kindMovie, true},
+	{"2090", []string{"movie"}, kindMovie, true},
+	{"2221", []string{"movie"}, kindMovie, true},
+	{"2091", []string{"movie"}, kindMovie, true},
+	{"2092", []string{"movie"}, kindMovie, true},
+	{"2093", []string{"movie"}, kindMovie, true},
+	{"2200", []string{"movie"}, kindMovie, true},
+	{"2540", []string{"movie"}, kindMovie, true},
+	{"934", []string{"movie"}, kindMovie, true},
+	{"505", []string{"movie"}, kindMovie, true},
+	{"252", []string{"movie"}, kindMovie, true},
+	{"124", []string{"movie"}, kindMovie, true},
+	{"1213", []string{"multfilm"}, kindMovie, true},
+	{"2343", []string{"multfilm"}, kindMovie, true},
+	{"930", []string{"multfilm"}, kindMovie, true},
+	{"2365", []string{"multfilm"}, kindMovie, true},
+	{"208", []string{"multfilm"}, kindMovie, true},
+	{"539", []string{"multfilm"}, kindMovie, true},
+	{"209", []string{"multfilm"}, kindMovie, true},
+	{"921", []string{"multserial"}, kindSerial, true},
+	{"815", []string{"multserial"}, kindSerial, true},
+	{"1460", []string{"multserial"}, kindSerial, true},
+	{"1457", []string{"movie"}, kindMovie, true},
+	{"2199", []string{"movie"}, kindMovie, true},
+	{"313", []string{"movie"}, kindMovie, true},
+	{"312", []string{"movie"}, kindMovie, true},
+	{"1247", []string{"movie"}, kindMovie, true},
+	{"2201", []string{"movie"}, kindMovie, true},
+	{"2339", []string{"movie"}, kindMovie, true},
+	{"140", []string{"movie"}, kindMovie, true},
+	{"842", []string{"serial"}, kindSerial, true},
+	{"235", []string{"serial"}, kindSerial, true},
+	{"242", []string{"serial"}, kindSerial, true},
+	{"819", []string{"serial"}, kindSerial, true},
+	{"1531", []string{"serial"}, kindSerial, true},
+	{"721", []string{"serial"}, kindSerial, true},
+	{"1102", []string{"serial"}, kindSerial, true},
+	{"1120", []string{"serial"}, kindSerial, true},
+	{"1214", []string{"serial"}, kindSerial, true},
+	{"489", []string{"serial"}, kindSerial, true},
+	{"387", []string{"serial"}, kindSerial, true},
+	{"9", []string{"serial"}, kindSerial, true},
+	{"81", []string{"serial"}, kindSerial, true},
+	{"915", []string{"serial"}, kindSerial, true},
+	{"1939", []string{"serial"}, kindSerial, true},
+	{"119", []string{"serial"}, kindSerial, true},
+	{"1803", []string{"serial"}, kindSerial, true},
+	{"266", []string{"serial"}, kindSerial, true},
+	{"193", []string{"serial"}, kindSerial, true},
+	{"1690", []string{"serial"}, kindSerial, true},
+	{"1459", []string{"serial"}, kindSerial, true},
+	{"825", []string{"serial"}, kindSerial, true},
+	{"1248", []string{"serial"}, kindSerial, true},
+	{"1288", []string{"serial"}, kindSerial, true},
+	{"325", []string{"serial"}, kindSerial, true},
+	{"534", []string{"serial"}, kindSerial, true},
+	{"694", []string{"serial"}, kindSerial, true},
+	{"704", []string{"serial"}, kindSerial, true},
+	{"1105", []string{"anime"}, kindOther, true},
+	{"2491", []string{"anime"}, kindOther, true},
+	{"1389", []string{"anime"}, kindOther, true},
+	{"709", []string{"documovie"}, kindMovie, false},
+	{"2109", []string{"documovie"}, kindMovie, false},
+	{"46", []string{"docuserial", "documovie"}, kindOther, false},
+	{"671", []string{"docuserial", "documovie"}, kindOther, false},
+	{"2177", []string{"docuserial", "documovie"}, kindOther, false},
+	{"2538", []string{"docuserial", "documovie"}, kindOther, false},
+	{"251", []string{"docuserial", "documovie"}, kindOther, false},
+	{"98", []string{"docuserial", "documovie"}, kindOther, false},
+	{"97", []string{"docuserial", "documovie"}, kindOther, false},
+	{"851", []string{"docuserial", "documovie"}, kindOther, false},
+	{"2178", []string{"docuserial", "documovie"}, kindOther, false},
+	{"821", []string{"docuserial", "documovie"}, kindOther, false},
+	{"2076", []string{"docuserial", "documovie"}, kindOther, false},
+	{"56", []string{"docuserial", "documovie"}, kindOther, false},
+	{"2123", []string{"docuserial", "documovie"}, kindOther, false},
+	{"876", []string{"docuserial", "documovie"}, kindOther, false},
+	{"2139", []string{"docuserial", "documovie"}, kindOther, false},
+	{"1467", []string{"docuserial", "documovie"}, kindOther, false},
+	{"1469", []string{"docuserial", "documovie"}, kindOther, false},
+	{"249", []string{"docuserial", "documovie"}, kindOther, false},
+	{"552", []string{"docuserial", "documovie"}, kindOther, false},
+	{"500", []string{"docuserial", "documovie"}, kindOther, false},
+	{"2112", []string{"docuserial", "documovie"}, kindOther, false},
+	{"1327", []string{"docuserial", "documovie"}, kindOther, false},
+	{"1468", []string{"docuserial", "documovie"}, kindOther, false},
+	{"2168", []string{"docuserial", "documovie"}, kindOther, false},
+	{"2160", []string{"docuserial", "documovie"}, kindOther, false},
+	{"314", []string{"docuserial", "documovie"}, kindOther, false},
+	{"1281", []string{"docuserial", "documovie"}, kindOther, false},
+	{"2110", []string{"docuserial", "documovie"}, kindOther, false},
+	{"979", []string{"docuserial", "documovie"}, kindOther, false},
+	{"2169", []string{"docuserial", "documovie"}, kindOther, false},
+	{"2164", []string{"docuserial", "documovie"}, kindOther, false},
+	{"2166", []string{"docuserial", "documovie"}, kindOther, false},
+	{"2163", []string{"docuserial", "documovie"}, kindOther, false},
+	{"24", []string{"tvshow"}, kindOther, false},
+	{"1959", []string{"tvshow"}, kindOther, false},
+	{"939", []string{"tvshow"}, kindOther, false},
+	{"1481", []string{"tvshow"}, kindOther, false},
+	{"113", []string{"tvshow"}, kindOther, false},
+	{"115", []string{"tvshow"}, kindOther, false},
+	{"882", []string{"tvshow"}, kindOther, false},
+	{"1482", []string{"tvshow"}, kindOther, false},
+	{"393", []string{"tvshow"}, kindOther, false},
+	{"2537", []string{"tvshow"}, kindOther, false},
+	{"532", []string{"tvshow"}, kindOther, false},
+	{"827", []string{"tvshow"}, kindOther, false},
+	{"1392", []string{"sport"}, kindOther, false},
+	{"2475", []string{"sport"}, kindOther, false},
+	{"2493", []string{"sport"}, kindOther, false},
+	{"2113", []string{"sport"}, kindOther, false},
+	{"2482", []string{"sport"}, kindOther, false},
+	{"2103", []string{"sport"}, kindOther, false},
+	{"2522", []string{"sport"}, kindOther, false},
+	{"2485", []string{"sport"}, kindOther, false},
+	{"2486", []string{"sport"}, kindOther, false},
+	{"2479", []string{"sport"}, kindOther, false},
+	{"2089", []string{"sport"}, kindOther, false},
+	{"1794", []string{"sport"}, kindOther, false},
+	{"845", []string{"sport"}, kindOther, false},
+	{"2312", []string{"sport"}, kindOther, false},
+	{"343", []string{"sport"}, kindOther, false},
+	{"2111", []string{"sport"}, kindOther, false},
+	{"1527", []string{"sport"}, kindOther, false},
+	{"2069", []string{"sport"}, kindOther, false},
+	{"1323", []string{"sport"}, kindOther, false},
+	{"2009", []string{"sport"}, kindOther, false},
+	{"2000", []string{"sport"}, kindOther, false},
+	{"2010", []string{"sport"}, kindOther, false},
+	{"2006", []string{"sport"}, kindOther, false},
+	{"2007", []string{"sport"}, kindOther, false},
+	{"2005", []string{"sport"}, kindOther, false},
+	{"259", []string{"sport"}, kindOther, false},
+	{"2004", []string{"sport"}, kindOther, false},
+	{"1999", []string{"sport"}, kindOther, false},
+	{"2001", []string{"sport"}, kindOther, false},
+	{"2002", []string{"sport"}, kindOther, false},
+	{"283", []string{"sport"}, kindOther, false},
+	{"1997", []string{"sport"}, kindOther, false},
+	{"2003", []string{"sport"}, kindOther, false},
+	{"1608", []string{"sport"}, kindOther, false},
+	{"1609", []string{"sport"}, kindOther, false},
+	{"2294", []string{"sport"}, kindOther, false},
+	{"1229", []string{"sport"}, kindOther, false},
+	{"1693", []string{"sport"}, kindOther, false},
+	{"2532", []string{"sport"}, kindOther, false},
+	{"136", []string{"sport"}, kindOther, false},
+	{"592", []string{"sport"}, kindOther, false},
+	{"2533", []string{"sport"}, kindOther, false},
+	{"1952", []string{"sport"}, kindOther, false},
+	{"1621", []string{"sport"}, kindOther, false},
+	{"2075", []string{"sport"}, kindOther, false},
+	{"1668", []string{"sport"}, kindOther, false},
+	{"1613", []string{"sport"}, kindOther, false},
+	{"1614", []string{"sport"}, kindOther, false},
+	{"1623", []string{"sport"}, kindOther, false},
+	{"1615", []string{"sport"}, kindOther, false},
+	{"1630", []string{"sport"}, kindOther, false},
+	{"2425", []string{"sport"}, kindOther, false},
+	{"2514", []string{"sport"}, kindOther, false},
+	{"1616", []string{"sport"}, kindOther, false},
+	{"2014", []string{"sport"}, kindOther, false},
+	{"1442", []string{"sport"}, kindOther, false},
+	{"1491", []string{"sport"}, kindOther, false},
+	{"1987", []string{"sport"}, kindOther, false},
+	{"1617", []string{"sport"}, kindOther, false},
+	{"1620", []string{"sport"}, kindOther, false},
+	{"1998", []string{"sport"}, kindOther, false},
+	{"1343", []string{"sport"}, kindOther, false},
+	{"751", []string{"sport"}, kindOther, false},
+	{"1697", []string{"sport"}, kindOther, false},
+	{"255", []string{"sport"}, kindOther, false},
+	{"260", []string{"sport"}, kindOther, false},
+	{"261", []string{"sport"}, kindOther, false},
+	{"256", []string{"sport"}, kindOther, false},
+	{"1986", []string{"sport"}, kindOther, false},
+	{"660", []string{"sport"}, kindOther, false},
+	{"1551", []string{"sport"}, kindOther, false},
+	{"626", []string{"sport"}, kindOther, false},
+	{"262", []string{"sport"}, kindOther, false},
+	{"1326", []string{"sport"}, kindOther, false},
+	{"978", []string{"sport"}, kindOther, false},
+	{"1287", []string{"sport"}, kindOther, false},
+	{"1188", []string{"sport"}, kindOther, false},
+	{"1667", []string{"sport"}, kindOther, false},
+	{"1675", []string{"sport"}, kindOther, false},
+	{"257", []string{"sport"}, kindOther, false},
+	{"875", []string{"sport"}, kindOther, false},
+	{"263", []string{"sport"}, kindOther, false},
+	{"2073", []string{"sport"}, kindOther, false},
+	{"550", []string{"sport"}, kindOther, false},
+	{"2124", []string{"sport"}, kindOther, false},
+	{"1470", []string{"sport"}, kindOther, false},
+	{"528", []string{"sport"}, kindOther, false},
+	{"486", []string{"sport"}, kindOther, false},
+	{"854", []string{"sport"}, kindOther, false},
+	{"2079", []string{"sport"}, kindOther, false},
+	{"1336", []string{"sport"}, kindOther, false},
+	{"2171", []string{"sport"}, kindOther, false},
+	{"1339", []string{"sport"}, kindOther, false},
+	{"2455", []string{"sport"}, kindOther, false},
+	{"1434", []string{"sport"}, kindOther, false},
+	{"2350", []string{"sport"}, kindOther, false},
+	{"1472", []string{"sport"}, kindOther, false},
+	{"2068", []string{"sport"}, kindOther, false},
+	{"2016", []string{"sport"}, kindOther, false},
+	{"4", []string{"multfilm"}, kindMovie, true},      // added 2026-09-25
+	{"7", []string{"movie"}, kindMovie, true},         // added 2026-09-25
+	{"33", []string{"anime"}, kindOther, true},        // added 2026-09-25
+	{"84", []string{"multfilm"}, kindMovie, true},     // added 2026-09-25
+	{"100", []string{"movie"}, kindMovie, true},       // added 2026-09-25
+	{"101", []string{"movie"}, kindMovie, true},       // added 2026-09-25
+	{"173", []string{"serial"}, kindSerial, true},     // added 2026-09-25
+	{"189", []string{"serial"}, kindSerial, true},     // added 2026-09-25
+	{"271", []string{"movie"}, kindMovie, true},       // added 2026-09-25
+	{"272", []string{"movie"}, kindMovie, true},       // added 2026-09-25
+	{"498", []string{"multserial"}, kindSerial, true}, // added 2026-09-25
+	{"572", []string{"movie"}, kindMovie, true},       // added 2026-09-25
+	{"625", []string{"serial"}, kindSerial, true},     // added 2026-09-25
+	{"717", []string{"serial"}, kindOther, true},      // added 2026-09-25
+	{"718", []string{"movie"}, kindMovie, true},       // added 2026-09-25
+	{"775", []string{"movie"}, kindMovie, true},       // added 2026-09-25
+	{"812", []string{"serial"}, kindSerial, true},     // added 2026-09-25
+	{"820", []string{"serial"}, kindOther, true},      // added 2026-09-25
+	{"911", []string{"serial"}, kindSerial, true},     // added 2026-09-25
+	{"920", []string{"serial"}, kindSerial, true},     // added 2026-09-25
+	{"1106", []string{"anime"}, kindOther, true},      // added 2026-09-25
+	{"1171", []string{"serial"}, kindSerial, true},    // added 2026-09-25
+	{"1202", []string{"documovie"}, kindMovie, false}, // added 2026-09-25
+	{"1242", []string{"serial"}, kindOther, true},     // added 2026-09-25
+	{"1463", []string{"serial"}, kindSerial, true},    // added 2026-09-25
+	{"1543", []string{"movie"}, kindMovie, true},      // added 2026-09-25
+	{"1577", []string{"multfilm"}, kindMovie, true},   // added 2026-09-25
+	{"1669", []string{"serial"}, kindSerial, true},    // added 2026-09-25
+	{"1940", []string{"movie"}, kindMovie, true},      // added 2026-09-25
+	{"1949", []string{"serial"}, kindSerial, true},    // added 2026-09-25
+	{"1985", []string{"documovie"}, kindMovie, false}, // added 2026-09-25
+	{"2100", []string{"serial"}, kindSerial, true},    // added 2026-09-25
+	{"2366", []string{"serial"}, kindSerial, true},    // added 2026-09-25
+	{"2393", []string{"serial"}, kindSerial, true},    // added 2026-09-25
+	{"2412", []string{"serial"}, kindOther, true},     // added 2026-09-25
+}
+
+var (
+	firstPageCats []string // forums the hourly Parse visits
+	allTaskCats   []string // every forum, for ParseAllTask
+)
+
 var movieCats, serialCats, otherNamedCats = map[string]bool{}, map[string]bool{}, map[string]bool{}
 var categoryTypeMap = map[string][]string{}
 
 func init() {
-	for _, cat := range []string{"549", "22", "1666", "941", "1950", "2090", "2221", "2091", "2092", "2093", "2200", "2540", "934", "505", "124", "1457", "2199", "313", "312", "1247", "2201", "2339", "140", "252"} {
-		movieCats[cat] = true
-		categoryTypeMap[cat] = []string{"movie"}
-	}
-	for _, cat := range []string{"2343", "930", "2365", "208", "539", "209", "1213"} {
-		movieCats[cat] = true
-		categoryTypeMap[cat] = []string{"multfilm"}
-	}
-	for _, cat := range []string{"921", "815", "1460"} {
-		serialCats[cat] = true
-		categoryTypeMap[cat] = []string{"multserial"}
-	}
-	for _, cat := range []string{"842", "235", "242", "819", "1531", "721", "1102", "1120", "1214", "489", "387", "9", "81", "119", "1803", "266", "193", "1690", "1459", "825", "1248", "1288", "325", "534", "694", "704", "915", "1939"} {
-		serialCats[cat] = true
-		categoryTypeMap[cat] = []string{"serial"}
-	}
-	for _, cat := range []string{"1105", "2491", "1389"} {
-		otherNamedCats[cat] = true
-		categoryTypeMap[cat] = []string{"anime"}
-	}
-	for _, cat := range []string{"709", "2109"} {
-		movieCats[cat] = true
-		categoryTypeMap[cat] = []string{"documovie"}
-	}
-	for _, cat := range []string{"46", "671", "2177", "2538", "251", "98", "97", "851", "2178", "821", "2076", "56", "2123", "876", "2139", "1467", "1469", "249", "552", "500", "2112", "1327", "1468", "2168", "2160", "314", "1281", "2110", "979", "2169", "2164", "2166", "2163"} {
-		otherNamedCats[cat] = true
-		categoryTypeMap[cat] = []string{"docuserial", "documovie"}
-	}
-	for _, cat := range []string{"24", "1959", "939", "1481", "113", "115", "882", "1482", "393", "2537", "532", "827"} {
-		otherNamedCats[cat] = true
-		categoryTypeMap[cat] = []string{"tvshow"}
-	}
-	for _, cat := range []string{"1392", "2475", "2493", "2113", "2482", "2103", "2522", "2485", "2486", "2479", "2089", "1794", "845", "2312", "343", "2111", "1527", "2069", "1323", "2009", "2000", "2010", "2006", "2007", "2005", "259", "2004", "1999", "2001", "2002", "283", "1997", "2003", "1608", "1609", "2294", "1229", "1693", "2532", "136", "592", "2533", "1952", "1621", "2075", "1668", "1613", "1614", "1623", "1615", "1630", "2425", "2514", "1616", "2014", "1442", "1491", "1987", "1617", "1620", "1998", "1343", "751", "1697", "255", "260", "261", "256", "1986", "660", "1551", "626", "262", "1326", "978", "1287", "1188", "1667", "1675", "257", "875", "263", "2073", "550", "2124", "1470", "528", "486", "854", "2079", "1336", "2171", "1339", "2455", "1434", "2350", "1472", "2068", "2016"} {
-		otherNamedCats[cat] = true
-		categoryTypeMap[cat] = []string{"sport"}
+	for _, c := range rutrackerCategories {
+		if _, dup := categoryTypeMap[c.id]; dup {
+			panic("rutracker: duplicate category " + c.id)
+		}
+		if len(c.types) == 0 {
+			panic("rutracker: category " + c.id + " has no types — every row would be dropped")
+		}
+		allTaskCats = append(allTaskCats, c.id)
+		if c.quick {
+			firstPageCats = append(firstPageCats, c.id)
+		}
+		categoryTypeMap[c.id] = c.types
+		switch c.kind {
+		case kindMovie:
+			movieCats[c.id] = true
+		case kindSerial:
+			serialCats[c.id] = true
+		default:
+			otherNamedCats[c.id] = true
+		}
 	}
 }
+
 func categoryTypes(cat string) []string {
 	v := categoryTypeMap[cat]
 	if len(v) == 0 {
