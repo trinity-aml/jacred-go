@@ -22,11 +22,33 @@ import (
 
 const trackerName = "ultradox"
 
-// The site's nginx answers 503 to any request whose Referer is not a search
-// engine — google.com and yandex.ru pass, the site's own origin and arbitrary
-// hosts do not. It is a plain referrer gate, not a Cloudflare challenge, so
-// flaresolverr does not help; the headers below are what a Firefox navigation
-// arriving from a search result looks like.
+// recordHost is the host every stored record's URL is built from, and it is
+// deliberately frozen — it is NOT the host we fetch from.
+//
+// Per-row dedup is by URL, and buildTorrent canonicalizes the listing's
+// relative detail link ("/serial-hd/57936-….html") against a host. So while
+// the record URL followed the configured host, every host move re-keyed the
+// entire tracker: the same release came back as a brand new record and the
+// old one stayed behind. The host has already moved twice (ultradox.top →
+// ultradox.onl → ultradox.vip), so this is not hypothetical.
+//
+// Keeping it at ultradox.onl is what preserves the records already stored
+// under that spelling; the value matters only as a stable key, and it still
+// resolves to the same site. Same reasoning as mazepa's viewtopic.php URLs.
+// Change it only together with a migration that rewrites stored URLs.
+const recordHost = "https://ultradox.onl"
+
+// ultradox.onl's nginx answers 503 to any request whose Referer is not a
+// search engine — google.com and yandex.ru pass, the site's own origin and
+// arbitrary hosts do not. It is a plain referrer gate, not a Cloudflare
+// challenge, so flaresolverr does not help; the headers below are what a
+// Firefox navigation arriving from a search result looks like.
+//
+// The configured host is now ultradox.vip, which serves the same pages with
+// no gate at all (measured on /serial-hd/: the full 18-row listing with and
+// without a Referer, while ultradox.onl gives 503 without one — both redirect
+// to the same numbered mirror). These headers stay regardless: the gate is a
+// property of a host, not of the site, and the host has moved twice already.
 //
 // Accept-Encoding is deliberately absent. net/http advertises gzip on its own
 // and transparently decompresses only the encoding it negotiated, so asking
@@ -266,7 +288,6 @@ func (p *Parser) Parse(ctx context.Context, page int) (ParseResult, error) {
 // TorrentDetails per magnet variant found.
 func (p *Parser) expandToTorrents(ctx context.Context, sec section, items []listingItem) ([]filedb.TorrentDetails, error) {
 	out := make([]filedb.TorrentDetails, 0, len(items)*2)
-	host := strings.TrimRight(p.Config.Ultradox.Host, "/")
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	for _, it := range items {
 		if err := p.delay(ctx); err != nil {
@@ -278,7 +299,7 @@ func (p *Parser) expandToTorrents(ctx context.Context, sec section, items []list
 			continue
 		}
 		for _, v := range variants {
-			t := buildTorrent(host, sec, it, v, info, now)
+			t := buildTorrent(recordHost, sec, it, v, info, now)
 			if t != nil {
 				out = append(out, t)
 			}
@@ -554,9 +575,10 @@ func buildTorrent(host string, sec section, item listingItem, v magnetVariant, i
 	}
 
 	// detailURL is path-only on the listing; canonicalize against host so
-	// the saved record is portable. Append a hash anchor so per-variant
-	// records get unique URLs (the bucket key is by name+orig, but
-	// per-row dedup is by url).
+	// the saved record is portable. host is recordHost, never the configured
+	// one — see its comment. Append a hash anchor so per-variant records get
+	// unique URLs (the bucket key is by name+orig, but per-row dedup is by
+	// url).
 	detailURL := item.detailURL
 	if !strings.HasPrefix(detailURL, "http") {
 		detailURL = host + "/" + strings.TrimLeft(detailURL, "/")

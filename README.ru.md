@@ -268,7 +268,7 @@ Kinozal:
 | Anifilm | `https://anifilm.pro` |
 | Leproduction | `https://www.le-production.tv` |
 | Korsars | `https://korsars.pro` |
-| Ultradox | `https://ultradox.onl` |
+| Ultradox | `https://ultradox.vip` |
 | Viruseproject | `https://viruseproject.tv` |
 | Anibelka | `https://anibelka.com` |
 
@@ -605,7 +605,7 @@ GET /cron/ultradox/parsealltask
 GET /cron/ultradox/parselatest
   pages=N   (по умолч. 5)
 ```
-Listing-then-detail трекер, без авторизации. Шесть разделов: `serial-hd`, `hd`, `rufilm`, `camrip`, `webrips`, `anime`. На листинге у магнетов пустой btih — поэтому парсер по каждой раздаче ходит на детальную страницу, где для каждого варианта качества лежит магнет с настоящим info-hash. Каждый вариант сохраняется как отдельная запись. Sid/pir выставлены в 1 (сайт не отдаёт пиры). Хост переехал с `ultradox.top` (мёртв) на `ultradox.onl`, который отдаёт 307 на нумерованное зеркало вида `021.ultadox.space` — надо идти по редиректу, а не хардкодить зеркало. Origin отвечает `503`, если `Referer` не поисковик (google/yandex проходят, собственный origin — нет); это не CF-challenge, и flaresolverr тут не помогает, поэтому парсер сам шлёт нужные браузерные заголовки и в конфиге ничего не требуется. Сертификаты снова валидны, так что `insecureSkipVerify` выключен.
+Listing-then-detail трекер, без авторизации. Шесть разделов: `serial-hd`, `hd`, `rufilm`, `camrip`, `webrips`, `anime`. На листинге у магнетов пустой btih — поэтому парсер по каждой раздаче ходит на детальную страницу, где для каждого варианта качества лежит магнет с настоящим info-hash. Каждый вариант сохраняется как отдельная запись. Sid/pir выставлены в 1 (сайт не отдаёт пиры). Хост переезжал `ultradox.top` (мёртв) → `ultradox.onl` → `ultradox.vip`; каждый отдаёт 307 на нумерованное зеркало (`002.ultradox.vip` сейчас, раньше `021.ultadox.space`) — надо идти по редиректу, а не хардкодить зеркало. `ultradox.onl` отвечает `503`, если `Referer` не поисковик (google/yandex проходят, собственный origin — нет); это не CF-challenge, и flaresolverr тут не помогает, поэтому парсер сам шлёт браузерные заголовки. У `ultradox.vip` такого гейта нет — замерено на `/serial-hd/`: полный листинг из 18 строк и с `Referer`, и без — поэтому он и стоит в конфиге; заголовки оставлены на всякий случай, так как гейт — свойство хоста, а не сайта. URL записей строятся из замороженного `recordHost` (`ultradox.onl`), а **не** из хоста в конфиге: дедуп строки идёт по URL, иначе переезд хоста добавил бы весь трекер заново. Сертификаты снова валидны, так что `insecureSkipVerify` выключен.
 
 #### Viruseproject
 ```

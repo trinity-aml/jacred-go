@@ -271,7 +271,7 @@ Kinozal:
 | Anifilm | `https://anifilm.pro` |
 | Leproduction | `https://www.le-production.tv` |
 | Korsars | `https://korsars.pro` |
-| Ultradox | `https://ultradox.onl` |
+| Ultradox | `https://ultradox.vip` |
 | Viruseproject | `https://viruseproject.tv` |
 | Anibelka | `https://anibelka.com` |
 
@@ -608,7 +608,7 @@ GET /cron/ultradox/parsealltask
 GET /cron/ultradox/parselatest
   pages=N   (default 5)
 ```
-Listing-then-detail tracker, no login. Six sections: `serial-hd`, `hd`, `rufilm`, `camrip`, `webrips`, `anime`. Listing rows expose placeholder magnets with empty btih, so the parser follows each title link to the detail page where every quality variant has a full info-hash. One torrent record is stored per quality variant. Sid/pir are placeholder values (1) — the site doesn't expose peer counts. The host moved from `ultradox.top` (dead) to `ultradox.onl`, which 307s to a numbered mirror such as `021.ultadox.space` — follow the redirect, don't hardcode the mirror. The origin answers `503` unless the `Referer` is a search engine (google/yandex pass; its own origin does not); this is not a CF challenge and flaresolverr does not help, so the parser sends the required browser headers itself and nothing is needed in config. TLS certificates are valid again, so `insecureSkipVerify` is off.
+Listing-then-detail tracker, no login. Six sections: `serial-hd`, `hd`, `rufilm`, `camrip`, `webrips`, `anime`. Listing rows expose placeholder magnets with empty btih, so the parser follows each title link to the detail page where every quality variant has a full info-hash. One torrent record is stored per quality variant. Sid/pir are placeholder values (1) — the site doesn't expose peer counts. The host moved `ultradox.top` (dead) → `ultradox.onl` → `ultradox.vip`; each 307s to a numbered mirror (`002.ultradox.vip` today, `021.ultadox.space` before) — follow the redirect, don't hardcode the mirror. `ultradox.onl` answers `503` unless the `Referer` is a search engine (google/yandex pass; its own origin does not); this is not a CF challenge and flaresolverr does not help, so the parser sends the required browser headers itself. `ultradox.vip` has no such gate — measured on `/serial-hd/`, the full 18-row listing with and without a `Referer` — which is why it is the configured host; the headers stay as insurance, since the gate belongs to a host rather than to the site. Stored record URLs are built from a frozen `recordHost` (`ultradox.onl`), **not** from the configured host: per-row dedup is by URL, so a host move would otherwise re-add the entire tracker. TLS certificates are valid again, so `insecureSkipVerify` is off.
 
 #### Viruseproject
 ```

@@ -311,3 +311,57 @@ func TestListingCarriesThePruneGuardMarker(t *testing.T) {
 		}
 	}
 }
+
+// A stored record's URL must not follow the configured host.
+//
+// The listing prints detail links path-only ("/serial-hd/57936-….html"), so
+// buildTorrent canonicalizes them against a host — and per-row dedup is by URL.
+// While that host came from init.yaml, moving the tracker re-keyed all of it:
+// every release reappeared as a new record and the old one stayed. The host has
+// already moved twice (ultradox.top -> ultradox.onl -> ultradox.vip), so a
+// config edit has to be free.
+func TestRecordURLDoesNotFollowTheConfiguredHost(t *testing.T) {
+	if recordHost != "https://ultradox.onl" {
+		t.Fatalf("recordHost = %q: records already stored under the old spelling "+
+			"would be re-added; change it only with a migration", recordHost)
+	}
+
+	item := listingItem{
+		title:     "Эйфория (3 сезон) [Ultradox]",
+		detailURL: "/serial-hd/54741-jejforija-3-sezon.html",
+	}
+	sec := section{path: "serial-hd", types: []string{"serial"}}
+	v := magnetVariant{
+		hash: "0474f44b58fbec31ec145d610a74488a8231f214",
+		magnet: "magnet:?a", bytes: 21648023723, dn: "x.1080p.torrent", quality: "1080p",
+	}
+
+	rec := buildTorrent(recordHost, sec, item, v, detailInfo{year: 2026}, "")
+	if rec == nil {
+		t.Fatal("buildTorrent returned nil")
+	}
+	const want = "https://ultradox.onl/serial-hd/54741-jejforija-3-sezon.html#h=0474f44b"
+	if got := asString(rec["url"]); got != want {
+		t.Errorf("url = %q, want %q", got, want)
+	}
+
+	// The mirror must never reach a record either: it is numbered and rotates
+	// (002.ultradox.vip today, 021.ultadox.space before).
+	for _, bad := range []string{"ultradox.vip", "ultadox.space", "ultradox.top"} {
+		if strings.Contains(asString(rec["url"]), bad) {
+			t.Errorf("record url carries %q", bad)
+		}
+	}
+}
+
+// expandToTorrents is the only caller, and it must pass recordHost rather than
+// reintroducing the configured one.
+func TestExpandUsesRecordHost(t *testing.T) {
+	src, err := os.ReadFile("ultradox.go")
+	if err != nil {
+		t.Fatalf("read source: %v", err)
+	}
+	if !strings.Contains(string(src), "buildTorrent(recordHost,") {
+		t.Error("buildTorrent is no longer called with recordHost — a host move would re-key the tracker")
+	}
+}

@@ -484,15 +484,21 @@ Korsars:
 # quality variants and one record is stored per variant (sid=1, pir=1).
 # 6 sections: serial-hd, hd, rufilm, camrip, webrips, anime.
 #
-# The host moved from ultradox.top (now dead) to ultradox.onl, which 307s to a
-# numbered mirror such as 021.ultadox.space — follow the redirect, do not
-# hardcode the mirror. The origin answers 503 unless the Referer is a search
-# engine; the parser sends the required browser headers itself, so nothing is
-# needed here. TLS certificates are valid again, so insecureSkipVerify is off.
+# The host moved ultradox.top (dead) -> ultradox.onl -> ultradox.vip. Each one
+# 307s to a numbered mirror (002.ultradox.vip today, 021.ultadox.space before) —
+# follow the redirect, never hardcode the mirror. ultradox.onl answers 503
+# unless the Referer is a search engine; ultradox.vip has no such gate, which is
+# why it is the host here. The parser sends the browser headers either way, so
+# nothing is needed below. TLS certificates are valid, so insecureSkipVerify is
+# off.
+#
+# Changing this host does NOT change stored records: their URLs are built from
+# a frozen recordHost in the parser, because per-row dedup is by URL and a move
+# would otherwise re-add the whole tracker.
 # Supports: parse?page=N, updatetasksparse, parsealltask, parselatest?pages=N
 
 Ultradox:
-  host: "https://ultradox.onl"
+  host: "https://ultradox.vip"
   parseDelay: 5000
 
 # ── Viruseproject ─────────────────────────────────────────────────────────────
