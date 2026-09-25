@@ -332,7 +332,7 @@ func TestRecordURLDoesNotFollowTheConfiguredHost(t *testing.T) {
 	}
 	sec := section{path: "serial-hd", types: []string{"serial"}}
 	v := magnetVariant{
-		hash: "0474f44b58fbec31ec145d610a74488a8231f214",
+		hash:   "0474f44b58fbec31ec145d610a74488a8231f214",
 		magnet: "magnet:?a", bytes: 21648023723, dn: "x.1080p.torrent", quality: "1080p",
 	}
 

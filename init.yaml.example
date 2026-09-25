@@ -530,6 +530,53 @@ Anibelka:
   host: "https://anibelka.com"
   parseDelay: 3000
 
+# ── Rudub ─────────────────────────────────────────────────────────────────────
+# Ex-BaibaKoTV dubbing tracker. cp1251, card layout on browse.php.
+# Only HD 1080 + 2160 are fetched (videoformat 4 and 5).
+#
+# Use rudub.world, NOT a numbered mirror: it redirects to whichever rN is live
+# (r4 today; r3 is already dead), so the config survives a rotation.
+#
+# cookie / login are OPTIONAL. As of 2026-09-25 both the listing and
+# download2.php answer a guest in full. Upstream requires a session, so the
+# site may gate again — the parser detects that (download2.php answering HTML)
+# and stops with work_login instead of failing row by row.
+#
+# Magnets are built WITHOUT announces: every .torrent embeds a passkey, even
+# the ones served anonymously.
+#
+# Supports: parse?limit_page=N
+
+Rudub:
+  host: "https://rudub.world"
+  reqMinute: 8
+  parseDelay: 7000
+  log: true
+  # cookie: "PHPSESSID=...; uid=...; pass=..."
+  # login:
+  #   u: ""
+  #   p: ""
+
+# ── SubsPlease ────────────────────────────────────────────────────────────────
+# Public anime release group. One JSON API, no account, no Cloudflare — so
+# there is nothing to configure beyond the host.
+#
+# Polled harder than the HTML trackers (reqMinute 30 / parseDelay 1000) because
+# the API is fast and every call is a single JSON document.
+#
+# Only 1080p is stored; the size comes from the magnet's xl= parameter, so no
+# .torrent is ever downloaded. Magnets keep their tr= announces — they are
+# public trackers with no passkey.
+#
+# Supports: parse?pages=N, parseshows?limit=N&reset=true
+# The catalogue sweep keeps its cursor in Data/temp/subsplease_shows.json.
+
+SubsPlease:
+  host: "https://subsplease.org"
+  reqMinute: 30
+  parseDelay: 1000
+  log: true
+
 # ── Proxy ─────────────────────────────────────────────────────────────────────
 # Route specific tracker requests through a proxy.
 # Set useproxy: true on the tracker section to activate.

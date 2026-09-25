@@ -1,0 +1,211 @@
+{
+ "tz": "UTC",
+ "schedule": {
+  "Monday": [
+   {
+    "title": "LIAR GAME",
+    "page": "liar-game",
+    "image_url": "/wp-content/uploads/2026/04/156078.jpg",
+    "time": "16:00"
+   }
+  ],
+  "Tuesday": [
+   {
+    "title": "Kimi ga Shinu made Koi wo Shitai",
+    "page": "kimi-ga-shinu-made-koi-wo-shitai",
+    "image_url": "/wp-content/uploads/2026/07/158712.jpg",
+    "time": "12:30"
+   },
+   {
+    "title": "Sora wa Akai Kawa no Hotori",
+    "page": "sora-wa-akai-kawa-no-hotori",
+    "image_url": "/wp-content/uploads/2026/07/158138.jpg",
+    "time": "17:30"
+   }
+  ],
+  "Wednesday": [
+   {
+    "title": "Clevatess S2",
+    "page": "clevatess-s2",
+    "image_url": "/wp-content/uploads/2026/07/157105.jpg",
+    "time": "12:00"
+   },
+   {
+    "title": "Re Zero kara Hajimeru Isekai Seikatsu",
+    "page": "re-zero-kara-hajimeru-isekai-seikatsu",
+    "image_url": "/wp-content/uploads/2021/01/79410.jpg",
+    "time": "14:00"
+   },
+   {
+    "title": "Tensei shitara Ken deshita S2",
+    "page": "",
+    "image_url": "",
+    "time": "15:30"
+   },
+   {
+    "title": "The Prince of Tennis II - U-17 World Cup Final Member Selection Match",
+    "page": "",
+    "image_url": "",
+    "time": "16:30"
+   },
+   {
+    "title": "Toukutsu Ou",
+    "page": "toukutsu-ou",
+    "image_url": "/wp-content/uploads/2026/07/158471.jpg",
+    "time": "17:15"
+   }
+  ],
+  "Thursday": [
+   {
+    "title": "FX Senshi Kurumi-chan",
+    "page": "",
+    "image_url": "",
+    "time": "12:30"
+   },
+   {
+    "title": "Tsuihou sareta Tensei Juukishi wa Game Chishiki de Musou suru",
+    "page": "tsuihou-sareta-tensei-juukishi-wa-game-chishiki-de-musou-suru",
+    "image_url": "/wp-content/uploads/2026/07/158711.jpg",
+    "time": "16:00"
+   }
+  ],
+  "Friday": [
+   {
+    "title": "Link Click S3",
+    "page": "link-click-s3",
+    "image_url": "/wp-includes/images/image-coming-soon-placeholder.png",
+    "time": "03:00"
+   },
+   {
+    "title": "Tensei Shitara Slime Datta Ken S4",
+    "page": "tensei-shitara-slime-datta-ken-s4",
+    "image_url": "/wp-content/uploads/2026/04/156389.jpg",
+    "time": "15:00"
+   },
+   {
+    "title": "Kore Kaite Shine",
+    "page": "kore-kaite-shine",
+    "image_url": "/wp-content/uploads/2026/07/154997.jpg",
+    "time": "15:35"
+   },
+   {
+    "title": "Nige Jouzu no Wakagimi S2",
+    "page": "nige-jouzu-no-wakagimi-s2",
+    "image_url": "/wp-content/uploads/2026/07/156329.jpg",
+    "time": "16:00"
+   },
+   {
+    "title": "Hell Mode S2",
+    "page": "hell-mode-s2",
+    "image_url": "/wp-content/uploads/2026/07/156314.jpg",
+    "time": "16:30"
+   },
+   {
+    "title": "Uchi no Otouto-domo ga Sumimasen",
+    "page": "uchi-no-otouto-domo-ga-sumimasen",
+    "image_url": "/wp-content/uploads/2026/07/156345.jpg",
+    "time": "16:30"
+   }
+  ],
+  "Saturday": [
+   {
+    "title": "Rilakkuma",
+    "page": "rilakkuma",
+    "image_url": "/wp-content/uploads/2026/04/155696.jpg",
+    "time": "01:00"
+   },
+   {
+    "title": "Honzuki no Gekokujou S4",
+    "page": "honzuki-no-gekokujou-s4",
+    "image_url": "/wp-content/uploads/2026/04/155054.jpg",
+    "time": "09:30"
+   },
+   {
+    "title": "Kaijuu 8-gou - Narumi no Heijitsu",
+    "page": "kaijuu-8-gou-narumi-no-heijitsu",
+    "image_url": "/wp-includes/images/image-coming-soon-placeholder.png",
+    "time": "11:00"
+   },
+   {
+    "title": "Detective Conan",
+    "page": "detective-conan",
+    "image_url": "/wp-content/uploads/2020/10/75199.jpg",
+    "time": "11:30"
+   },
+   {
+    "title": "Mairimashita! Iruma-kun S4",
+    "page": "mairimashita-iruma-kun-s4",
+    "image_url": "/wp-content/uploads/2026/04/154048.jpg",
+    "time": "12:00"
+   },
+   {
+    "title": "Yasei no Last Boss ga Arawareta!",
+    "page": "yasei-no-last-boss-ga-arawareta",
+    "image_url": "/wp-content/uploads/2025/09/145051.jpg",
+    "time": "13:30"
+   },
+   {
+    "title": "Grow Up Show - Himawari no Circus-dan",
+    "page": "grow-up-show-himawari-no-circus-dan",
+    "image_url": "/wp-content/uploads/2026/07/158716.jpg",
+    "time": "16:00"
+   },
+   {
+    "title": "Hanaori-san wa Tensei shitemo Kenka ga Shitai",
+    "page": "hanaori-san-wa-tensei-shitemo-kenka-ga-shitai",
+    "image_url": "/wp-content/uploads/2026/07/156331.jpg",
+    "time": "17:30"
+   }
+  ],
+  "Sunday": [
+   {
+    "title": "Meitantei Precure!",
+    "page": "meitantei-precure",
+    "image_url": "/wp-content/uploads/2026/02/154944.jpg",
+    "time": "01:30"
+   },
+   {
+    "title": "Digimon Beatbreak",
+    "page": "digimon-beatbreak",
+    "image_url": "/wp-content/uploads/2025/10/151242.jpg",
+    "time": "03:00"
+   },
+   {
+    "title": "Let's Go Kaiki-gumi",
+    "page": "lets-go-kaiki-gumi",
+    "image_url": "/wp-content/uploads/2026/07/158581.jpg",
+    "time": "08:30"
+   },
+   {
+    "title": "Seihantai na Kimi to Boku",
+    "page": "seihantai-na-kimi-to-boku",
+    "image_url": "/wp-content/uploads/2026/01/154457.jpg",
+    "time": "08:30"
+   },
+   {
+    "title": "Tempal - Item no Chikara",
+    "page": "",
+    "image_url": "",
+    "time": "14:30"
+   },
+   {
+    "title": "Mushoku Tensei S3",
+    "page": "mushoku-tensei-s3",
+    "image_url": "/wp-content/uploads/2026/07/158340.jpg",
+    "time": "15:00"
+   },
+   {
+    "title": "Tensei Kizoku, Kantei Skill de Nariagaru",
+    "page": "tensei-kizoku-kantei-skill-de-nariagaru",
+    "image_url": "/wp-content/uploads/2024/04/139538.jpg",
+    "time": "15:00"
+   },
+   {
+    "title": "One Piece",
+    "page": "one-piece",
+    "image_url": "/wp-content/uploads/2020/10/73245.jpg",
+    "time": "16:00"
+   }
+  ]
+ }
+}

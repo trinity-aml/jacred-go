@@ -38,9 +38,11 @@ import (
 	"jacred/cron/mazepa"
 	"jacred/cron/megapeer"
 	"jacred/cron/nnmclub"
+	"jacred/cron/rudub"
 	"jacred/cron/rutor"
 	"jacred/cron/rutracker"
 	"jacred/cron/selezen"
+	"jacred/cron/subsplease"
 	"jacred/cron/toloka"
 	"jacred/cron/torrentby"
 	"jacred/cron/ultradox"
@@ -113,6 +115,8 @@ type Server struct {
 	UltradoxParser      *ultradox.Parser
 	ViruseprojectParser *viruseproject.Parser
 	AnibelkaParser      *anibelka.Parser
+	SubsPleaseParser    *subsplease.Parser
+	RudubParser         *rudub.Parser
 	// Runs remembers the outcome of every cron call so /stats/parsers can
 	// answer "is this tracker still working" without anyone reading the log.
 	Runs     *runStore
@@ -147,7 +151,7 @@ func New(cfg app.Config, db *filedb.DB, tracksDB *tracks.DB, wwwroot string) *Se
 		tracksDB = tracks.New("Data")
 		_ = tracksDB.Load()
 	}
-	return &Server{Config: cfg, DB: db, WWWRoot: wwwroot, Version: buildVersion(), KnabenParser: knaben.New(cfg, db), AnidubParser: anidub.New(cfg, db), AnilibertyParser: aniliberty.New(cfg, db), AnimelayerParser: animelayer.New(cfg, db), AnistarParser: anistar.New(cfg, db, "Data"), AnifilmParser: anifilm.New(cfg, db, "Data"), BitruParser: bitru.New(cfg, db, "Data"), BitruAPIParser: bitruapi.New(cfg, db, "Data"), RutorParser: rutor.New(cfg, db, "Data"), MegapeerParser: megapeer.New(cfg, db), TorrentByParser: torrentby.New(cfg, db, "Data"), NNMClubParser: nnmclub.New(cfg, db, "Data"), LostfilmParser: lostfilm.New(cfg, db), RutrackerParser: rutracker.New(cfg, db, "Data"), KinozalParser: kinozal.New(cfg, db, "Data"), TolokaParser: toloka.New(cfg, db, "Data"), SelezenParser: selezen.New(cfg, db, "Data"), LeproductionParser: leproduction.New(cfg, db, "Data"), MazepaParser: mazepa.New(cfg, db, "Data"), KorsarsParser: korsars.New(cfg, db, "Data"), UltradoxParser: ultradox.New(cfg, db, "Data"), ViruseprojectParser: viruseproject.New(cfg, db, "Data"), AnibelkaParser: anibelka.New(cfg, db, "Data"), TracksDB: tracksDB, Runs: newRunStore(db.DataDir), cache: newSearchCache(5*time.Minute, 10000)}
+	return &Server{Config: cfg, DB: db, WWWRoot: wwwroot, Version: buildVersion(), KnabenParser: knaben.New(cfg, db), AnidubParser: anidub.New(cfg, db), AnilibertyParser: aniliberty.New(cfg, db), AnimelayerParser: animelayer.New(cfg, db), AnistarParser: anistar.New(cfg, db, "Data"), AnifilmParser: anifilm.New(cfg, db, "Data"), BitruParser: bitru.New(cfg, db, "Data"), BitruAPIParser: bitruapi.New(cfg, db, "Data"), RutorParser: rutor.New(cfg, db, "Data"), MegapeerParser: megapeer.New(cfg, db), TorrentByParser: torrentby.New(cfg, db, "Data"), NNMClubParser: nnmclub.New(cfg, db, "Data"), LostfilmParser: lostfilm.New(cfg, db), RutrackerParser: rutracker.New(cfg, db, "Data"), KinozalParser: kinozal.New(cfg, db, "Data"), TolokaParser: toloka.New(cfg, db, "Data"), SelezenParser: selezen.New(cfg, db, "Data"), LeproductionParser: leproduction.New(cfg, db, "Data"), MazepaParser: mazepa.New(cfg, db, "Data"), KorsarsParser: korsars.New(cfg, db, "Data"), UltradoxParser: ultradox.New(cfg, db, "Data"), ViruseprojectParser: viruseproject.New(cfg, db, "Data"), AnibelkaParser: anibelka.New(cfg, db, "Data"), SubsPleaseParser: subsplease.New(cfg, db, "Data"), RudubParser: rudub.New(cfg, db, "Data"), TracksDB: tracksDB, Runs: newRunStore(db.DataDir), cache: newSearchCache(5*time.Minute, 10000)}
 }
 
 // GetConfig returns a thread-safe copy of the current config.
@@ -209,6 +213,8 @@ func (s *Server) UpdateConfig(cfg app.Config) {
 	s.UltradoxParser.UpdateConfig(cfg)
 	s.UltradoxParser.Fetcher.UpdateConfig(cfg)
 	s.ViruseprojectParser.Config = cfg
+	s.SubsPleaseParser.Config = cfg
+	s.RudubParser.Config = cfg
 	s.ViruseprojectParser.Fetcher.UpdateConfig(cfg)
 	s.AnibelkaParser.Config = cfg
 	s.AnibelkaParser.Fetcher.UpdateConfig(cfg)
@@ -342,6 +348,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/cron/anibelka/updatetasksparse", s.handleCronAnibelkaUpdateTasksParse)
 	mux.HandleFunc("/cron/anibelka/parsealltask", s.handleCronAnibelkaParseAllTask)
 	mux.HandleFunc("/cron/anibelka/parselatest", s.handleCronAnibelkaParseLatest)
+	mux.HandleFunc("/cron/subsplease/parse", s.handleCronSubsPleaseParse)
+	mux.HandleFunc("/cron/subsplease/parseshows", s.handleCronSubsPleaseParseShows)
+	mux.HandleFunc("/cron/rudub/parse", s.handleCronRudubParse)
 	return s.middleware(s.recordCronRuns(mux))
 }
 
@@ -1310,6 +1319,46 @@ func (s *Server) handleCronViruseprojectParse(w http.ResponseWriter, r *http.Req
 		return
 	}
 	res, err := s.ViruseprojectParser.Parse(context.Background(), parseOptionalInt(r.URL.Query(), "limit_page", 1))
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": cronErrorStatus(err, res.Status)})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": res.Status, "fetched": res.Fetched, "added": res.Added, "updated": res.Updated, "skipped": res.Skipped, "failed": res.Failed, "text": fmt.Sprintf("fetched=%d +%d ~%d =%d failed=%d", res.Fetched, res.Added, res.Updated, res.Skipped, res.Failed)})
+}
+
+func (s *Server) handleCronRudubParse(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	res, err := s.RudubParser.Parse(context.Background(), parseOptionalInt(r.URL.Query(), "limit_page", 10))
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": cronErrorStatus(err, res.Status)})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": res.Status, "fetched": res.Fetched, "added": res.Added, "updated": res.Updated, "skipped": res.Skipped, "failed": res.Failed, "text": fmt.Sprintf("fetched=%d +%d ~%d =%d failed=%d", res.Fetched, res.Added, res.Updated, res.Skipped, res.Failed)})
+}
+
+func (s *Server) handleCronSubsPleaseParse(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	res, err := s.SubsPleaseParser.Parse(context.Background(), parseOptionalInt(r.URL.Query(), "pages", 2))
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": cronErrorStatus(err, res.Status)})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": res.Status, "fetched": res.Fetched, "added": res.Added, "updated": res.Updated, "skipped": res.Skipped, "failed": res.Failed, "text": fmt.Sprintf("fetched=%d +%d ~%d =%d failed=%d", res.Fetched, res.Added, res.Updated, res.Skipped, res.Failed)})
+}
+
+func (s *Server) handleCronSubsPleaseParseShows(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	reset := strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("reset")), "true")
+	res, err := s.SubsPleaseParser.ParseShows(context.Background(), parseOptionalInt(r.URL.Query(), "limit", 50), reset)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "status": cronErrorStatus(err, res.Status)})
 		return

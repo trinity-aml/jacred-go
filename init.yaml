@@ -285,3 +285,15 @@ globalproxy:
     password: ""
     list:
       - "socks5://127.0.0.1:9050"
+
+SubsPlease:
+  host: "https://subsplease.org"
+  reqMinute: 30
+  parseDelay: 1000
+  log: true
+
+Rudub:
+  host: "https://rudub.world"
+  reqMinute: 8
+  parseDelay: 7000
+  log: true

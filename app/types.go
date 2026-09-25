@@ -114,6 +114,8 @@ type Config struct {
 	Ultradox            TrackerSettings      `json:"Ultradox"`
 	Viruseproject       TrackerSettings      `json:"Viruseproject"`
 	Anibelka            TrackerSettings      `json:"Anibelka"`
+	SubsPlease          TrackerSettings      `json:"SubsPlease"`
+	Rudub               TrackerSettings      `json:"Rudub"`
 	GlobalProxy         []ProxySettings      `json:"globalproxy"`
 }
 
@@ -166,6 +168,8 @@ func DefaultConfig() Config {
 		Ultradox:            TrackerSettings{Host: "https://ultradox.vip", ReqMinute: 8, ParseDelay: 7000},
 		Viruseproject:       TrackerSettings{Host: "https://viruseproject.tv", ReqMinute: 8, ParseDelay: 7000},
 		Anibelka:            TrackerSettings{Host: "https://anibelka.com", ReqMinute: 8, ParseDelay: 7000},
+		SubsPlease:          TrackerSettings{Host: "https://subsplease.org", ReqMinute: 30, ParseDelay: 1000},
+		Rudub:               TrackerSettings{Host: "https://rudub.world", ReqMinute: 8, ParseDelay: 7000},
 		GlobalProxy:         []ProxySettings{{Pattern: `\.onion`, List: []string{"socks5://127.0.0.1:9050"}}},
 	}
 }

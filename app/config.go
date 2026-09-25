@@ -277,6 +277,10 @@ func trackerByName(cfg *Config, name string) *TrackerSettings {
 		return &cfg.Viruseproject
 	case "Anibelka":
 		return &cfg.Anibelka
+	case "SubsPlease":
+		return &cfg.SubsPlease
+	case "Rudub":
+		return &cfg.Rudub
 	default:
 		return nil
 	}

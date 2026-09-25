@@ -1,9 +1,9 @@
 # jacred-go
 
-A multi-tracker torrent aggregator in a single Go binary. 23 parsers cover 22
-Russian and Ukrainian trackers, feeding one flat-file database behind search,
-sync and stats APIs, with a Jackett-compatible endpoint for clients that expect
-one.
+A multi-tracker torrent aggregator in a single Go binary. 25 parsers cover 24
+trackers — mostly Russian and Ukrainian, plus one English-language anime release
+group — feeding one flat-file database behind search, sync and stats APIs, with
+a Jackett-compatible endpoint for clients that expect one.
 
 Three things it does that a plain indexer proxy does not:
 
@@ -274,6 +274,8 @@ Kinozal:
 | Ultradox | `https://ultradox.vip` |
 | Viruseproject | `https://viruseproject.tv` |
 | Anibelka | `https://anibelka.com` |
+| Rudub | `https://rudub.world` |
+| SubsPlease | `https://subsplease.org` |
 
 ### Proxy
 
@@ -481,6 +483,36 @@ GET /cron/anibelka/parselatest
 Anime-only phpBB tracker, no login. Five forums under its "Скачать аниме" menu (32 Универсальные, 33 С озвучкой, 34 С субтитрами, 36 Полнометражки, 37 PSP), 15 topics per listing page, pagination via `?start=N`. There are no magnets in the markup: each topic carries exactly one `.torrent` attachment, so the parser downloads it and derives the magnet from the info dict — two requests per topic, hence a conservative `parseDelay`.
 
 **Do not add credentials for this tracker.** A logged-in `.torrent` download embeds the account's personal passkey in the announce URL, and that passkey would then be copied into every magnet this instance serves over the search API and `/sync`. Anonymous downloads produce the same info hash and login grants no extra topics.
+
+#### Rudub
+```
+GET /cron/rudub/parse
+  limit_page=N   (default 10, max 100) — pages per videoformat
+```
+Ex-BaibaKoTV Russian dubbing tracker, cp1251, card layout on `browse.php`. Only **HD 1080 and 2160** are fetched at all (`videoformat=4` and `5`); 720p and SD are never requested rather than parsed and discarded. `rudub.world` is the configured host and redirects to whichever numbered mirror is live (`r4` today, and `r3` is already dead) — use it rather than pinning `rN.rudub.world`.
+
+The listing carries **no magnets**: each card links a `.torrent` at `download2.php?id=N`, and the magnet is derived from it. A stored magnet is reused whenever the title is unchanged, so a pass only downloads what is new.
+
+**`TorrentBytesToMagnetNoTrackersErr` is mandatory here.** Every `.torrent` embeds a `passkey` in its announce — verified on *anonymous* downloads too, where two different torrents came back carrying the same key. Appending announces as `tr=` would republish it through the search API, torznab and `/sync`.
+
+Credentials are optional and that is measured, not assumed: on 2026-09-25 both the listing and `download2.php` answered a guest in full. Upstream requires a login, so the site may gate again — `download2.php` answering **HTTP 200 with an HTML body** is the signal, and it aborts the run with `work_login` rather than producing one failure per row.
+
+`relased` comes only from a `(YYYY)` group in the title. Upstream falls back to the card's upload year; across two live pages only 2 of 60 titles carried a year at all, and that one said 2022 on a card uploaded in 2025 — so the fallback would stamp a wrong year on ~97% of records, and Jackett matches years within ±1. The cost of leaving it 0 is exclusion from `/api/v1.0/qualitys` only.
+
+#### SubsPlease
+```
+GET /cron/subsplease/parse
+  pages=N   (default 2) — pages of f=latest to walk
+
+GET /cron/subsplease/parseshows
+  limit=N   (default 50, max 200) — shows per batch
+  reset=true — restart the catalogue sweep from the top
+```
+Public anime release group, one JSON API, no account and no Cloudflare. `parse` walks `/api/?f=latest`; `parseshows` sweeps `/shows/` (1203 shows on 2026-09-25) a batch at a time through `/api/?f=show`, continuing from a cursor in `Data/temp/subsplease_shows.json` — airing shows from `/api/?f=schedule` are processed first, so a run cut short has spent its budget where releases actually appear. A show's numeric `sid` is scraped once from its page and then cached, which halves the requests on later sweeps.
+
+Only **1080p** is stored: every release is also published at 480/540 and 720, and keeping all three would put three records under one name for the same episode. The size comes from the magnet's `xl=` parameter, so no `.torrent` is ever fetched. Magnets keep their `tr=` announces — these are public trackers (nyaa.tracker.wf, opentrackr) with no passkey, unlike mazepa or anibelka.
+
+The API answers **HTTP 200 with a `limit_reached` body** when it throttles. That is reported as status `rate_limited` and, on the first page, as an error rather than an empty success — a throttled run and a quiet day are otherwise indistinguishable.
 
 #### Bitru
 ```
@@ -1182,7 +1214,7 @@ When `web: true`, three pages are served. The UI assets (HTML, icons, manifest) 
 | `/` | `index.html` — torrent search (Kinopoisk / IMDB / title), filters, magnet links, TorrServer launcher |
 | `/stats` | `stats.html` — per-tracker statistics dashboard (new/updated/checked counts, last run time) |
 | `/settings` | `settings.html` — editor for the full `init.yaml` config (server, logging, sync, trackers, proxies) |
-| `/trackers` | `trackers.html` — health of all 23 parsers: last run, route, authorization, run-now |
+| `/trackers` | `trackers.html` — health of all 25 parsers: last run, route, authorization, run-now |
 | `/opensearch.xml` | OpenSearch description, so the browser can search this instance from its address bar |
 
 The Settings page talks to `/admin/config` (GET to load, POST to save) and is local-only (`127.0.0.1` / RFC1918 / link-local / ULA). On save the server writes `init.yaml` atomically, re-parses it with the same loader used on startup, and calls `UpdateConfig` to apply new values to the running server, DB, and all 21 parsers — no restart needed.

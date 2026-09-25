@@ -249,8 +249,8 @@ type TrackerState struct {
 var trackerNames = []string{
 	"anibelka", "anidub", "anifilm", "aniliberty", "animelayer", "anistar",
 	"bitru", "bitruapi", "kinozal", "knaben", "korsars", "leproduction",
-	"lostfilm", "mazepa", "megapeer", "nnmclub", "rutor", "rutracker",
-	"selezen", "toloka", "torrentby", "ultradox", "viruseproject",
+	"lostfilm", "mazepa", "megapeer", "nnmclub", "rudub", "rutor", "rutracker",
+	"selezen", "subsplease", "toloka", "torrentby", "ultradox", "viruseproject",
 }
 
 // trackerSettings maps a cron route name to its config section. Explicit rather
@@ -293,6 +293,10 @@ func trackerSettings(cfg app.Config, name string) app.TrackerSettings {
 		return cfg.Rutracker
 	case "selezen":
 		return cfg.Selezen
+	case "rudub":
+		return cfg.Rudub
+	case "subsplease":
+		return cfg.SubsPlease
 	case "toloka":
 		return cfg.Toloka
 	case "torrentby":
