@@ -485,19 +485,35 @@ func (s *Server) handleJackett(w http.ResponseWriter, r *http.Request) {
 	}
 	q := r.URL.Query()
 	categoryRaw := firstCategoryValue(q)
-	res, err := s.DB.JackettSearch(filedb.SearchParams{
+	query := firstQueryURL(q, "query", "q")
+	params := filedb.SearchParams{
 		APIKey:        firstQueryURL(q, "apikey", "apiKey"),
-		Query:         firstQueryURL(q, "query", "q"),
+		Query:         query,
 		Title:         q.Get("title"),
 		TitleOriginal: q.Get("title_original"),
 		Year:          atoi(q.Get("year")),
 		IsSerial:      parseOptionalInt(q, "is_serial", -1),
 		CategoryRaw:   categoryRaw,
 		UserAgent:     r.UserAgent(),
-	})
+	}
+	res, err := s.DB.JackettSearch(params)
 	if err != nil {
 		writeCanonicalJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "jacred": true, "Results": []any{}})
 		return
+	}
+	// Sonarr, Prowlarr and AIOStreams append the episode to the title in a plain
+	// q=, and a stored name never carries one — SearchName reduces
+	// "The Boys S02E03" to "theboyss02e03", which matches nothing. Retry without
+	// those tokens. Deliberately a fallback rather than a second query merged
+	// into every search: a query that already found something cannot be diluted
+	// or slowed down by it.
+	if len(res.Results) == 0 {
+		if stripped, _, _ := core.StripSeasonEpisode(query); stripped != "" {
+			params.Query = stripped
+			if retry, retryErr := s.DB.JackettSearch(params); retryErr == nil && len(retry.Results) > 0 {
+				res = retry
+			}
+		}
 	}
 	data := writeCanonicalJSONCached(w, http.StatusOK, map[string]any{"Results": s.buildResults(res.Results, res.RqNum), "jacred": true})
 	if data != nil {
@@ -528,7 +544,7 @@ func (s *Server) handleTorrents(w http.ResponseWriter, r *http.Request) {
 			altname = resolvedAlt
 		}
 	}
-	items, err := s.DB.TorrentsSearch(filedb.TorrentsParams{
+	params := filedb.TorrentsParams{
 		Search:    search,
 		AltName:   altname,
 		Exact:     parseBool(firstQueryURL(q, "exact")),
@@ -540,7 +556,25 @@ func (s *Server) handleTorrents(w http.ResponseWriter, r *http.Request) {
 		Relased:   atoi(firstQueryURL(q, "relased", "released")),
 		Quality:   atoi(firstQueryURL(q, "quality")),
 		Season:    atoi(firstQueryURL(q, "season")),
-	})
+	}
+	items, err := s.DB.TorrentsSearch(params)
+	if err == nil && len(items) == 0 {
+		// Same fallback as the Jackett path, except this endpoint can filter by
+		// season — so the number is put to work instead of thrown away, and a
+		// request for "Пацаны 2 сезон" stays a request for season 2 rather than
+		// widening to every season. An explicit season= always wins: it is what
+		// the caller actually asked for, the other is inferred from prose.
+		if stripped, season, _ := core.StripSeasonEpisode(search); stripped != "" {
+			retryParams := params
+			retryParams.Search = stripped
+			if retryParams.Season == 0 {
+				retryParams.Season = season
+			}
+			if retry, retryErr := s.DB.TorrentsSearch(retryParams); retryErr == nil && len(retry) > 0 {
+				items = retry
+			}
+		}
+	}
 	if err != nil {
 		writeCanonicalJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return

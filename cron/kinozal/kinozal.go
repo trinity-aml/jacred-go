@@ -215,11 +215,15 @@ func (p *Parser) UpdateTasksParse(ctx context.Context) (map[string]map[string][]
 			if _, ok := p.tasks[cat]; !ok {
 				p.tasks[cat] = map[string][]Task{}
 			}
+			// Keep every existing slot here and prune once, below, through the
+			// guarded helper. Filtering by `t.Page <= maxPages` at this point
+			// looks equivalent but is not: browsePagesRe fails to match on any
+			// body that is not a listing — a Cloudflare page, the login wall,
+			// a changed layout — maxPages stays 0, and the whole sweep plan for
+			// the category is dropped to page 0 without a word.
 			pagesMap := map[int]Task{}
 			for _, t := range p.tasks[cat][arg] {
-				if t.Page <= maxPages {
-					pagesMap[t.Page] = t
-				}
+				pagesMap[t.Page] = t
 			}
 			for page := 0; page <= maxPages; page++ {
 				if _, ok := pagesMap[page]; !ok {
@@ -231,6 +235,10 @@ func (p *Parser) UpdateTasksParse(ctx context.Context) (map[string]map[string][]
 				merged = append(merged, t)
 			}
 			sort.Slice(merged, func(i, j int) bool { return merged[i].Page < merged[j].Page })
+			merged, pruned := core.PruneTaskPages(merged, func(t Task) int { return t.Page }, maxPages)
+			if pruned > 0 {
+				log.Printf("kinozal: updatetasksparse cat=%s arg=%q maxPage=%d pruned=%d remaining=%d", cat, arg, maxPages, pruned, len(merged))
+			}
 			p.tasks[cat][arg] = merged
 		}
 	}

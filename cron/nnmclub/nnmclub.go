@@ -393,6 +393,14 @@ func (p *Parser) UpdateTasksParse(ctx context.Context) (map[string][]Task, error
 			merged = append(merged, t)
 		}
 		sort.Slice(merged, func(i, j int) bool { return merged[i].Page < merged[j].Page })
+		// The map was additive only, so a category that shrank kept its old
+		// slots and ParseAllTask re-fetched each one every sweep. maxPages is
+		// what this loop just read off the live pager; when it could not be
+		// read it is 0 and PruneTaskPages deliberately changes nothing.
+		merged, pruned := core.PruneTaskPages(merged, func(t Task) int { return t.Page }, maxPages)
+		if pruned > 0 {
+			log.Printf("nnmclub: updatetasksparse cat=%s maxPage=%d pruned=%d remaining=%d", cat, maxPages, pruned, len(merged))
+		}
 		p.tasks[cat] = merged
 	}
 	if err := p.saveTasksLocked(); err != nil {

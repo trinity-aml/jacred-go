@@ -549,6 +549,12 @@ func (p *Parser) UpdateTasksParse(ctx context.Context) ([]Task, error) {
 			maxPage = n
 		}
 	}
+	// Evidence that the page parsed above really was the catalog, kept separate
+	// from the pager itself. maxPage seeds at 1, so an unread pager and a real
+	// one-page catalog are the same number; without this a body that is not a
+	// listing would trim the sweep plan to a single page. dle_root is the marker
+	// parsePage already trusts for exactly this question.
+	pageIsAListing := strings.Contains(body, "dle_root")
 
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -569,6 +575,10 @@ func (p *Parser) UpdateTasksParse(ctx context.Context) ([]Task, error) {
 		merged = append(merged, t)
 	}
 	sort.Slice(merged, func(i, j int) bool { return merged[i].Page < merged[j].Page })
+	merged, pruned := core.PruneTaskPagesIfRead(merged, func(t Task) int { return t.Page }, maxPage, pageIsAListing)
+	if pruned > 0 {
+		log.Printf("selezen: updatetasksparse maxPage=%d pruned=%d remaining=%d", maxPage, pruned, len(merged))
+	}
 	p.tasks = merged
 	if err := p.saveTasksLocked(); err != nil {
 		return nil, err

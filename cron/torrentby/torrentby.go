@@ -233,6 +233,13 @@ func (p *Parser) UpdateTasksParse(ctx context.Context) (map[string][]Task, error
 			merged = append(merged, t)
 		}
 		sort.Slice(merged, func(i, j int) bool { return merged[i].Page < merged[j].Page })
+		// Additive-only until now: a category that shrank kept its old slots and
+		// ParseAllTask re-fetched each one every sweep. A pager that did not
+		// parse yields 0, and PruneTaskPages then changes nothing.
+		merged, pruned := core.PruneTaskPages(merged, func(t Task) int { return t.Page }, cm.maxPage)
+		if pruned > 0 {
+			log.Printf("torrentby: updatetasksparse cat=%s maxPage=%d pruned=%d remaining=%d", cm.cat, cm.maxPage, pruned, len(merged))
+		}
 		p.tasks[cm.cat] = merged
 	}
 	if err := p.saveTasksLocked(); err != nil {

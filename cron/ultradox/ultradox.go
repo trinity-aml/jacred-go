@@ -798,6 +798,13 @@ func (p *Parser) UpdateTasksParse(ctx context.Context) (map[string][]Task, error
 				maxPage = n
 			}
 		}
+		// Evidence that this really was a listing, independent of the pager.
+		// maxPage seeds at 1, so an unread pager and a genuine one-page section
+		// are indistinguishable by number alone; a row of the torrent table is
+		// the cheapest thing a non-listing body cannot fake. fetchPage already
+		// rejects status >= 400, so what is left to guard is a 200 that is not
+		// the page we expected.
+		pageIsAListing := rowSplitRe.MatchString(body)
 		existing := p.tasks[sec.path]
 		pages := map[int]Task{}
 		for _, t := range existing {
@@ -813,6 +820,10 @@ func (p *Parser) UpdateTasksParse(ctx context.Context) (map[string][]Task, error
 			merged = append(merged, t)
 		}
 		sort.Slice(merged, func(i, j int) bool { return merged[i].Page < merged[j].Page })
+		merged, pruned := core.PruneTaskPagesIfRead(merged, func(t Task) int { return t.Page }, maxPage, pageIsAListing)
+		if pruned > 0 {
+			log.Printf("ultradox: updatetasksparse section=%s maxPage=%d pruned=%d remaining=%d", sec.path, maxPage, pruned, len(merged))
+		}
 		p.tasks[sec.path] = merged
 	}
 	if err := p.saveTasksLocked(); err != nil {

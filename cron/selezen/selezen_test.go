@@ -80,3 +80,21 @@ func TestLoginConfigured(t *testing.T) {
 		t.Error("a configured cookie should count as configured login")
 	}
 }
+
+// The task map is pruned to the live pager, and maxPage seeds at 1 — so an
+// unread pager and a genuine one-page catalog are the same number. dle_root is
+// the separate evidence that the body really was the catalog; if it ever stops
+// appearing, pruning must stop rather than trim the sweep plan to one page.
+func TestCatalogCarriesThePruneGuardMarker(t *testing.T) {
+	if !strings.Contains(loadFixture(t, "relizy_guest.html"), "dle_root") {
+		t.Error("the captured catalog has no dle_root; the prune guard would refuse to ever prune")
+	}
+	for _, notAListing := range []string{
+		"", "<html><body>503</body></html>",
+		`<!DOCTYPE html><html><head><title>Just a moment`,
+	} {
+		if strings.Contains(notAListing, "dle_root") {
+			t.Errorf("a non-listing body satisfies the guard: %.40s", notAListing)
+		}
+	}
+}

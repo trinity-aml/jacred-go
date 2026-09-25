@@ -293,3 +293,21 @@ func TestRufilmKeepsOriginalEmpty(t *testing.T) {
 		t.Errorf("hd originalname = %q, want %q", got, "Svoya v dosku")
 	}
 }
+
+// Pruning the task map trusts maxPage, which seeds at 1, so a body that is not
+// a listing must be recognised separately — a row of the torrent table is the
+// cheapest thing a Cloudflare page or an error page cannot fake. fetchPage
+// already rejects status >= 400; this guards the 200 that is not our page.
+func TestListingCarriesThePruneGuardMarker(t *testing.T) {
+	if !rowSplitRe.MatchString(loadTestdata(t, "listing_serial-hd.html")) {
+		t.Error("the captured listing has no table rows; the prune guard would refuse to ever prune")
+	}
+	for _, notAListing := range []string{
+		"", "<html><body>503 Service Temporarily Unavailable</body></html>",
+		`<!DOCTYPE html><html><head><title>Just a moment`,
+	} {
+		if rowSplitRe.MatchString(notAListing) {
+			t.Errorf("a non-listing body satisfies the guard: %.40s", notAListing)
+		}
+	}
+}
