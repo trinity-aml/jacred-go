@@ -47,6 +47,9 @@ flaresolverr_go:
   driver_path: ""
   chrome_version: ""
 
+scheduler: false
+schedulerfile: "crontab"
+
 Rutor:
   host: "https://rutor.is"
   useproxy: false

@@ -53,8 +53,13 @@ type FlareSolverrGoConfig struct {
 }
 
 type Config struct {
-	ListenIP            string               `json:"listenip"`
-	ListenPort          int                  `json:"listenport"`
+	ListenIP   string `json:"listenip"`
+	ListenPort int    `json:"listenport"`
+	// Scheduler runs the jobs in SchedulerFile from inside the process, so a
+	// deployment needs no system cron. Off by default: the deployed crontab
+	// keeps working, and enabling both would run every job twice.
+	Scheduler           bool                 `json:"scheduler"`
+	SchedulerFile       string               `json:"schedulerfile"`
 	APIKey              string               `json:"apikey,omitempty"`
 	DevKey              string               `json:"devkey,omitempty"`
 	MergeDuplicates     bool                 `json:"mergeduplicates"`
@@ -123,6 +128,8 @@ func DefaultConfig() Config {
 	return Config{
 		ListenIP:            "any",
 		ListenPort:          9117,
+		Scheduler:           false,
+		SchedulerFile:       "crontab",
 		MergeDuplicates:     true,
 		MergeNumDuplicates:  true,
 		FDBPathLevels:       2,

@@ -530,6 +530,25 @@ Anibelka:
   host: "https://anibelka.com"
   parseDelay: 3000
 
+# ── Scheduler ─────────────────────────────────────────────────────────────────
+# Run the jobs in the crontab file from inside the process, so the deployment
+# needs no system cron.
+#
+# OFF by default on purpose: the deployed system crontab keeps working, and
+# enabling both would run every job twice. To switch over, set scheduler: true
+# and then remove the system crontab entry.
+#
+# schedulerfile is read relative to the working directory. It is the same file
+# system cron would use, so there is nothing to migrate and no second place to
+# describe a schedule. Only `curl -s "<url>"` lines are accepted and nothing is
+# passed to a shell; anything else is logged and skipped.
+#
+# The file is re-read when it changes, so an edit needs no restart.
+# GET /admin/scheduler shows what is actually loaded.
+
+scheduler: false
+schedulerfile: "crontab"
+
 # ── Rudub ─────────────────────────────────────────────────────────────────────
 # Ex-BaibaKoTV dubbing tracker. cp1251, card layout on browse.php.
 # Only HD 1080 + 2160 are fetched (videoformat 4 and 5).
@@ -549,7 +568,6 @@ Anibelka:
 
 Rudub:
   host: "https://rudub.world"
-  reqMinute: 8
   parseDelay: 7000
   log: true
   # cookie: "PHPSESSID=...; uid=...; pass=..."
@@ -561,8 +579,8 @@ Rudub:
 # Public anime release group. One JSON API, no account, no Cloudflare — so
 # there is nothing to configure beyond the host.
 #
-# Polled harder than the HTML trackers (reqMinute 30 / parseDelay 1000) because
-# the API is fast and every call is a single JSON document.
+# Polled harder than the HTML trackers (parseDelay 1000 rather than 7000)
+# because the API is fast and every call is a single JSON document.
 #
 # Only 1080p is stored; the size comes from the magnet's xl= parameter, so no
 # .torrent is ever downloaded. Magnets keep their tr= announces — they are
@@ -573,7 +591,6 @@ Rudub:
 
 SubsPlease:
   host: "https://subsplease.org"
-  reqMinute: 30
   parseDelay: 1000
   log: true
 

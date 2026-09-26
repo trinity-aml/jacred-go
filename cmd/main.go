@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"runtime/debug"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -198,6 +199,20 @@ func main() {
 			log.Fatalf("http server error: %v", err)
 		}
 	}()
+
+	// In-process scheduler, when enabled. Started after the listener because
+	// it fires its jobs over loopback HTTP — that is what keeps a scheduled
+	// run indistinguishable from a curl, including the recordCronRuns
+	// middleware that /trackers is built from.
+	if cfg.Scheduler {
+		file := cfg.SchedulerFile
+		if strings.TrimSpace(file) == "" {
+			file = "crontab"
+		}
+		sched := background.NewScheduler(file, "http://127.0.0.1:"+strconv.Itoa(cfg.ListenPort))
+		srv.SetScheduler(sched)
+		go sched.Run(ctx)
+	}
 
 	// Ожидание сигнала завершения
 	quit := make(chan os.Signal, 1)

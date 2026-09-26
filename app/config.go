@@ -439,6 +439,10 @@ func setConfigKV(cfg *Config, k, v string) {
 		cfg.MergeDuplicates = flag()
 	case "mergenumduplicates":
 		cfg.MergeNumDuplicates = flag()
+	case "scheduler":
+		cfg.Scheduler = flag()
+	case "schedulerfile":
+		cfg.SchedulerFile = unquote(v)
 	case "log":
 		cfg.Log = flag()
 	case "logParsers":

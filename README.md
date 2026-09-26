@@ -1330,6 +1330,32 @@ Both must be `true` for logs to be written. Log files are stored in `Data/log/{t
 
 ## Cron Examples
 
+Scheduling is driven by the `crontab` file at the repo root. Two ways to run it:
+
+**System cron** (the default). Install the file the usual way; each line is a
+plain `curl` of a local endpoint.
+
+**In-process scheduler** (opt-in). Set `scheduler: true` in `init.yaml` and the
+binary runs the very same file itself — no system cron, no shell. Then remove
+the system crontab entry: with both enabled every job runs twice.
+
+```yaml
+scheduler: true
+schedulerfile: "crontab"   # the same file system cron would read
+```
+
+Jobs are fired as plain loopback `GET`s against the process's own listener, so a
+scheduled run is indistinguishable from a `curl` you type yourself — including
+the middleware that builds the parser health on `/trackers`. Only
+`curl -s "<url>"` lines are accepted and nothing is passed to a shell, so the
+file cannot be used to make the process run commands; anything else is logged
+and skipped. Full five-field cron syntax is supported, the file is re-read when
+it changes (no restart), and a job whose previous run is still in flight is
+skipped rather than piled on — `parsealltask` is scheduled every few minutes
+while a full sweep can take hours.
+
+`GET /admin/scheduler` reports what is loaded, with per-job run and skip counts.
+
 Typical external crontab (`/etc/cron.d/jacred` or `Data/crontab`):
 
 ```cron

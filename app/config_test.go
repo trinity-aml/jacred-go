@@ -2,7 +2,10 @@ package app
 
 import (
 	"bytes"
+	"encoding/json"
 	"log"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -371,5 +374,134 @@ Rutracker:
 	parseYAMLIntoConfig(out, &back)
 	if back.Rutracker.UserAgent != ua {
 		t.Errorf("after round-trip UserAgent = %q, want %q", back.Rutracker.UserAgent, ua)
+	}
+}
+
+// Saving settings from the web UI rewrites the whole file, so a key it does not
+// know about is silently lost. Turning the in-process scheduler on and then
+// touching /settings would quietly put the deployment back on system cron.
+func TestSchedulerKeysRoundTrip(t *testing.T) {
+	src := `
+scheduler: true
+schedulerfile: "Data/crontab"
+listenport: 9117
+`
+	var cfg Config
+	parseYAMLIntoConfig(src, &cfg)
+	if !cfg.Scheduler {
+		t.Fatal("scheduler was not read")
+	}
+	if cfg.SchedulerFile != "Data/crontab" {
+		t.Fatalf("schedulerfile = %q", cfg.SchedulerFile)
+	}
+
+	out := MarshalYAML(cfg)
+	if !strings.Contains(out, "scheduler: true") || !strings.Contains(out, "Data/crontab") {
+		t.Errorf("scheduler settings lost on write-back; got:\n%s", out)
+	}
+	var back Config
+	parseYAMLIntoConfig(out, &back)
+	if !back.Scheduler || back.SchedulerFile != "Data/crontab" {
+		t.Errorf("after round-trip scheduler=%v file=%q", back.Scheduler, back.SchedulerFile)
+	}
+
+	// Absent keys must leave the scheduler off rather than defaulting it on.
+	var none Config
+	parseYAMLIntoConfig("listenport: 9117\n", &none)
+	if none.Scheduler {
+		t.Error("scheduler defaulted to on when the key was absent")
+	}
+}
+
+// Saving from /settings posts a config JSON and the server overlays it onto the
+// loaded one, so a field the form leaves out must keep its value rather than
+// being zeroed. This is the property that lets the form show fewer keys than
+// the file contains.
+func TestKeysTheFormOmitsSurviveAConfigSave(t *testing.T) {
+	cur := Config{}
+	parseYAMLIntoConfig("Rutor:\n  host: \"https://rutor.is\"\n  cookie: \"sid=abc\"\n  parseDelay: 7000\n", &cur)
+	if cur.Rutor.Cookie != "sid=abc" {
+		t.Fatalf("setup: cookie = %q", cur.Rutor.Cookie)
+	}
+
+	// A POST that carries only the edited field.
+	if err := json.Unmarshal([]byte(`{"Rutor":{"parseDelay":5000}}`), &cur); err != nil {
+		t.Fatal(err)
+	}
+	if cur.Rutor.ParseDelay != 5000 {
+		t.Errorf("parseDelay = %d, want the edited 5000", cur.Rutor.ParseDelay)
+	}
+	if cur.Rutor.Cookie != "sid=abc" {
+		t.Errorf("cookie = %q — a save erased a field the POST omitted", cur.Rutor.Cookie)
+	}
+	if cur.Rutor.Host != "https://rutor.is" {
+		t.Errorf("host = %q", cur.Rutor.Host)
+	}
+	if out := MarshalYAML(cur); !strings.Contains(out, "sid=abc") {
+		t.Errorf("cookie lost on write-back:\n%s", out)
+	}
+}
+
+// reqMinute is the one tracker key the form does not show, and it is not
+// written back either. Emitting it would put the key into every file on the
+// next save — including the template it was just removed from — so "removed"
+// would last exactly until someone opened /settings. Nothing reads it, so
+// dropping it on write-back costs nothing; it is still parsed, so an existing
+// init.yaml loads unchanged.
+func TestReqMinuteIsNotWrittenBack(t *testing.T) {
+	var cfg Config
+	parseYAMLIntoConfig("Rutor:\n  host: \"https://rutor.is\"\n  reqMinute: 8\n  parseDelay: 7000\n", &cfg)
+	if cfg.Rutor.ReqMinute != 8 {
+		t.Fatalf("setup: reqMinute = %d", cfg.Rutor.ReqMinute)
+	}
+	out := MarshalYAML(cfg)
+	if strings.Contains(out, "reqMinute") {
+		t.Errorf("reqMinute was written back; it would reappear in every file on the next save")
+	}
+	if !strings.Contains(out, "parseDelay: 7000") {
+		t.Errorf("parseDelay lost:\n%s", out)
+	}
+}
+
+// init.yaml.example is the template people copy when adding a tracker, and it
+// documents reqMinute as a legacy key that is "no longer shown here because
+// nothing reads it". Two tracker sections added later carried it anyway —
+// copied from the deployed init.yaml rather than following the template's own
+// rule — so a new section would keep propagating a knob that does nothing.
+//
+// The explanatory comment block stays; what must not come back is a live key
+// inside a tracker section.
+func TestExampleConfigDoesNotShowLegacyReqMinute(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "init.yaml.example"))
+	if err != nil {
+		t.Skipf("no init.yaml.example: %v", err)
+	}
+	for i, line := range strings.Split(string(raw), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "#") || !strings.Contains(trimmed, "reqMinute") {
+			continue
+		}
+		t.Errorf("line %d sets reqMinute; parseDelay is what actually paces a run: %s", i+1, trimmed)
+	}
+
+	// And the template must still parse into a usable config.
+	var cfg Config
+	parseYAMLIntoConfig(string(raw), &cfg)
+	if cfg.Rutor.ParseDelay <= 0 {
+		t.Errorf("the example no longer yields a parseDelay for Rutor: %d", cfg.Rutor.ParseDelay)
+	}
+}
+
+// Old configs still carry reqMinute, and they must keep loading without a
+// warning — dropping it from the template is a documentation change, not a
+// format change.
+func TestLegacyReqMinuteStillParses(t *testing.T) {
+	var cfg Config
+	parseYAMLIntoConfig("Rutor:\n  host: \"https://rutor.is\"\n  reqMinute: 8\n  parseDelay: 7000\n", &cfg)
+	if cfg.Rutor.ReqMinute != 8 {
+		t.Errorf("reqMinute = %d — an existing init.yaml would lose the value", cfg.Rutor.ReqMinute)
+	}
+	if cfg.Rutor.ParseDelay != 7000 {
+		t.Errorf("parseDelay = %d", cfg.Rutor.ParseDelay)
 	}
 }

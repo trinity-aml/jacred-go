@@ -87,6 +87,18 @@ func (s *runStore) record(r TrackerRun) {
 	if s.runs[r.Tracker] == nil {
 		s.runs[r.Tracker] = map[string]TrackerRun{}
 	}
+	// A "work" answer means the previous run is still going and this request
+	// did nothing. Only one run per tracker per op is kept, so recording it
+	// would erase the last real result — and a long sweep is exactly when that
+	// happens: parsealltask is scheduled every few minutes while a rutor pass
+	// takes hours, so a hundred no-ops would bury the outcome the page exists
+	// to show. The informative record is the one already there.
+	if r.Status == "work" {
+		if _, seen := s.runs[r.Tracker][r.Op]; seen {
+			s.mu.Unlock()
+			return
+		}
+	}
 	s.runs[r.Tracker][r.Op] = r
 	flat := s.snapshotLocked()
 	path := s.path

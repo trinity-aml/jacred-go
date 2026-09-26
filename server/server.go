@@ -116,7 +116,11 @@ type Server struct {
 	ViruseprojectParser *viruseproject.Parser
 	AnibelkaParser      *anibelka.Parser
 	SubsPleaseParser    *subsplease.Parser
-	RudubParser         *rudub.Parser
+	// scheduler is set only when the in-process scheduler runs; it exists so
+	// /admin/scheduler can show what is actually loaded rather than what the
+	// file on disk says.
+	scheduler   interface{ Jobs() []map[string]any }
+	RudubParser *rudub.Parser
 	// Runs remembers the outcome of every cron call so /stats/parsers can
 	// answer "is this tracker still working" without anyone reading the log.
 	Runs     *runStore
@@ -267,6 +271,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/dev/fixselezenurls", s.handleDevFixSelezenUrls)
 	mux.HandleFunc("/dev/migrateviruseprojecturls", s.handleDevMigrateViruseprojectUrls)
 	mux.HandleFunc("/admin/config", s.handleAdminConfig)
+	mux.HandleFunc("/admin/scheduler", s.handleAdminScheduler)
 	mux.HandleFunc("/admin/cf-domains", s.handleAdminCFDomains)
 
 	// pprof: live heap/goroutine/CPU profiling. Routes are gated by the
@@ -1337,6 +1342,27 @@ func (s *Server) handleCronRudubParse(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": res.Status, "fetched": res.Fetched, "added": res.Added, "updated": res.Updated, "skipped": res.Skipped, "failed": res.Failed, "text": fmt.Sprintf("fetched=%d +%d ~%d =%d failed=%d", res.Fetched, res.Added, res.Updated, res.Skipped, res.Failed)})
+}
+
+// SetScheduler wires the in-process scheduler so /admin/scheduler can report it.
+func (s *Server) SetScheduler(sched interface{ Jobs() []map[string]any }) {
+	s.scheduler = sched
+}
+
+func (s *Server) handleAdminScheduler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if s.scheduler == nil {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"enabled": false,
+			"note":    "in-process scheduler is off; jobs come from system cron",
+		})
+		return
+	}
+	jobs := s.scheduler.Jobs()
+	writeJSON(w, http.StatusOK, map[string]any{"enabled": true, "count": len(jobs), "jobs": jobs})
 }
 
 func (s *Server) handleCronSubsPleaseParse(w http.ResponseWriter, r *http.Request) {

@@ -25,6 +25,8 @@ func MarshalYAML(cfg Config) string {
 	b.WriteString("\n")
 
 	// Logging
+	writeScalar(&b, "scheduler", cfg.Scheduler)
+	writeScalar(&b, "schedulerfile", cfg.SchedulerFile)
 	writeScalar(&b, "log", cfg.Log)
 	writeScalar(&b, "logParsers", cfg.LogParsers)
 	writeScalar(&b, "logFdb", cfg.LogFdb)
@@ -164,7 +166,12 @@ func writeTracker(b *strings.Builder, name string, t TrackerSettings) {
 		writeIndented(b, 2, "insecureSkipVerify", true)
 	}
 	writeIndented(b, 2, "useproxy", t.UseProxy)
-	writeIndented(b, 2, "reqMinute", t.ReqMinute)
+	// reqMinute is deliberately not written. Nothing reads it — parseDelay is
+	// what paces a run — and emitting it would put the key back into every
+	// file on the next save from /settings, including the ones it was just
+	// removed from. It is still *parsed*, so an existing init.yaml loads
+	// unchanged; the value simply stops being carried forward, which costs
+	// nothing because no code consults it.
 	writeIndented(b, 2, "parseDelay", t.ParseDelay)
 	writeIndented(b, 2, "log", t.Log)
 	b.WriteString("  login:\n")
