@@ -69,6 +69,19 @@ func TestRecordCronRunsReadsTheResponse(t *testing.T) {
 			wantOk: true,
 		},
 		{
+			// The string-returning ops answer {"status":"ok","text":"work"}
+			// when a run is already in flight. Read literally that is a
+			// successful run with zero records, and it buried the last real
+			// result on /trackers — which became the common case once Parse
+			// and ParseAllTask started sharing one run flag.
+			name:   "skipped run reported in text",
+			path:   "/cron/toloka/parsealltask",
+			code:   200,
+			body:   `{"status":"ok","text":"work"}`,
+			want:   TrackerRun{Tracker: "toloka", Op: "parsealltask", HTTP: 200, Status: "work"},
+			wantOk: true,
+		},
+		{
 			name: "authorization failure",
 			path: "/cron/animelayer/parse",
 			code: 500,

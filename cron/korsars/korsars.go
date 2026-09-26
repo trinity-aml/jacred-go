@@ -95,14 +95,17 @@ func (t *Task) MarkToday(loc *time.Location) {
 }
 
 type Parser struct {
-	Config   app.Config
-	DB       *filedb.DB
-	DataDir  string
-	Fetcher  *core.Fetcher
-	loc      *time.Location
-	mu       sync.Mutex
-	working  bool
-	allWork  bool
+	Config  app.Config
+	DB      *filedb.DB
+	DataDir string
+	Fetcher *core.Fetcher
+	loc     *time.Location
+	mu      sync.Mutex
+	// One flag for Parse and ParseAllTask, not one each. With a guard apiece
+	// both swept at once — parsealltask is scheduled every few minutes while a
+	// full sweep runs for hours — so two runs drove the same session, the same
+	// login path and the same rate limit at the tracker.
+	busy     bool
 	latestMu sync.Mutex
 	tasks    map[string][]Task
 	cookieMu sync.Mutex
@@ -232,13 +235,13 @@ func (p *Parser) ensureLogin(ctx context.Context) bool {
 
 func (p *Parser) Parse(ctx context.Context, page int) (ParseResult, error) {
 	p.mu.Lock()
-	if p.working {
+	if p.busy {
 		p.mu.Unlock()
 		return ParseResult{Status: "work"}, nil
 	}
-	p.working = true
+	p.busy = true
 	p.mu.Unlock()
-	defer func() { p.mu.Lock(); p.working = false; p.mu.Unlock() }()
+	defer func() { p.mu.Lock(); p.busy = false; p.mu.Unlock() }()
 
 	if isDisabled(p.Config.DisableTrackers, trackerName) {
 		return ParseResult{Status: "disabled"}, nil
@@ -366,14 +369,14 @@ func (p *Parser) ParseAllTask(ctx context.Context, force bool) (string, error) {
 		return "", fmt.Errorf("korsars: login failed: %w", core.ErrNotAuthorized)
 	}
 	p.mu.Lock()
-	if p.allWork {
+	if p.busy {
 		p.mu.Unlock()
 		return "work", nil
 	}
-	p.allWork = true
+	p.busy = true
 	snapshot := cloneTasks(p.tasks)
 	p.mu.Unlock()
-	defer func() { p.mu.Lock(); p.allWork = false; p.mu.Unlock() }()
+	defer func() { p.mu.Lock(); p.busy = false; p.mu.Unlock() }()
 
 	if len(snapshot) == 0 {
 		log.Printf("korsars: parsealltask — tasks empty, running updatetasksparse first")

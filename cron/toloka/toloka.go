@@ -109,9 +109,15 @@ type Parser struct {
 	Fetcher *core.Fetcher
 	loc     *time.Location
 
-	mu               sync.Mutex
-	working          bool
-	allWork          bool
+	mu sync.Mutex
+	// One flag for Parse and ParseAllTask, not one each. Separate guards let
+	// both sweep at once — the deployed schedule fires ParseAllTask every 5
+	// minutes and parse every 40, and a full sweep runs for hours — so two
+	// runs hammered download.php together (toloka answers 429 constantly) and
+	// both drove the same session and the same re-login path. busyOp names the
+	// holder so a skip says which run is in flight rather than a bare "work".
+	busy             bool
+	busyOp           string
 	latestMu         sync.Mutex
 	tasks            map[string][]Task
 	cookieMu         sync.Mutex
@@ -257,14 +263,11 @@ func New(cfg app.Config, db *filedb.DB, dataDir string) *Parser {
 }
 
 func (p *Parser) Parse(ctx context.Context, page int) (ParseResult, error) {
-	p.mu.Lock()
-	if p.working {
-		p.mu.Unlock()
+	if !p.acquire("parse") {
 		return ParseResult{Status: "work"}, nil
 	}
-	p.working = true
-	p.mu.Unlock()
-	defer func() { p.mu.Lock(); p.working = false; p.mu.Unlock() }()
+	defer p.release()
+	p.resetSessionRejects()
 
 	if isDisabled(p.Config.DisableTrackers, trackerName) {
 		return ParseResult{Status: "disabled"}, nil
@@ -401,15 +404,14 @@ func (p *Parser) settle(cycle *core.ParseAllCycle, key string, page int, ok bool
 }
 
 func (p *Parser) ParseAllTask(ctx context.Context, force bool) (string, error) {
-	p.mu.Lock()
-	if p.allWork {
-		p.mu.Unlock()
+	if !p.acquire("parsealltask") {
 		return "work", nil
 	}
-	p.allWork = true
+	defer p.release()
+	p.mu.Lock()
 	snapshot := cloneTasks(p.tasks)
 	p.mu.Unlock()
-	defer func() { p.mu.Lock(); p.allWork = false; p.mu.Unlock() }()
+	p.resetSessionRejects()
 
 	if len(snapshot) == 0 {
 		log.Printf("toloka: parsealltask — tasks empty, running updatetasksparse first")
@@ -493,6 +495,7 @@ func (p *Parser) ParseLatest(ctx context.Context, pages int) (string, error) {
 		return "work", nil
 	}
 	defer p.latestMu.Unlock()
+	p.resetSessionRejects()
 	if pages <= 0 {
 		pages = 5
 	}
@@ -606,15 +609,23 @@ func (p *Parser) parsePage(ctx context.Context, cat string, page int) ([]parseIt
 		log.Printf("toloka: cat=%s page=%d unexpected body (bodyLen=%d, not login form, not uk forum)", cat, page, len(htmlBody))
 		return nil, nil
 	}
-	// The session was accepted, so a later refusal starts its count over.
-	p.cookieMu.Lock()
-	p.sessionRejects = 0
-	p.cookieMu.Unlock()
 	return parsePageHTML(strings.TrimRight(p.Config.Toloka.Host, "/"), cat, htmlBody), nil
 }
 
-// maxSessionRejects bounds the re-login loop described in parsePage.
+// maxSessionRejects bounds the re-login loop described in parsePage. It counts
+// refusals **per run**, not consecutive ones: production alternates refused and
+// accepted pages (both refusals in the 18:06 log are logged `1/2`, so the old
+// reset-on-success had put the counter back to zero between them), and a bound
+// that resets on any good page never trips at all.
 const maxSessionRejects = 2
+
+// resetSessionRejects starts a run's refusal budget. Called by the entrypoints
+// rather than by parsePage, so the budget spans the whole sweep.
+func (p *Parser) resetSessionRejects() {
+	p.cookieMu.Lock()
+	p.sessionRejects = 0
+	p.cookieMu.Unlock()
+}
 
 // looksLikeTolokaLoginForm returns true when the response is /login.php
 // rendered in place of the requested listing. Matches the login form's
@@ -843,16 +854,28 @@ func (p *Parser) ensureCookie(ctx context.Context) (string, error) {
 	}
 	p.cookieMu.Lock()
 	p.cookie = cookie
-	p.lastLoginAttempt = time.Time{} // clear cooldown on success
+	// The attempt time deliberately survives a success. Clearing it here is
+	// what defeated the cooldown entirely and produced the login storm: a
+	// refused page dropped the session, ensureCookie saw no cooldown and logged
+	// in again at once — measured at 18:11:42 and again at 18:11:58, sixteen
+	// seconds apart. The cooldown means "do not log in more than once per
+	// window", not "do not retry a failed login".
+	p.lastLoginAttempt = time.Now()
 	p.cookieMu.Unlock()
 	_ = core.DefaultSessionStore().SaveAuth(p.domain, cookie)
 	return cookie, nil
 }
 
+// invalidateCookie drops the session but **keeps the login cooldown**. Zeroing
+// it here ("allow immediate re-login") is what turned an intermittent refusal
+// into a login storm: every refused page bought a fresh credentials POST, so
+// production logged in at 18:06:42 and again at 18:06:57 — fifteen seconds
+// apart, indefinitely. With the cooldown intact the next ensureCookie reports
+// a named error instead, the run stops as work_login, and a genuinely expired
+// session still recovers on the next cron pass a few minutes later.
 func (p *Parser) invalidateCookie() {
 	p.cookieMu.Lock()
 	p.cookie = ""
-	p.lastLoginAttempt = time.Time{} // allow immediate re-login
 	p.cookieMu.Unlock()
 	_ = core.DefaultSessionStore().DeleteAuth(p.domain)
 }
@@ -1178,4 +1201,28 @@ func (p *Parser) logSessionRejection(cat string, page int) {
 	p.cookieMu.Unlock()
 	log.Printf("toloka: cat=%s page=%d — session we sent: cookies=[%s] sid=%s loginUA=%q",
 		cat, page, core.CookieNames(cookie), sidFingerprint(cookie), ua)
+}
+
+// acquire takes the single run flag shared by Parse and ParseAllTask. It
+// returns false when another run already holds it, which the caller reports as
+// status "work" — the same answer both entrypoints gave before, so nothing
+// downstream changes. runStore.record already declines to overwrite a real
+// result with a "work" answer.
+func (p *Parser) acquire(op string) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.busy {
+		log.Printf("toloka: %s skipped — %s is still running", op, p.busyOp)
+		return false
+	}
+	p.busy = true
+	p.busyOp = op
+	return true
+}
+
+func (p *Parser) release() {
+	p.mu.Lock()
+	p.busy = false
+	p.busyOp = ""
+	p.mu.Unlock()
 }

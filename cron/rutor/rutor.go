@@ -90,13 +90,16 @@ func (t *Task) MarkToday() {
 }
 
 type Parser struct {
-	Config   app.Config
-	DB       *filedb.DB
-	DataDir  string
-	Fetcher  *core.Fetcher
-	mu       sync.Mutex
-	working  bool
-	allWork  bool
+	Config  app.Config
+	DB      *filedb.DB
+	DataDir string
+	Fetcher *core.Fetcher
+	mu      sync.Mutex
+	// One flag for Parse and ParseAllTask, not one each. With a guard apiece
+	// both swept at once — parsealltask is scheduled every few minutes while a
+	// full sweep runs for hours — so two runs drove the same session, the same
+	// login path and the same rate limit at the tracker.
+	busy     bool
 	latestMu sync.Mutex
 	tasks    map[string][]Task
 }
@@ -115,15 +118,15 @@ func New(cfg app.Config, db *filedb.DB, dataDir string) *Parser {
 
 func (p *Parser) Parse(ctx context.Context, page int) (ParseResult, error) {
 	p.mu.Lock()
-	if p.working {
+	if p.busy {
 		p.mu.Unlock()
 		return ParseResult{Status: "work"}, nil
 	}
-	p.working = true
+	p.busy = true
 	p.mu.Unlock()
 	defer func() {
 		p.mu.Lock()
-		p.working = false
+		p.busy = false
 		p.mu.Unlock()
 	}()
 
@@ -394,18 +397,18 @@ func (p *Parser) settle(cycle *core.ParseAllCycle, cat string, page int, ok bool
 
 func (p *Parser) ParseAllTask(ctx context.Context, force bool) (string, error) {
 	p.mu.Lock()
-	if p.allWork {
+	if p.busy {
 		p.mu.Unlock()
 		return "work", nil
 	}
-	p.allWork = true
+	p.busy = true
 	// The cycle is opened against p.tasks, not the snapshot, because the
 	// first run stamps the day's existing progress into it and that has to
 	// be persisted before the snapshot is taken.
 	cycle, pendingAtStart, cycleTotal := p.beginCycleLocked()
 	snapshot := cloneTasks(p.tasks)
 	p.mu.Unlock()
-	defer func() { p.mu.Lock(); p.allWork = false; p.mu.Unlock() }()
+	defer func() { p.mu.Lock(); p.busy = false; p.mu.Unlock() }()
 
 	if len(snapshot) == 0 {
 		log.Printf("rutor: parsealltask — tasks empty, running updatetasksparse first")

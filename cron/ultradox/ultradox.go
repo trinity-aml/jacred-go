@@ -171,14 +171,17 @@ func (t *Task) MarkToday() {
 }
 
 type Parser struct {
-	Config   app.Config
-	DB       *filedb.DB
-	DataDir  string
-	Fetcher  *core.Fetcher
-	loc      *time.Location
-	mu       sync.Mutex
-	working  bool
-	allWork  bool
+	Config  app.Config
+	DB      *filedb.DB
+	DataDir string
+	Fetcher *core.Fetcher
+	loc     *time.Location
+	mu      sync.Mutex
+	// One flag for Parse and ParseAllTask, not one each. With a guard apiece
+	// both swept at once — parsealltask is scheduled every few minutes while a
+	// full sweep runs for hours — so two runs drove the same session, the same
+	// login path and the same rate limit at the tracker.
+	busy     bool
 	latestMu sync.Mutex
 	tasks    map[string][]Task
 }
@@ -239,13 +242,13 @@ type listingItem struct {
 
 func (p *Parser) Parse(ctx context.Context, page int) (ParseResult, error) {
 	p.mu.Lock()
-	if p.working {
+	if p.busy {
 		p.mu.Unlock()
 		return ParseResult{Status: "work"}, nil
 	}
-	p.working = true
+	p.busy = true
 	p.mu.Unlock()
-	defer func() { p.mu.Lock(); p.working = false; p.mu.Unlock() }()
+	defer func() { p.mu.Lock(); p.busy = false; p.mu.Unlock() }()
 
 	if strings.TrimSpace(p.Config.Ultradox.Host) == "" {
 		return ParseResult{Status: "config missing"}, nil
@@ -895,14 +898,14 @@ func (p *Parser) settle(cycle *core.ParseAllCycle, key string, page int, ok bool
 
 func (p *Parser) ParseAllTask(ctx context.Context, force bool) (string, error) {
 	p.mu.Lock()
-	if p.allWork {
+	if p.busy {
 		p.mu.Unlock()
 		return "work", nil
 	}
-	p.allWork = true
+	p.busy = true
 	snapshot := cloneTasks(p.tasks)
 	p.mu.Unlock()
-	defer func() { p.mu.Lock(); p.allWork = false; p.mu.Unlock() }()
+	defer func() { p.mu.Lock(); p.busy = false; p.mu.Unlock() }()
 
 	if len(snapshot) == 0 {
 		if _, err := p.UpdateTasksParse(ctx); err != nil {

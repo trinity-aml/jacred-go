@@ -116,9 +116,12 @@ type Parser struct {
 	Fetcher *core.Fetcher
 	loc     *time.Location
 
-	mu       sync.Mutex
-	working  bool
-	allWork  bool
+	mu sync.Mutex
+	// One flag for Parse and ParseAllTask, not one each. With a guard apiece
+	// both swept at once — parsealltask is scheduled every few minutes while a
+	// full sweep runs for hours — so two runs drove the same session, the same
+	// login path and the same rate limit at the tracker.
+	busy     bool
 	latestMu sync.Mutex
 	tasks    map[string][]Task
 }
@@ -193,13 +196,13 @@ func (p *Parser) fetchPage(rawURL string) (string, error) {
 // Parse walks one listing page of every section. page is zero-based.
 func (p *Parser) Parse(ctx context.Context, page int) (ParseResult, error) {
 	p.mu.Lock()
-	if p.working {
+	if p.busy {
 		p.mu.Unlock()
 		return ParseResult{Status: "work"}, nil
 	}
-	p.working = true
+	p.busy = true
 	p.mu.Unlock()
-	defer func() { p.mu.Lock(); p.working = false; p.mu.Unlock() }()
+	defer func() { p.mu.Lock(); p.busy = false; p.mu.Unlock() }()
 
 	if p.host() == "" {
 		return ParseResult{Status: "config missing"}, nil
@@ -567,14 +570,14 @@ func lastPageFromHTML(body string) int {
 
 func (p *Parser) ParseAllTask(ctx context.Context, force bool) (string, error) {
 	p.mu.Lock()
-	if p.allWork {
+	if p.busy {
 		p.mu.Unlock()
 		return "work", nil
 	}
-	p.allWork = true
+	p.busy = true
 	snapshot := cloneTasks(p.tasks)
 	p.mu.Unlock()
-	defer func() { p.mu.Lock(); p.allWork = false; p.mu.Unlock() }()
+	defer func() { p.mu.Lock(); p.busy = false; p.mu.Unlock() }()
 
 	if len(snapshot) == 0 {
 		if _, err := p.UpdateTasksParse(ctx); err != nil {

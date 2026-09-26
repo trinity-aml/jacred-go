@@ -218,6 +218,17 @@ func (s *Server) recordCronRuns(next http.Handler) http.Handler {
 		if json.Unmarshal(cw.buf.Bytes(), &body) == nil {
 			run.Status, _ = body["status"].(string)
 			run.Error, _ = body["error"].(string)
+			// The string-returning entrypoints — parsealltask, parselatest,
+			// updatetasksparse — answer {"status":"ok","text":"work"} when a
+			// run is already in flight: the "work" lands in text, not status,
+			// so record's guard below could not see it and the no-op
+			// overwrote the last real result. Normalise it here, so that
+			// guard stays the single place that decides. This got far more
+			// frequent once Parse and ParseAllTask started sharing one run
+			// flag — a skip is now the normal answer during a long sweep.
+			if txt, _ := body["text"].(string); txt == "work" && run.Status == "ok" {
+				run.Status = "work"
+			}
 			// Nineteen parsers report "fetched", four ("anidub", "selezen",
 			// "aniliberty", "animelayer") report "parsed" for the same number.
 			run.Fetched = jsonInt(body, "fetched", "parsed")
