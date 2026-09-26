@@ -125,6 +125,30 @@
           </div>
         </details>
 
+        <!-- Scheduler -->
+        <details class="section">
+          <summary>
+            <span>Расписание задач</span>
+            <svg class="chevron w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+          </summary>
+          <div class="body">
+            <div class="checkbox-row">
+              <input type="checkbox" id="cb_scheduler" data-path="scheduler"/>
+              <label for="cb_scheduler" title="Выполнять задачи из файла расписания внутри jacred, без системного cron. Читается на каждом тике, поэтому действует в течение минуты — перезапуск не нужен.">scheduler — выполнять расписание внутри jacred</label>
+            </div>
+            <p class="text-xs text-gray-500 dark:text-gray-400 mt-2 mb-3 leading-relaxed">
+              Включайте только после того, как уберёте запись из системного cron: иначе каждая задача выполнится дважды.
+              Сами правила редактируются на странице <a class="underline" href="/schedule">Расписание</a>.
+            </p>
+            <div class="grid-fields">
+              <div>
+                <label class="field-label" title="Путь к файлу расписания относительно рабочего каталога. Это тот же файл, который читал бы системный cron.">schedulerfile</label>
+                <input class="field-input" data-path="schedulerfile" placeholder="crontab"/>
+              </div>
+            </div>
+          </div>
+        </details>
+
         <!-- Database / merge -->
         <details class="section">
           <summary>
@@ -426,7 +450,7 @@
         'Rutor', 'Megapeer', 'TorrentBy', 'Kinozal', 'NNMClub', 'Bitru', 'Toloka',
         'Mazepa', 'Rutracker', 'Selezen', 'Lostfilm', 'Animelayer', 'Anidub',
         'Aniliberty', 'Knaben', 'Anistar', 'Anifilm', 'Leproduction',
-        'Korsars', 'Ultradox', 'Viruseproject', 'Anibelka'
+        'Korsars', 'Ultradox', 'Viruseproject', 'Anibelka', 'Rudub', 'SubsPlease'
       ];
 
       const loadingEl = document.getElementById('loadingState');

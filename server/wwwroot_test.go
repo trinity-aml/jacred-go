@@ -5,9 +5,12 @@ import (
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"regexp"
 	"strings"
 	"testing"
+
+	"jacred/app"
 )
 
 // pages are the documents served to a browser.
@@ -225,5 +228,73 @@ func TestSearchPageHonoursTheQueryParameter(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Errorf("index.html is missing %s — /?s=… would not work", want)
 		}
+	}
+}
+
+// The schedule page tells the reader to turn the scheduler on "в настройках"
+// and links there. That promise was made before the control existed, so the
+// only way to enable it was editing init.yaml by hand — the page pointed at a
+// page that could not do what it said.
+func TestSettingsExposesTheSchedulerControls(t *testing.T) {
+	settings := readWWW(t, "settings.html")
+	for _, want := range []string{`data-path="scheduler"`, `data-path="schedulerfile"`} {
+		if strings.Count(settings, want) != 1 {
+			t.Errorf("settings.html is missing exactly one %s", want)
+		}
+	}
+
+	// And the link that makes the promise still resolves.
+	schedule := readWWW(t, "schedule.html")
+	if strings.Contains(schedule, `href="/settings"`) && !strings.Contains(settings, `data-path="scheduler"`) {
+		t.Error("schedule.html sends the reader to /settings, which has no scheduler control")
+	}
+
+	// The settings page must also point back, or a reader who turns the
+	// scheduler on has nowhere to go to write the rules.
+	if !strings.Contains(settings, `href="/schedule"`) {
+		t.Error("settings.html does not link to the page where the rules are edited")
+	}
+}
+
+// The settings page keeps its own list of trackers in a JS literal, which is a
+// hand-maintained duplicate of the roster in app.Config. It drifted: rudub and
+// subsplease were wired into the config, the routes and /trackers, but never
+// added here, so neither could be configured from the web UI at all.
+//
+// Nothing loses data when that happens — the form posts back a copy of the
+// config it fetched, so an unlisted tracker's settings survive a save — which
+// is exactly why the gap is quiet. This pins the list to the Go side instead.
+func TestSettingsListsEveryConfigurableTracker(t *testing.T) {
+	// Every TrackerSettings field of app.Config is a tracker with its own
+	// config section, and its field name is the section name.
+	var want []string
+	cfg := reflect.TypeOf(app.Config{})
+	for i := 0; i < cfg.NumField(); i++ {
+		if cfg.Field(i).Type == reflect.TypeOf(app.TrackerSettings{}) {
+			want = append(want, cfg.Field(i).Name)
+		}
+	}
+	if len(want) < 20 {
+		t.Fatalf("only %d tracker sections found in app.Config — the reflection is wrong, not the page", len(want))
+	}
+
+	body := readWWW(t, "settings.html")
+	m := regexp.MustCompile(`(?s)const TRACKERS = \[(.*?)\]`).FindStringSubmatch(body)
+	if m == nil {
+		t.Fatal("settings.html no longer declares a TRACKERS list")
+	}
+	listed := map[string]bool{}
+	for _, q := range regexp.MustCompile(`'([A-Za-z]+)'`).FindAllStringSubmatch(m[1], -1) {
+		listed[q[1]] = true
+	}
+
+	for _, name := range want {
+		if !listed[name] {
+			t.Errorf("%s has a config section but is not on the settings page", name)
+		}
+		delete(listed, name)
+	}
+	for name := range listed {
+		t.Errorf("settings page lists %q, which has no config section", name)
 	}
 }
