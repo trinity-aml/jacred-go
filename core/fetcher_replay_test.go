@@ -14,6 +14,7 @@ func resetReplayHostile(t *testing.T, domain string) {
 	}
 	clear()
 	t.Cleanup(clear)
+	t.Cleanup(func() { clearReplayStrike(domain) })
 }
 
 func TestReplayHostileRegistry(t *testing.T) {
@@ -23,7 +24,19 @@ func TestReplayHostileRegistry(t *testing.T) {
 	if replayHostile(domain) {
 		t.Fatal("clean domain reported as replay-hostile")
 	}
-	markReplayHostile(domain)
+	// Two strikes, not one. A single fresh-clearance challenge right after a
+	// solve is a transient — measured on rutracker 2026-09-26, where acting on
+	// one sample condemned a domain whose replay was in fact working at 141ms
+	// a page. See markReplayHostile.
+	if markReplayHostile(domain) {
+		t.Fatal("one strike condemned the domain")
+	}
+	if replayHostile(domain) {
+		t.Fatal("domain flagged after a single strike")
+	}
+	if !markReplayHostile(domain) {
+		t.Fatal("two strikes did not condemn the domain")
+	}
 	if !replayHostile(domain) {
 		t.Fatal("domain not flagged after markReplayHostile")
 	}

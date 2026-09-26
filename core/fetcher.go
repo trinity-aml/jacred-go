@@ -3,6 +3,8 @@ package core
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"log"
@@ -11,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -96,6 +99,21 @@ const (
 	// distinction only has to separate "seconds" from "an hour" — the real
 	// cf_clearance lifetime is 30–120 min (see flareSessionTTL).
 	flareReplayFreshWindow = 2 * time.Minute
+	// flareReplayStrikeWindow is how long a first fresh-challenge is remembered
+	// while waiting to see whether it repeats. Long enough to span a parser's
+	// retry ladder, short enough that two unrelated hiccups hours apart are not
+	// read as a pattern.
+	flareReplayStrikeWindow = 10 * time.Minute
+	// flareReplayRetryInterval is how often a condemned domain gets one probe
+	// to see whether its replay has recovered. Measured on rutracker
+	// 2026-09-26: a clearance rejected immediately after a solve, and again
+	// 79s later, while a saved session fetched the same pages over plain HTTP
+	// at ~140ms minutes earlier — the replay is intermittent, not permanently
+	// dead. Pinning the domain to the browser for the whole TTL therefore
+	// costs every page a 3s render long after it stopped being necessary. One
+	// probe every few minutes is one wasted request against hundreds of saved
+	// renders.
+	flareReplayRetryInterval = 5 * time.Minute
 	// How long a domain stays flagged as replay-hostile. Matches flareProbeTTL:
 	// long enough to cover a parse cycle, short enough that a site (or an IP
 	// reputation) that stops being hostile is retried the same day.
@@ -375,6 +393,48 @@ func clearFlareFailure(domain string) {
 
 // replayHostile reports whether this domain's cf_clearance has been shown to
 // be unusable from our HTTP client, so the replay must be skipped outright.
+// flareReplayStrike holds the first fresh-challenge observation per domain,
+// pending a second one. Guarded by flareReplayMu alongside flareReplayHostile.
+var flareReplayStrike = map[string]time.Time{}
+
+// flareReplayProbe records when a condemned domain was last given a chance.
+// Guarded by flareReplayMu.
+var flareReplayProbe = map[string]time.Time{}
+
+// skipReplay reports whether to bypass the HTTP replay for this domain.
+//
+// A condemned domain normally skips it, but every flareReplayRetryInterval one
+// request is allowed through to find out whether the replay works again. That
+// is what turns a six-hour sentence into a periodic question.
+func skipReplay(domain string) bool {
+	flareReplayMu.Lock()
+	defer flareReplayMu.Unlock()
+	t, ok := flareReplayHostile[domain]
+	if !ok || time.Since(t) >= flareReplayHostileTTL {
+		return false
+	}
+	if last, seen := flareReplayProbe[domain]; !seen || time.Since(last) >= flareReplayRetryInterval {
+		flareReplayProbe[domain] = time.Now()
+		return false
+	}
+	return true
+}
+
+// clearReplayHostile lifts the sentence, called when a probe succeeds.
+func clearReplayHostile(domain string) {
+	flareReplayMu.Lock()
+	delete(flareReplayHostile, domain)
+	delete(flareReplayProbe, domain)
+	delete(flareReplayStrike, domain)
+	flareReplayMu.Unlock()
+}
+
+func clearReplayStrike(domain string) {
+	flareReplayMu.Lock()
+	delete(flareReplayStrike, domain)
+	flareReplayMu.Unlock()
+}
+
 func replayHostile(domain string) bool {
 	flareReplayMu.RLock()
 	t, ok := flareReplayHostile[domain]
@@ -397,10 +457,32 @@ func replayHostile(domain string) bool {
 // Treating that as "cookies stale" is what wedged the parser: it deleted a
 // perfectly good session and forced a cold solve for *every* page, which buried
 // the browser until it stopped responding and put the domain in cooldown.
-func markReplayHostile(domain string) {
+// markReplayHostile records a fresh-clearance challenge and reports whether the
+// domain is now condemned to the browser.
+//
+// It takes **two** consecutive observations, and that second one is the whole
+// point. Measured on rutracker 2026-09-26: the first request after a login
+// solve was challenged, the domain was condemned on that single sample, and
+// the run spent the next 6 hours rendering every page in the browser. A probe
+// in a fresh process then fetched the same two category pages over plain HTTP
+// in 630 ms and 141 ms, 50 listing rows each — the replay had been working the
+// whole time.
+//
+// One strike right after a solve is a transient: the caller's cookie and the
+// just-minted session are briefly inconsistent. A second strike is a pattern.
+// Getting this wrong is expensive in one direction only — condemning a healthy
+// domain costs every page a browser render, while one extra doomed replay
+// costs a single request.
+func markReplayHostile(domain string) bool {
 	flareReplayMu.Lock()
-	flareReplayHostile[domain] = time.Now()
-	flareReplayMu.Unlock()
+	defer flareReplayMu.Unlock()
+	if last, ok := flareReplayStrike[domain]; ok && time.Since(last) < flareReplayStrikeWindow {
+		delete(flareReplayStrike, domain)
+		flareReplayHostile[domain] = time.Now()
+		return true
+	}
+	flareReplayStrike[domain] = time.Now()
+	return false
 }
 
 // recentChallengeSeen reports whether the standard-HTTP probe last saw a CF
@@ -596,7 +678,7 @@ func (f *Fetcher) GetFlareCookies(rawURL string) (cookie, userAgent string) {
 		return sess.cookies, sess.userAgent
 	}
 	// Reached only when there is no cached session, so this is a cold solve.
-	sess, _, err := f.solveFlare(rawURL, domain, false, false)
+	sess, _, err := f.solveFlare(rawURL, domain, "", false, false)
 	if err != nil {
 		return "", ""
 	}
@@ -627,6 +709,12 @@ func (f *Fetcher) InvalidateSession(rawURL string) {
 type FetchResult struct {
 	Body       []byte
 	StatusCode int
+	// Header is the response's headers. It exists for login flows, which need
+	// Set-Cookie off a 302 — the reason parsers used to reach past Fetcher for
+	// a raw net/http client and, in doing so, lost Chrome TLS impersonation
+	// and got refused by Cloudflare. Nil on the flaresolverr path, where the
+	// browser does not surface them.
+	Header http.Header
 }
 
 // Get fetches a URL using the mode specified in tracker settings.
@@ -721,6 +809,10 @@ type FetchOptions struct {
 	ExtraCookie  string            // merged with tracker.Cookie
 	UserAgent    string            // overrides the default UA (standard mode)
 	ExtraHeaders map[string]string // additional request headers
+	// NoRedirect stops the client following redirects, so the caller sees the
+	// 3xx itself. Login flows need it: the session arrives as Set-Cookie on
+	// the 302, and following it throws those headers away.
+	NoRedirect bool
 }
 
 // Do sends a request honoring opts. Routes through standard HTTP or
@@ -761,6 +853,7 @@ func (f *Fetcher) Do(rawURL string, tracker app.TrackerSettings, opts FetchOptio
 
 	cookie := strings.TrimSpace(tracker.Cookie)
 	profile := profileForURL(rawURL, tracker.UseProxy, tracker.InsecureSkipVerify, f.cfg)
+	profile.noRedirect = opts.NoRedirect
 
 	// GET in flare mode goes through the full browser-aware path so it can
 	// re-solve on stale cookies or fall back to a browser-rendered body.
@@ -876,7 +969,7 @@ func (f *Fetcher) doHTTP(method, rawURL, cookie, userAgent, contentType string, 
 	if err != nil {
 		return nil, err
 	}
-	return &FetchResult{Body: data, StatusCode: resp.StatusCode}, nil
+	return &FetchResult{Body: data, StatusCode: resp.StatusCode, Header: http.Header(resp.Header)}, nil
 }
 
 // fetchViaFlare uses embedded flaresolverr-go to solve CF and fetch pages.
@@ -897,7 +990,7 @@ func (f *Fetcher) fetchViaFlare(rawURL, cookie string, extraHeaders map[string]s
 
 	sessionWasValid := false
 	if sess := f.getFlareSession(domain); sess != nil {
-		if replayHostile(domain) {
+		if skipReplay(domain) {
 			// Known-unusable replay: sending it again only costs a request and
 			// re-learns the same 403. Go straight to the browser, which still
 			// holds the clearance, so this is a render and not a fresh solve.
@@ -908,6 +1001,14 @@ func (f *Fetcher) fetchViaFlare(rawURL, cookie string, extraHeaders map[string]s
 			// CF re-challenge returns 200 with challenge HTML — status-only
 			// check is not enough, inspect the body too.
 			if err == nil && res.StatusCode != 403 && !isCloudflareChallenge(res.Body) {
+				// A replay that works clears any pending strike, so two
+				// unrelated transients never add up to a condemnation — and
+				// lifts an existing sentence, which is how a probe that
+				// succeeds puts the domain back on the fast path.
+				if replayHostile(domain) {
+					log.Printf("flaresolverr: %s replay works again — back off the browser", domain)
+				}
+				clearReplayHostile(domain)
 				return res, nil
 			}
 			challenged := err == nil && isCloudflareChallenge(res.Body)
@@ -920,9 +1021,12 @@ func (f *Fetcher) fetchViaFlare(rawURL, cookie string, extraHeaders map[string]s
 				// Not stale — never valid for this client. Keep the session:
 				// dropping it forces a cold solve per page, which is exactly
 				// what buried the browser. See markReplayHostile.
-				markReplayHostile(domain)
 				sessionWasValid = true
-				log.Printf("flaresolverr: %s challenged a clearance issued %s ago — replay is unusable here, routing this domain through the browser", domain, age.Round(time.Second))
+				if markReplayHostile(domain) {
+					log.Printf("flaresolverr: %s challenged a freshly issued clearance twice — replay is unusable here, routing this domain through the browser", domain)
+				} else {
+					log.Printf("flaresolverr: %s challenged a clearance issued %s ago — rendering this page in the browser, but keeping the replay for the next one", domain, age.Round(time.Second))
+				}
 			case challenged:
 				// Old enough to have genuinely expired.
 				f.clearFlareSession(domain)
@@ -959,7 +1063,7 @@ func (f *Fetcher) fetchViaFlare(rawURL, cookie string, extraHeaders map[string]s
 	// Solve via flaresolverr-go browser. For non-binary URLs the browser
 	// navigates to rawURL itself, so its rendered Response is the page we
 	// actually want — use it directly when available.
-	sess, direct, err := f.solveFlare(rawURL, domain, httpCookiesFailed, sessionWasValid)
+	sess, direct, err := f.solveFlare(rawURL, domain, cookie, httpCookiesFailed, sessionWasValid)
 	if err != nil {
 		log.Printf("flaresolverr: solve failed for %s: %v", domain, err)
 		// No doHTTP fallback: fetchmode=flaresolverr means the site is CF-gated,
@@ -1137,7 +1241,85 @@ func (f *Fetcher) getFlareSession(domain string) *flareSession {
 	return sess
 }
 
+// browserCookieState remembers which session cookies each domain's browser
+// profile already holds, so they are injected once rather than on every page.
+var browserCookieState sync.Map // domain -> fingerprint of the injected set
+
+// cookiesForBrowser returns the cookies to hand flaresolverr for this
+// navigation, or nil when the browser already holds them.
+//
+// Injection is not free: the library navigates, calls SetPageCookies, then
+// navigates *again*, so sending them on every page would double the cost of
+// every fetch. The browser session is persistent (flareSharedSessionID) and
+// its jar keeps them, so once is enough — until the caller's cookie changes,
+// which is what a re-login looks like.
+//
+// CF-managed cookies are stripped: the browser mints its own cf_clearance and
+// an older one from the caller would shadow it. That is the same precedence
+// bug stripCFManagedCookies exists to prevent on the HTTP path.
+func cookiesForBrowser(domain, cookie string) []flaresolverr.Cookie {
+	parsed := parseBrowserCookies(stripCFManagedCookies(cookie))
+	if len(parsed) == 0 {
+		return nil
+	}
+	fp := cookieFingerprint(parsed)
+	if prev, ok := browserCookieState.Load(domain); ok && prev.(string) == fp {
+		return nil
+	}
+	browserCookieState.Store(domain, fp)
+	return parsed
+}
+
+// forgetBrowserCookies drops the memo so the next navigation re-injects. Called
+// when the flare session is cleared, because a fresh browser profile no longer
+// holds anything we handed the old one.
+func forgetBrowserCookies(domain string) { browserCookieState.Delete(domain) }
+
+func parseBrowserCookies(cookie string) []flaresolverr.Cookie {
+	var out []flaresolverr.Cookie
+	for _, part := range strings.Split(cookie, ";") {
+		part = strings.TrimSpace(part)
+		eq := strings.IndexByte(part, '=')
+		if eq <= 0 {
+			continue
+		}
+		name := strings.TrimSpace(part[:eq])
+		if name == "" {
+			continue
+		}
+		// Domain is left empty on purpose: the library fills it from the URL
+		// being navigated, which is the domain we are solving for.
+		out = append(out, flaresolverr.Cookie{
+			Name:  name,
+			Value: strings.TrimSpace(part[eq+1:]),
+			Path:  "/",
+		})
+	}
+	return out
+}
+
+func cookieFingerprint(cookies []flaresolverr.Cookie) string {
+	parts := make([]string, 0, len(cookies))
+	for _, c := range cookies {
+		parts = append(parts, c.Name+"="+c.Value)
+	}
+	sort.Strings(parts)
+	sum := sha256.Sum256([]byte(strings.Join(parts, ";")))
+	return hex.EncodeToString(sum[:8])
+}
+
+// cookieNameList is CookieNames for the browser's cookie form — names only,
+// never values, the same rule as everywhere else.
+func cookieNameList(cookies []flaresolverr.Cookie) string {
+	names := make([]string, 0, len(cookies))
+	for _, c := range cookies {
+		names = append(names, c.Name)
+	}
+	return strings.Join(names, " ")
+}
+
 func (f *Fetcher) clearFlareSession(domain string) {
+	forgetBrowserCookies(domain)
 	f.flareMu.Lock()
 	delete(f.flareCache, domain)
 	f.flareMu.Unlock()
@@ -1170,7 +1352,7 @@ func (f *Fetcher) clearFlareSession(domain string) {
 // sites whose cookies we can never replay from Go: every page then went
 // through the browser paying the full cold-solve wait, which is what made
 // rutracker take 11–17 s per page and eventually stall the browser outright.
-func (f *Fetcher) solveFlare(rawURL, domain string, forceRender, haveClearance bool) (*flareSession, *FetchResult, error) {
+func (f *Fetcher) solveFlare(rawURL, domain, cookie string, forceRender, haveClearance bool) (*flareSession, *FetchResult, error) {
 	if flareShutdown.Load() {
 		return nil, nil, fmt.Errorf("flaresolverr: service is shutting down")
 	}
@@ -1252,6 +1434,17 @@ func (f *Fetcher) solveFlare(rawURL, domain string, forceRender, haveClearance b
 		redirected = true
 	}
 
+	// Hand the caller's session to the browser when it does not already have
+	// it. Without this the browser navigates with its own profile — which
+	// holds only what the solve put there, cf_clearance and the site's guest
+	// id — so a tracker that needs a login renders as a guest even though the
+	// parser logged in successfully. That is invisible in the logs: the login
+	// says OK, the solve says OK, and the parser quietly reads guest pages.
+	send := cookiesForBrowser(domain, cookie)
+	if len(send) > 0 {
+		log.Printf("flaresolverr: handing %s session to the browser [%s]", domain, cookieNameList(send))
+	}
+
 	resp, _ := svc.ControllerV1(ctx, &flaresolverr.V1Request{
 		Cmd:               "request.get",
 		URL:               solveURL,
@@ -1259,6 +1452,7 @@ func (f *Fetcher) solveFlare(rawURL, domain string, forceRender, haveClearance b
 		WaitInSeconds:     flareWaitSeconds(haveClearance),
 		Session:           browserID,
 		SessionTTLMinutes: int(flareSessionTTL / time.Minute),
+		Cookies:           send,
 	})
 	markSessionUsed(browserID)
 
@@ -1346,6 +1540,81 @@ func (f *Fetcher) solveFlare(rawURL, domain string, forceRender, haveClearance b
 	}
 
 	return sess, direct, nil
+}
+
+// PostViaBrowser submits a form through the browser instead of over HTTP, and
+// returns the cookies the site set.
+//
+// It exists because a CF-gated login POST cannot be replayed reliably from Go.
+// Measured on rutracker: a GET replay of the same clearance works in ~140ms,
+// while the POST to /forum/login.php comes back `403 cf-mitigated=challenge`
+// on some attempts and 302 on others. The browser does not have that problem
+// by construction — it is the client that earned the clearance — and the
+// library builds and submits the form itself (`request.post`).
+//
+// The caller's cookies are injected first, so a login that needs an existing
+// session (a guest id, a CSRF cookie) still has it.
+func (f *Fetcher) PostViaBrowser(ctx context.Context, rawURL, postData, cookie string) (cookies, body string, err error) {
+	if flareShutdown.Load() {
+		return "", "", fmt.Errorf("flaresolverr: service is shutting down")
+	}
+	svc := getFlareService()
+	if svc == nil {
+		return "", "", fmt.Errorf("flaresolverr service not initialized")
+	}
+	domain := extractDomain(rawURL)
+	if remaining, blocked := flareCooldownRemaining(domain); blocked {
+		return "", "", fmt.Errorf("flaresolverr: %s in cooldown for %s", domain, remaining.Round(time.Second))
+	}
+
+	dm := getDomainLock(domain)
+	dm.Lock()
+	defer dm.Unlock()
+	flareSolveSem <- struct{}{}
+	defer func() { <-flareSolveSem }()
+	flareSolveWG.Add(1)
+	flareInflight.Add(1)
+	defer flareSolveWG.Done()
+	defer flareInflight.Add(-1)
+
+	log.Printf("flaresolverr: submitting a form to %s in the browser", domain)
+	solveCtx, cancel := context.WithTimeout(ctx, 120*time.Second)
+	defer cancel()
+
+	resp, _ := svc.ControllerV1(solveCtx, &flaresolverr.V1Request{
+		Cmd:               "request.post",
+		URL:               rawURL,
+		PostData:          postData,
+		MaxTimeout:        90000,
+		WaitInSeconds:     flareSolveWait,
+		Session:           flareSharedSessionID,
+		SessionTTLMinutes: int(flareSessionTTL / time.Minute),
+		Cookies:           cookiesForBrowser(domain, cookie),
+	})
+	markSessionUsed(flareSharedSessionID)
+
+	if resp.Status != "ok" {
+		markFlareFailure(domain)
+		return "", "", fmt.Errorf("flaresolverr status=%s message=%s", resp.Status, resp.Message)
+	}
+	if resp.Solution == nil {
+		markFlareFailure(domain)
+		return "", "", fmt.Errorf("flaresolverr: no solution returned")
+	}
+
+	parts := make([]string, 0, len(resp.Solution.Cookies))
+	names := make([]string, 0, len(resp.Solution.Cookies))
+	for _, c := range resp.Solution.Cookies {
+		parts = append(parts, c.Name+"="+c.Value)
+		names = append(names, c.Name)
+	}
+	// Names only, never values — the same rule as everywhere else.
+	log.Printf("flaresolverr: form submitted to %s, cookies=%d [%s]", domain, len(parts), strings.Join(names, " "))
+
+	// The browser now holds whatever the site set, so the memo of what we
+	// injected no longer describes its jar.
+	forgetBrowserCookies(domain)
+	return strings.Join(parts, "; "), resp.Solution.Response, nil
 }
 
 // SolveForLogin runs a fresh flaresolverr GET on rawURL and returns the full

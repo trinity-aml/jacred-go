@@ -59,6 +59,9 @@ func clientFor(p FetchProfile) (tlsclient.HttpClient, error) {
 	if p.insecure {
 		opts = append(opts, tlsclient.WithInsecureSkipVerify())
 	}
+	if p.noRedirect {
+		opts = append(opts, tlsclient.WithNotFollowRedirects())
+	}
 	proxyURL, err := p.proxyURLWithAuth()
 	if err != nil {
 		return nil, fmt.Errorf("tlsclient: bad proxy url: %w", err)

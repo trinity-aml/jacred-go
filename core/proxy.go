@@ -25,6 +25,11 @@ type FetchProfile struct {
 	user     string
 	pass     string
 	insecure bool
+	// noRedirect keeps the client from following redirects. It is part of the
+	// key because it is a property of the cached client, not of the request:
+	// a login POST needs the 302 itself, since that is where Set-Cookie
+	// arrives.
+	noRedirect bool
 }
 
 // profileForURL resolves the proxy rules in cfg for rawURL. The zero profile

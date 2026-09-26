@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"html"
-	"io"
 	"log"
 	"net/http"
 	"net/url"
@@ -79,7 +78,15 @@ type Parser struct {
 	cookieMu sync.Mutex
 	cookie   string
 	cookieT  time.Time
-	domain   string
+	// loginBlockedUntil throttles re-login attempts. The crontab drives four
+	// rutracker entrypoints, each of which calls ensureLogin, so a session
+	// that cannot be established would otherwise POST the login form up to a
+	// dozen times an hour — which is what rutracker's anti-bruteforce CAPTCHA
+	// counts. Once it appears no automated login can pass at all, so hammering
+	// the form turns a recoverable outage into a stuck one.
+	loginBlockedUntil time.Time
+	loginBlockReason  string
+	domain            string
 }
 
 type ParseResult struct {
@@ -180,6 +187,40 @@ func decodeRutrackerBody(data []byte) string {
 	return text
 }
 
+// loginCaptchaRe matches the anti-bruteforce CAPTCHA rutracker adds to the
+// login form after repeated failed attempts. Verified against the live page on
+// 2026-09-26: the form gained `cap_sid` and a per-session `cap_code_<32 hex>`
+// alongside login_username/login_password.
+//
+// Naming it matters: a CAPTCHA needs a human, a wrong password needs a config
+// edit, and a CF block needs the browser — three different fixes that
+// otherwise log identically as "no bb_session".
+var loginCaptchaRe = regexp.MustCompile(`(?i)name=["']cap_(?:sid|code_[0-9a-f]+)["']`)
+
+// How long a failed login is not retried. A CAPTCHA gets a longer window,
+// since retrying before a human clears it cannot succeed and each attempt
+// refreshes the block.
+const (
+	loginCooldown        = 15 * time.Minute
+	loginCaptchaCooldown = 2 * time.Hour
+)
+
+func (p *Parser) noteLoginFailure(d time.Duration, reason string) {
+	p.cookieMu.Lock()
+	p.loginBlockedUntil = time.Now().Add(d)
+	p.loginBlockReason = reason
+	p.cookieMu.Unlock()
+}
+
+func (p *Parser) loginBlocked() (time.Duration, string, bool) {
+	p.cookieMu.Lock()
+	defer p.cookieMu.Unlock()
+	if remaining := time.Until(p.loginBlockedUntil); remaining > 0 {
+		return remaining, p.loginBlockReason, true
+	}
+	return 0, "", false
+}
+
 func (p *Parser) takeLogin(ctx context.Context) bool {
 	host := strings.TrimRight(p.Config.Rutracker.Host, "/")
 	if host == "" || p.Config.Rutracker.Login.U == "" {
@@ -191,9 +232,18 @@ func (p *Parser) takeLogin(ctx context.Context) bool {
 
 	// /forum/login.php sits behind the same Cloudflare challenge as the rest
 	// of the forum, so the credentials POST needs cf_clearance and the exact
-	// User-Agent that earned it. The POST itself stays on a raw http.Client
-	// (not Fetcher) because bb_session arrives in Set-Cookie on the 302 and
-	// FetchResult carries only body + status.
+	// User-Agent that earned it.
+	//
+	// It goes through Fetcher, not a raw net/http client. That matters more
+	// than it looks: cf_clearance is minted by a real Chrome and CF fingerprints
+	// the ClientHello, so replaying it over a Go handshake is a visible
+	// mismatch — measured here as an intermittent
+	// `status=403 cf-mitigated="challenge"` on a clearance seconds old, with
+	// the credentials never reaching phpBB. Fetcher's tls-client impersonates
+	// Chrome_146, which is the whole reason it exists. The two things that
+	// used to require the raw client — Set-Cookie off the 302, and not
+	// following that redirect — are now FetchResult.Header and
+	// FetchOptions.NoRedirect.
 	ua := strings.TrimSpace(p.Config.Rutracker.UserAgent)
 	postCookie := strings.TrimSpace(p.Config.Rutracker.Cookie)
 	if flareCookie, flareUA := p.Fetcher.GetFlareCookies(loginURL); flareCookie != "" {
@@ -206,75 +256,124 @@ func (p *Parser) takeLogin(ctx context.Context) bool {
 		log.Printf("rutracker: login has no cf_clearance — the CF challenge on %s was not solved; "+
 			"paste a browser cf_clearance (plus a matching useragent) into init.yaml Rutracker", loginURL)
 	}
-	if ua == "" {
-		ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-	}
 
-	loginClient := &http.Client{
-		Timeout: 20 * time.Second,
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
-	}
 	form := url.Values{
 		"login_username": {p.Config.Rutracker.Login.U},
 		"login_password": {p.Config.Rutracker.Login.P},
 		"login":          {"\xc2\xf5\xee\xe4"}, // "Вход" in CP1251
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, loginURL, strings.NewReader(form.Encode()))
-	if err != nil {
-		log.Printf("rutracker: login request error: %v", err)
-		return false
-	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("User-Agent", ua)
-	if postCookie != "" {
-		req.Header.Set("Cookie", postCookie)
-	}
-	req.Header.Set("Referer", loginURL)
-	req.Header.Set("Origin", host)
-	resp, err := loginClient.Do(req)
+	tracker := p.Config.Rutracker
+	tracker.Cookie = postCookie
+	// Standard mode: Do's flare branch would re-merge cf_clearance we already
+	// have, and the POST has to travel over the impersonating client either way.
+	tracker.FetchMode = "standard"
+	res, err := p.Fetcher.Do(loginURL, tracker, core.FetchOptions{
+		Method:      http.MethodPost,
+		Body:        []byte(form.Encode()),
+		ContentType: "application/x-www-form-urlencoded",
+		UserAgent:   ua,
+		NoRedirect:  true,
+		ExtraHeaders: map[string]string{
+			"Referer": loginURL,
+			"Origin":  host,
+		},
+	})
 	if err != nil {
 		log.Printf("rutracker: login HTTP error: %v", err)
 		return false
 	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	log.Printf("rutracker: login response status=%d cf-mitigated=%q", resp.StatusCode, resp.Header.Get("Cf-Mitigated"))
+	body := res.Body
+	log.Printf("rutracker: login response status=%d cf-mitigated=%q", res.StatusCode, res.Header.Get("Cf-Mitigated"))
 
 	var parts []string
-	for _, line := range resp.Header.Values("Set-Cookie") {
+	for _, line := range res.Header.Values("Set-Cookie") {
 		parts = append(parts, strings.SplitN(line, ";", 2)[0])
 	}
 	cookieStr := strings.Join(parts, "; ")
-	if strings.Contains(cookieStr, "bb_session") {
-		// Keep cf_clearance alongside bb_session: listing fetches reuse this
-		// saved string, and an auth-only cookie would get bounced at the edge.
-		merged := cookieStr
-		if postCookie != "" {
-			merged = core.MergeCookieStrings(postCookie, cookieStr)
-		}
-		p.cookieMu.Lock()
-		p.cookie = merged
-		p.cookieT = time.Now()
-		p.cookieMu.Unlock()
-		_ = core.DefaultSessionStore().SaveAuth(p.domain, merged)
-		log.Printf("rutracker: login OK, got bb_session")
+	if p.acceptLoginCookies(cookieStr, postCookie) {
 		return true
 	}
 	// Distinguish "Cloudflare never let us reach phpBB" from "rutracker
 	// rejected these credentials" — they need completely different fixes.
-	if resp.Header.Get("Cf-Mitigated") == "challenge" || looksLikeCFChallenge(decodeRutrackerBody(body)) {
+	text := decodeRutrackerBody(body)
+	if res.Header.Get("Cf-Mitigated") == "challenge" || looksLikeCFChallenge(text) {
+		// CF refused the POST itself. A GET replay of the same clearance works
+		// at ~140ms, so this is specific to the credentials POST, and it is
+		// intermittent — measured on rutracker, 302 on one attempt and
+		// 403 cf-mitigated=challenge on the next. Submitting the form in the
+		// browser sidesteps it by construction: that is the client that earned
+		// the clearance.
+		log.Printf("rutracker: login POST was challenged by cloudflare — retrying through the browser")
+		if cookieStr, ok := p.loginViaBrowser(ctx, loginURL, form.Encode(), postCookie); ok {
+			return p.acceptLoginCookies(cookieStr, postCookie)
+		}
 		log.Printf("rutracker: login BLOCKED by cloudflare challenge (credentials were never checked)")
+		p.noteLoginFailure(loginCooldown, "cloudflare challenge on the login form")
+		return false
+	}
+	if loginCaptchaRe.MatchString(text) {
+		log.Printf("rutracker: login form is showing a CAPTCHA — rutracker's anti-bruteforce kicked in "+
+			"after repeated login attempts. No automated login can pass it, and every further attempt "+
+			"refreshes the block. Wait it out, or log in once in a browser and paste that bb_session "+
+			"into init.yaml Rutracker.cookie. Not retrying for %s", loginCaptchaCooldown)
+		p.noteLoginFailure(loginCaptchaCooldown, "login form is showing a CAPTCHA")
 		return false
 	}
 	log.Printf("rutracker: login FAILED — no bb_session; cookies set: [%s]", core.CookieNames(cookieStr))
+	p.noteLoginFailure(loginCooldown, "credentials rejected")
 	return false
+}
+
+// acceptLoginCookies stores a session if the response actually carried one.
+// Shared by both login routes — the HTTP POST and the browser form — so they
+// cannot drift on what counts as success or on what gets persisted.
+func (p *Parser) acceptLoginCookies(cookieStr, postCookie string) bool {
+	if !strings.Contains(cookieStr, "bb_session") {
+		return false
+	}
+	// Keep cf_clearance alongside bb_session: listing fetches reuse this saved
+	// string, and an auth-only cookie would get bounced at the edge.
+	merged := cookieStr
+	if postCookie != "" {
+		merged = core.MergeCookieStrings(postCookie, cookieStr)
+	}
+	p.cookieMu.Lock()
+	p.cookie = merged
+	p.cookieT = time.Now()
+	p.loginBlockedUntil = time.Time{}
+	p.loginBlockReason = ""
+	p.cookieMu.Unlock()
+	_ = core.DefaultSessionStore().SaveAuth(p.domain, merged)
+	log.Printf("rutracker: login OK, got bb_session")
+	return true
+}
+
+// loginViaBrowser submits the credentials form in the browser, for when CF
+// refuses the POST from Go.
+func (p *Parser) loginViaBrowser(ctx context.Context, loginURL, postData, cookie string) (string, bool) {
+	cookieStr, body, err := p.Fetcher.PostViaBrowser(ctx, loginURL, postData, cookie)
+	if err != nil {
+		log.Printf("rutracker: browser login failed: %v", err)
+		return "", false
+	}
+	if loginCaptchaRe.MatchString(body) {
+		log.Printf("rutracker: login form is showing a CAPTCHA — rutracker's anti-bruteforce kicked in "+
+			"after repeated login attempts. No automated login can pass it, and every further attempt "+
+			"refreshes the block. Wait it out, or log in once in a browser and paste that bb_session "+
+			"into init.yaml Rutracker.cookie. Not retrying for %s", loginCaptchaCooldown)
+		p.noteLoginFailure(loginCaptchaCooldown, "login form is showing a CAPTCHA")
+		return "", false
+	}
+	return cookieStr, strings.Contains(cookieStr, "bb_session")
 }
 
 func (p *Parser) ensureLogin(ctx context.Context) bool {
 	if p.getCookie() != "" {
 		return true
+	}
+	if remaining, reason, blocked := p.loginBlocked(); blocked {
+		log.Printf("rutracker: not retrying login for %s — %s", remaining.Round(time.Second), reason)
+		return false
 	}
 	return p.takeLogin(ctx)
 }
