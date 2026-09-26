@@ -1,9 +1,9 @@
 package kinozal
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html"
 	"log"
@@ -125,6 +125,8 @@ type Parser struct {
 	cookieMu         sync.Mutex
 	cookie           string
 	lastLoginAttempt time.Time
+	loginBlockUntil  time.Time
+	loginBlockReason string
 }
 
 // domainKey is the session-store key for the configured host. It is derived on
@@ -484,7 +486,7 @@ func (p *Parser) parsePage(ctx context.Context, cat string, page int, arg string
 		// This page was served to a guest and cannot be salvaged; re-login so the
 		// next one is not. Discarding the error here used to hide a broken login
 		// behind a run that reported fetched=0 for every category.
-		if err := p.takeLogin(ctx); err != nil {
+		if err := p.takeLogin(ctx); err != nil && !errors.Is(err, errLoginCooldown) {
 			log.Printf("kinozal: re-login failed mid-run: %v", err)
 		}
 	}
@@ -646,19 +648,12 @@ func (p *Parser) resolveMagnet(ctx context.Context, detailURL string) (string, e
 		return "", err
 	}
 	res, err := p.Fetcher.Do(reqURL, p.Config.Kinozal, core.FetchOptions{
-		Method:      http.MethodPost,
-		Body:        []byte(form.Encode()),
-		ContentType: "application/x-www-form-urlencoded",
-		ExtraCookie: cookie,
-		UserAgent:   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/99.0.4844.51 Safari/537.36",
-		ExtraHeaders: map[string]string{
-			"Cache-Control":             "no-cache",
-			"Pragma":                    "no-cache",
-			"DNT":                       "1",
-			"Origin":                    host,
-			"Referer":                   host + "/",
-			"Upgrade-Insecure-Requests": "1",
-		},
+		Method:       http.MethodPost,
+		Body:         []byte(form.Encode()),
+		ContentType:  "application/x-www-form-urlencoded",
+		ExtraCookie:  cookie,
+		UserAgent:    kinozalUA(p.Config.Kinozal),
+		ExtraHeaders: kinozalHeaders(host),
 	})
 	if err != nil {
 		log.Printf("kinozal: resolveMagnet id=%s error: %v", id, err)
@@ -704,40 +699,132 @@ func (p *Parser) fetchBrowse(ctx context.Context, cat string, page int, arg stri
 	return text, nil
 }
 
-func (p *Parser) takeLogin(ctx context.Context) error {
+// errLoginCooldown marks the "we tried recently, wait" branch so a caller doing
+// a best-effort re-login can stay quiet about it. Without it the mid-run
+// retry in parsePage logs once per page for the whole cooldown.
+var errLoginCooldown = fmt.Errorf("kinozal: login on cooldown: %w", core.ErrNotAuthorized)
+
+const (
+	// loginCooldown throttles ordinary retries; loginCFCooldown is longer
+	// because a challenged POST means the credentials were never checked, so
+	// hammering it only feeds Cloudflare more samples.
+	loginCooldown   = 2 * time.Minute
+	loginCFCooldown = 15 * time.Minute
+)
+
+func (p *Parser) noteLoginCooldown(d time.Duration, reason string) {
 	p.cookieMu.Lock()
-	if time.Since(p.lastLoginAttempt) < 2*time.Minute {
+	p.loginBlockUntil = time.Now().Add(d)
+	p.loginBlockReason = reason
+	p.cookieMu.Unlock()
+}
+
+func (p *Parser) takeLogin(ctx context.Context) error {
+	host := strings.TrimRight(requestHost(p.Config.Kinozal), "/")
+	if host == "" || strings.TrimSpace(p.Config.Kinozal.Login.U) == "" {
+		return fmt.Errorf("kinozal: login is not configured: %w", core.ErrNotAuthorized)
+	}
+
+	p.cookieMu.Lock()
+	if until := p.loginBlockUntil; time.Now().Before(until) {
+		reason := p.loginBlockReason
 		p.cookieMu.Unlock()
-		return nil
+		return fmt.Errorf("kinozal: not retrying login for %s — %s: %w",
+			time.Until(until).Round(time.Second), reason, core.ErrNotAuthorized)
+	}
+	if since := time.Since(p.lastLoginAttempt); since < loginCooldown {
+		p.cookieMu.Unlock()
+		// Returning nil here made a cooldown indistinguishable from a
+		// successful login, after which requireLogin blamed "login produced no
+		// session cookie" — a different failure with a different fix.
+		return fmt.Errorf("%w for %s", errLoginCooldown, (loginCooldown - since).Round(time.Second))
 	}
 	p.lastLoginAttempt = time.Now()
 	p.cookieMu.Unlock()
-	log.Printf("kinozal: attempting login to %s as %s", requestHost(p.Config.Kinozal), p.Config.Kinozal.Login.U)
+
+	loginURL := host + "/takelogin.php"
+	log.Printf("kinozal: attempting login to %s as %s", host, p.Config.Kinozal.Login.U)
+
+	// takelogin.php sits behind the same Cloudflare managed challenge as the
+	// rest of the site. Measured 2026-09-26 with this parser's own User-Agent:
+	// takelogin.php, login.php and browse.php all answer 403 carrying
+	// cf_chl_opt. This POST used to go out on a raw net/http client, which can
+	// hold no cf_clearance and does not impersonate Chrome's ClientHello — so
+	// it was answered by the interstitial every time and the credentials never
+	// reached kinozal. Login was not failing; it was structurally impossible,
+	// and because browse.php then 302s a guest to login.php, whose body carries
+	// no brand title, parsePage returned (nil, nil) and the run reported
+	// fetched=0 failed=0 — a silent zero for every category.
+	//
+	// Route it through Fetcher, which carries both the clearance and the Chrome
+	// TLS fingerprint. Set-Cookie off the 302 arrives in FetchResult.Header and
+	// FetchOptions.NoRedirect keeps the redirect unfollowed, which were the two
+	// things that used to require the raw client.
+	ua := kinozalUA(p.Config.Kinozal)
+	postCookie := strings.TrimSpace(p.Config.Kinozal.Cookie)
+	if flareCookie, flareUA := p.Fetcher.GetFlareCookies(loginURL); flareCookie != "" {
+		postCookie = core.MergeCookieStrings(postCookie, flareCookie)
+		if ua == "" {
+			ua = flareUA
+		}
+		log.Printf("kinozal: login using cf_clearance from flaresolverr")
+	}
+
 	form := url.Values{}
 	form.Set("username", p.Config.Kinozal.Login.U)
 	form.Set("password", p.Config.Kinozal.Login.P)
 	form.Set("returnto", "")
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(requestHost(p.Config.Kinozal), "/")+"/takelogin.php", bytes.NewBufferString(form.Encode()))
+
+	tracker := p.Config.Kinozal
+	tracker.Cookie = postCookie
+	// Ask for standard mode, but do not rely on getting it: Do re-promotes any
+	// domain in the CF auto-detect registry, and kinozal.guru is in it. Both
+	// routes end in the same place for a non-GET — Do's flare branch merges the
+	// cached clearance and then issues a plain POST over the impersonating
+	// client — so the request is correct either way. What matters is that it is
+	// never the raw net/http client this function used to build.
+	tracker.FetchMode = "standard"
+	res, err := p.Fetcher.Do(loginURL, tracker, core.FetchOptions{
+		Method:       http.MethodPost,
+		Body:         []byte(form.Encode()),
+		ContentType:  "application/x-www-form-urlencoded",
+		UserAgent:    ua,
+		NoRedirect:   true,
+		ExtraHeaders: kinozalHeaders(host),
+	})
 	if err != nil {
-		return err
+		return fmt.Errorf("kinozal: login HTTP error: %w", err)
 	}
-	setKinozalHeaders(req, requestHost(p.Config.Kinozal), "")
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	// Use separate client with redirect disabled to capture Set-Cookie from 302
-	loginClient := &http.Client{
-		Timeout: 20 * time.Second,
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
+	log.Printf("kinozal: login response status=%d cf-mitigated=%q",
+		res.StatusCode, res.Header.Get("Cf-Mitigated"))
+	if p.acceptLoginCookies(res.Header.Values("Set-Cookie")) {
+		return nil
 	}
-	resp, err := loginClient.Do(req)
-	if err != nil {
-		return err
+
+	// Tell "Cloudflare never let us reach kinozal" apart from "kinozal rejected
+	// these credentials" — they need completely different fixes.
+	if res.Header.Get("Cf-Mitigated") == "challenge" || looksLikeCFChallenge(decodeKinozalBody(res.Body)) {
+		log.Printf("kinozal: login POST was challenged by cloudflare — retrying through the browser")
+		cookies, berr := p.loginViaBrowser(ctx, loginURL, form.Encode(), postCookie)
+		if berr != nil {
+			log.Printf("kinozal: browser login failed: %v", berr)
+		} else if p.acceptLoginCookies(cookies) {
+			return nil
+		}
+		p.noteLoginCooldown(loginCFCooldown, "cloudflare challenge on the login form")
+		return fmt.Errorf("kinozal: login blocked by a cloudflare challenge, credentials were never checked: %w",
+			core.ErrNotAuthorized)
 	}
-	defer resp.Body.Close()
-	log.Printf("kinozal: login response status=%d", resp.StatusCode)
+	// Names only: `pass` is the session credential itself.
+	return fmt.Errorf("kinozal: takelogin.php set [%s], need uid+pass: %w",
+		core.CookieNames(res.Header.Values("Set-Cookie")...), core.ErrNotAuthorized)
+}
+
+// acceptLoginCookies stores a session if the response actually carried one.
+// Shared by both login routes — the HTTP POST and the browser form — so they
+// cannot drift on what counts as success or on what gets persisted.
+func (p *Parser) acceptLoginCookies(setCookies []string) bool {
 	uid, pass := "", ""
-	setCookies := resp.Header.Values("Set-Cookie")
 	for _, line := range setCookies {
 		if uid == "" && strings.Contains(line, "uid=") {
 			if m := inlineReC4d16cRe.FindStringSubmatch(line); len(m) > 1 {
@@ -750,29 +837,62 @@ func (p *Parser) takeLogin(ctx context.Context) error {
 			}
 		}
 	}
-	if uid != "" && pass != "" {
-		cookie := fmt.Sprintf("uid=%s; pass=%s;", uid, pass)
-		p.cookieMu.Lock()
-		p.cookie = cookie
-		p.cookieMu.Unlock()
-		_ = core.DefaultSessionStore().SaveAuth(p.domainKey(), cookie)
-		log.Printf("kinozal: login OK — got uid+pass cookies")
-	} else {
-		// Names only: `pass` is the session credential itself.
-		log.Printf("kinozal: login FAILED — takelogin.php set [%s], need uid+pass", core.CookieNames(setCookies...))
+	if uid == "" || pass == "" {
+		return false
 	}
-	return nil
+	cookie := fmt.Sprintf("uid=%s; pass=%s;", uid, pass)
+	p.cookieMu.Lock()
+	p.cookie = cookie
+	p.loginBlockUntil = time.Time{}
+	p.loginBlockReason = ""
+	p.cookieMu.Unlock()
+	_ = core.DefaultSessionStore().SaveAuth(p.domainKey(), cookie)
+	log.Printf("kinozal: login OK — got uid+pass cookies")
+	return true
+}
+
+// loginViaBrowser submits the credentials in the browser that earned the
+// clearance, which sidesteps a challenged POST by construction.
+func (p *Parser) loginViaBrowser(ctx context.Context, loginURL, postData, cookie string) ([]string, error) {
+	cookieStr, _, err := p.Fetcher.PostViaBrowser(ctx, loginURL, postData, cookie)
+	if err != nil {
+		return nil, err
+	}
+	// PostViaBrowser hands back the jar as one "a=1; b=2" string, while
+	// acceptLoginCookies reads Set-Cookie lines. Splitting keeps one parser for
+	// both routes.
+	parts := strings.Split(cookieStr, ";")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if part = strings.TrimSpace(part); part != "" {
+			out = append(out, part)
+		}
+	}
+	return out, nil
+}
+
+// decodeKinozalBody picks the right charset. Origin pages are CP1251, but a CF
+// interstitial is UTF-8 and a body that came back through flaresolverr was
+// already decoded by the browser.
+func decodeKinozalBody(body []byte) string {
+	text := core.DecodeCP1251(body)
+	if !strings.Contains(text, "Кинозал") && !kinozalTitleRe.MatchString(text) {
+		return string(body)
+	}
+	return text
 }
 
 // requireLogin resolves a session and names the reason when it cannot, so every
-// entrypoint fails the same way. takeLogin reports a nil error even when the
-// server refused the credentials, so the cookie has to be re-checked afterwards.
+// entrypoint fails the same way. takeLogin now wraps core.ErrNotAuthorized with
+// its own cause — a cooldown, a Cloudflare challenge or refused credentials are
+// three different problems — so it is propagated rather than re-wrapped, which
+// used to flatten all of them into "login failed".
 func (p *Parser) requireLogin(ctx context.Context) error {
 	if p.getCookie() != "" {
 		return nil
 	}
 	if err := p.takeLogin(ctx); err != nil {
-		return fmt.Errorf("kinozal: login failed: %w: %v", core.ErrNotAuthorized, err)
+		return err
 	}
 	if p.getCookie() == "" {
 		return fmt.Errorf("kinozal: login produced no session cookie: %w", core.ErrNotAuthorized)
@@ -792,17 +912,41 @@ func (p *Parser) getCookie() string {
 	return ""
 }
 
-func setKinozalHeaders(req *http.Request, host, cookie string) {
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/99.0.4844.51 Safari/537.36")
-	req.Header.Set("Cache-Control", "no-cache")
-	req.Header.Set("Pragma", "no-cache")
-	req.Header.Set("DNT", "1")
-	req.Header.Set("Origin", strings.TrimRight(host, "/"))
-	req.Header.Set("Referer", strings.TrimRight(host, "/")+"/")
-	req.Header.Set("Upgrade-Insecure-Requests", "1")
-	if strings.TrimSpace(cookie) != "" {
-		req.Header.Set("Cookie", cookie)
+// kinozalUA is the User-Agent for standard-mode requests. Empty means "let
+// Fetcher pick", which is the right default: defaultUserAgent is pinned to the
+// tls-client's Chrome impersonation profile, and the two have to agree or CF
+// sees a Go handshake claiming to be Chrome. What used to sit here instead was
+// a hardcoded Chrome/99.0.4844.51 — 47 majors behind the profile, and a
+// standing contradiction on every request that carried it.
+func kinozalUA(cfg app.TrackerSettings) string {
+	return strings.TrimSpace(cfg.UserAgent)
+}
+
+// kinozalHeaders is the browser-ish header set kinozal expects, shared by the
+// login POST and the magnet lookup so the two cannot drift.
+func kinozalHeaders(host string) map[string]string {
+	host = strings.TrimRight(host, "/")
+	return map[string]string{
+		"Cache-Control":             "no-cache",
+		"Pragma":                    "no-cache",
+		"DNT":                       "1",
+		"Origin":                    host,
+		"Referer":                   host + "/",
+		"Upgrade-Insecure-Requests": "1",
 	}
+}
+
+// looksLikeCFChallenge reports a Cloudflare interstitial. The brand guard comes
+// first for the same reason rutracker's does: a cleared kinozal page still
+// loads CF's JS-detection beacon, so a marker-only check would call every
+// successful fetch a challenge.
+func looksLikeCFChallenge(body string) bool {
+	if kinozalTitleRe.MatchString(body) {
+		return false
+	}
+	return strings.Contains(body, "cf_chl_opt") ||
+		strings.Contains(body, "orchestrate/chl_page") ||
+		strings.Contains(body, "<title>Just a moment")
 }
 
 func (p *Parser) tasksPath() string {

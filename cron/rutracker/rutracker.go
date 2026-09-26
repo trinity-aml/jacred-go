@@ -264,8 +264,11 @@ func (p *Parser) takeLogin(ctx context.Context) bool {
 	}
 	tracker := p.Config.Rutracker
 	tracker.Cookie = postCookie
-	// Standard mode: Do's flare branch would re-merge cf_clearance we already
-	// have, and the POST has to travel over the impersonating client either way.
+	// Asks for standard mode without relying on it: Do re-promotes any domain
+	// in the CF auto-detect registry, and rutracker.org is in it. Harmless —
+	// for a non-GET, Do's flare branch merges the cached clearance and then
+	// issues a plain POST over the impersonating client, which is the same
+	// request. The point is that it is not the raw net/http client.
 	tracker.FetchMode = "standard"
 	res, err := p.Fetcher.Do(loginURL, tracker, core.FetchOptions{
 		Method:      http.MethodPost,

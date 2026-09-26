@@ -2,6 +2,8 @@ package toloka
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -115,6 +117,8 @@ type Parser struct {
 	cookieMu         sync.Mutex
 	cookie           string
 	lastLoginAttempt time.Time
+	sessionRejects   int
+	loginUA          string
 	domain           string
 }
 
@@ -575,8 +579,24 @@ func (p *Parser) parsePage(ctx context.Context, cat string, page int) ([]parseIt
 	// on /login.php, never on a listing). The previous lang-only check missed
 	// expiry and the parser kept fetching 0 rows until config reload.
 	if looksLikeTolokaLoginForm(htmlBody) {
-		log.Printf("toloka: cat=%s page=%d returned login form (cookie expired, invalidating)", cat, page)
+		p.cookieMu.Lock()
+		p.sessionRejects++
+		n := p.sessionRejects
+		p.cookieMu.Unlock()
+		log.Printf("toloka: cat=%s page=%d returned login form (session refused, %d/%d)", cat, page, n, maxSessionRejects)
+		p.logSessionRejection(cat, page)
 		p.invalidateCookie()
+		// A session the site refuses on the very next request after issuing it
+		// will not be fixed by logging in again, and each attempt is another
+		// credentials POST. Unbounded, this is one login per category: measured
+		// in production 2026-09-26 as four logins in 45 seconds, each reporting
+		// success. Repeated login attempts are how a tracker's anti-bruteforce
+		// gets triggered — that is how rutracker ended up showing a CAPTCHA.
+		if n >= maxSessionRejects {
+			return nil, fmt.Errorf("toloka: the site refused a freshly created session %d times — "+
+				"logging in again will not help, a phpBB session is bound to the User-Agent that created it "+
+				"and the pages are fetched by the flaresolverr browser: %w", n, core.ErrNotAuthorized)
+		}
 		return nil, nil
 	}
 	if !strings.Contains(htmlBody, `<html lang="uk"`) {
@@ -586,8 +606,15 @@ func (p *Parser) parsePage(ctx context.Context, cat string, page int) ([]parseIt
 		log.Printf("toloka: cat=%s page=%d unexpected body (bodyLen=%d, not login form, not uk forum)", cat, page, len(htmlBody))
 		return nil, nil
 	}
+	// The session was accepted, so a later refusal starts its count over.
+	p.cookieMu.Lock()
+	p.sessionRejects = 0
+	p.cookieMu.Unlock()
 	return parsePageHTML(strings.TrimRight(p.Config.Toloka.Host, "/"), cat, htmlBody), nil
 }
+
+// maxSessionRejects bounds the re-login loop described in parsePage.
+const maxSessionRejects = 2
 
 // looksLikeTolokaLoginForm returns true when the response is /login.php
 // rendered in place of the requested listing. Matches the login form's
@@ -652,9 +679,15 @@ func fileTime(td filedb.TorrentDetails) time.Time {
 	return time.Now().UTC()
 }
 
-func defaultUA() string {
-	return "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-}
+// defaultUA returns the User-Agent for standard-mode requests. Empty means
+// "let Fetcher pick", which is the right default: core.defaultUserAgent is
+// pinned to the tls-client's Chrome impersonation profile, and the two have to
+// agree. What used to sit here was a truncated `Mozilla/5.0 (Windows NT 10.0;
+// Win64; x64) AppleWebKit/537.36` — no Chrome token at all, next to a Chrome
+// ClientHello. It was invisible while toloka ran through flaresolverr, because
+// the flare path uses the browser's UA and ignores this one (see GetExt), but
+// every standard-mode request carried the contradiction.
+func defaultUA() string { return "" }
 
 func parsePageHTML(host, cat, htmlBody string) []parseItem {
 	rows := rowSplitRe.Split(replaceBadNames(htmlBody), -1)
@@ -799,7 +832,7 @@ func (p *Parser) ensureCookie(ctx context.Context) (string, error) {
 		remaining := 5*time.Minute - time.Since(p.lastLoginAttempt)
 		p.cookieMu.Unlock()
 		log.Printf("toloka: login on cooldown for %s after recent failure", remaining.Round(time.Second))
-		return "", fmt.Errorf("TakeLogin == null (cooldown)")
+		return "", fmt.Errorf("toloka: login on cooldown for %s: %w", remaining.Round(time.Second), core.ErrNotAuthorized)
 	}
 	p.lastLoginAttempt = time.Now()
 	p.cookieMu.Unlock()
@@ -832,7 +865,6 @@ func (p *Parser) takeLogin(ctx context.Context) (string, error) {
 		log.Printf("toloka: login skipped — username/password empty in config")
 		return "", errNoCredentials
 	}
-	log.Printf("toloka: login as user=%s host=%s", user, host)
 	vals := url.Values{}
 	vals.Set("username", user)
 	vals.Set("password", pass)
@@ -840,25 +872,75 @@ func (p *Parser) takeLogin(ctx context.Context) (string, error) {
 	vals.Set("ssl", "on")
 	vals.Set("redirect", "index.php?")
 	vals.Set("login", "Вхід")
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, host+"/login.php", strings.NewReader(vals.Encode()))
-	if err != nil {
-		return "", err
+	loginURL := host + "/login.php"
+
+	// Through Fetcher, not a raw net/http client. toloka is behind Cloudflare
+	// (server: cloudflare, cf-ray) and simply is not challenging today —
+	// measured 2026-09-26, login.php answers 200 with the form intact. kinozal
+	// was described the same way in this repo until it moved behind a managed
+	// challenge, at which point its raw-client login became impossible rather
+	// than merely fragile: a raw client can hold no cf_clearance and does not
+	// impersonate Chrome's ClientHello. Fetcher carries both, so if toloka ever
+	// gates, CF auto-detect handles it with no code change. The two things that
+	// used to require the raw client — Set-Cookie off the 302, and not
+	// following it — are FetchResult.Header and FetchOptions.NoRedirect.
+	//
+	// The login POST carries the same User-Agent the pages are fetched with.
+	//
+	// The symptom is measured; the mechanism is not. Production 2026-09-26:
+	// `login OK userid=444179` at 16:31:46, then `cat=96 page=0 returned login
+	// form` at 16:31:54, then a fresh login per category, indefinitely, each
+	// one reporting success. The leading explanation is phpBB's
+	// `session_browser` check, which drops a session to guest when the browser
+	// string changes — and the login used to go out on a raw client with a
+	// hand-written `Mozilla/5.0 … AppleWebKit/537.36` while the pages come from
+	// the flaresolverr browser, a guaranteed mismatch. That is NOT confirmed
+	// against the live site: the obvious test (replay a guest sid under a
+	// different UA) proves nothing, because toloka hands a guest a fresh sid on
+	// almost every request whatever the UA — measured over three runs, where
+	// the *same* UA also produced a new sid.
+	//
+	// A competing explanation fits equally well: our cookie never reaches the
+	// rendered page at all. logSessionRejection separates the two on the next
+	// production run.
+	ua := strings.TrimSpace(p.Config.Toloka.UserAgent)
+	postCookie := strings.TrimSpace(p.Config.Toloka.Cookie)
+	flareCookie, flareUA := p.Fetcher.GetFlareCookies(loginURL)
+	if flareCookie != "" {
+		// Hand the browser's own session to the POST as well: phpBB upgrades
+		// that session in place, so the sid the browser already holds is the
+		// one that becomes authenticated.
+		postCookie = core.MergeCookieStrings(postCookie, flareCookie)
 	}
-	req.Header.Set("User-Agent", defaultUA())
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	// Use separate client with redirect disabled to capture Set-Cookie from 302
-	loginClient := &http.Client{
-		Timeout: 20 * time.Second,
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			return http.ErrUseLastResponse
+	if ua == "" {
+		ua = flareUA
+	}
+	if ua == "" {
+		log.Printf("toloka: login is going out without the browser's User-Agent — " +
+			"if pages are fetched through flaresolverr the site will refuse this session on the next request")
+	}
+	log.Printf("toloka: login as user=%s host=%s ua=%q", user, host, ua)
+
+	tracker := p.Config.Toloka
+	tracker.Cookie = postCookie
+	// Standard mode unless CF auto-detect says otherwise; for a non-GET both
+	// routes end in a plain POST over the impersonating client either way.
+	tracker.FetchMode = "standard"
+	resp, err := p.Fetcher.Do(loginURL, tracker, core.FetchOptions{
+		Method:      http.MethodPost,
+		Body:        []byte(vals.Encode()),
+		ContentType: "application/x-www-form-urlencoded",
+		UserAgent:   ua,
+		NoRedirect:  true,
+		ExtraHeaders: map[string]string{
+			"Referer": loginURL,
+			"Origin":  host,
 		},
-	}
-	resp, err := loginClient.Do(req)
+	})
 	if err != nil {
 		log.Printf("toloka: login HTTP error: %v", err)
 		return "", err
 	}
-	defer resp.Body.Close()
 	location := resp.Header.Get("Location")
 	var sid, data string
 	for _, setCookie := range resp.Header.Values("Set-Cookie") {
@@ -873,7 +955,8 @@ func (p *Parser) takeLogin(ctx context.Context) (string, error) {
 	}
 	if sid == "" || data == "" {
 		log.Printf("toloka: login FAILED — no toloka_sid/toloka_data cookies (status=%d location=%q)", resp.StatusCode, location)
-		return "", fmt.Errorf("TakeLogin == null")
+		// Names only — toloka_data is the session credential itself.
+		return "", fmt.Errorf("toloka: login.php set [%s], need toloka_sid+toloka_data: %w", core.CookieNames(resp.Header.Values("Set-Cookie")...), core.ErrNotAuthorized)
 	}
 	// Detect guest cookie: toloka_data is URL-encoded PHP serialized blob; on
 	// failed credentials toloka still returns a session but with userid=-1.
@@ -881,14 +964,18 @@ func (p *Parser) takeLogin(ctx context.Context) (string, error) {
 	dataDecoded, _ := url.QueryUnescape(data)
 	if strings.Contains(dataDecoded, `"userid";i:-1`) || strings.Contains(data, "%22userid%22%3Bi%3A-1") {
 		log.Printf("toloka: login FAILED — server returned guest cookie (userid=-1, wrong credentials?)")
-		return "", fmt.Errorf("TakeLogin == null (guest)")
+		return "", fmt.Errorf("toloka: login returned a guest session (userid=-1, credentials refused): %w", core.ErrNotAuthorized)
 	}
 	useridStr := ""
 	if m := useridRe.FindStringSubmatch(dataDecoded); len(m) > 1 {
 		useridStr = m[1]
 	}
-	log.Printf("toloka: login OK userid=%s redirect=%s", useridStr, location)
-	return fmt.Sprintf("toloka_sid=%s; toloka_ssl=1; toloka_data=%s;", sid, data), nil
+	cookie := fmt.Sprintf("toloka_sid=%s; toloka_ssl=1; toloka_data=%s;", sid, data)
+	p.cookieMu.Lock()
+	p.loginUA = ua
+	p.cookieMu.Unlock()
+	log.Printf("toloka: login OK userid=%s sid=%s ua=%q", useridStr, sidFingerprint(cookie), ua)
+	return cookie, nil
 }
 
 // fetchPageHTML routes through the shared Fetcher so the tracker's fetchmode
@@ -1058,4 +1145,37 @@ func replaceBadNames(s string) string {
 	s = strings.ReplaceAll(s, "Ё", "Е")
 	s = strings.ReplaceAll(s, "ё", "е")
 	return strings.TrimSpace(cleanSpaceRe.ReplaceAllString(s, " "))
+}
+
+// sidFingerprint reduces a session id to a short, non-reversible tag, so two log
+// lines can be compared without ever printing the credential. A toloka_sid in a
+// log is a replayable session, the same rule cf_clearance follows.
+func sidFingerprint(cookie string) string {
+	sid := ""
+	for _, part := range strings.Split(cookie, ";") {
+		if v, ok := strings.CutPrefix(strings.TrimSpace(part), "toloka_sid="); ok {
+			sid = v
+			break
+		}
+	}
+	if sid == "" {
+		return "none"
+	}
+	sum := sha256.Sum256([]byte(sid))
+	return hex.EncodeToString(sum[:3])
+}
+
+// logSessionRejection records what the run actually sent when the site refused
+// the session, which is what separates the two candidate explanations for the
+// re-login loop. If this sid tag matches the one logged at login, our cookie
+// did reach the request and toloka rejected it anyway — pointing at the session
+// being bound to something the fetch path does not reproduce, the User-Agent
+// being the leading suspect. If it differs, or reads `none`, then the cookie
+// never made it into the fetch and the bug is entirely ours.
+func (p *Parser) logSessionRejection(cat string, page int) {
+	p.cookieMu.Lock()
+	cookie, ua := p.cookie, p.loginUA
+	p.cookieMu.Unlock()
+	log.Printf("toloka: cat=%s page=%d — session we sent: cookies=[%s] sid=%s loginUA=%q",
+		cat, page, core.CookieNames(cookie), sidFingerprint(cookie), ua)
 }
