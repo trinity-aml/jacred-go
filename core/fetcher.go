@@ -1191,9 +1191,53 @@ func (f *Fetcher) fetchWithCookies(rawURL, cookie string, sess *flareSession, ex
 	merged := mergeCookies(sess.cookies, stripCFManagedCookies(cookie))
 	ua := sess.userAgent
 	if ua == "" {
-		ua = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36"
+		ua = defaultUserAgent
 	}
-	return f.doHTTP(http.MethodGet, rawURL, merged, ua, "", nil, extraHeaders, profile)
+	res, err := f.doHTTP(http.MethodGet, rawURL, merged, ua, "", nil, extraHeaders, profile)
+
+	// The session's clearance is not always the replayable one. Each browser
+	// render refreshes the cached session with the browser's current cookies,
+	// and a clearance minted inside the browser is bound to it — while the
+	// copy the caller saved at login time, from the solve that preceded it,
+	// still replays.
+	//
+	// Measured on rutracker 2026-09-26, same host, same minute: with the
+	// instance rendering every page in the browser because this replay kept
+	// being challenged, a second process using *only* the caller's cookie
+	// fetched the same two category pages over plain HTTP in 590ms and 126ms,
+	// 50 listing rows each. The replay was never broken — the cookie set was.
+	//
+	// So on a challenge, try once more with the caller's own clearance. The
+	// session still goes first, which is what keeps the opposite bug fixed:
+	// an hours-old clearance persisted into a saved auth cookie must not
+	// shadow one a solve just minted. This only costs a request on the path
+	// that was about to condemn the domain to the browser for minutes.
+	if err != nil || !callerHasClearance(cookie) {
+		return res, err
+	}
+	if res.StatusCode != 403 && !isCloudflareChallenge(res.Body) {
+		return res, nil
+	}
+	// Exactly the configuration that was measured to work: the caller's cookie
+	// on its own, with the impersonation profile's own UA. Merging the
+	// session's cookies back in is *not* the same request — the first attempt
+	// already is that, and it was just challenged.
+	retry, rerr := f.doHTTP(http.MethodGet, rawURL, cookie, defaultUserAgent, "", nil, extraHeaders, profile)
+	if rerr != nil || retry == nil {
+		return res, err
+	}
+	if retry.StatusCode != 403 && !isCloudflareChallenge(retry.Body) {
+		log.Printf("flaresolverr: %s replayed with the caller's own clearance after the session's was challenged",
+			extractDomain(rawURL))
+		return retry, nil
+	}
+	return res, err
+}
+
+// callerHasClearance reports whether the caller brought a cf_clearance of its
+// own, which is the only case where the retry above differs from the first try.
+func callerHasClearance(cookie string) bool {
+	return strings.Contains(cookie, "cf_clearance=")
 }
 
 // cfManagedCookies are issued by Cloudflare and bound to the client that

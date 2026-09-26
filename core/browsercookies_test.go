@@ -1,6 +1,7 @@
 package core
 
 import (
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -241,5 +242,62 @@ func TestHealthyDomainAlwaysReplays(t *testing.T) {
 		if skipReplay("healthy.example") {
 			t.Fatal("a healthy domain skipped the replay")
 		}
+	}
+}
+
+// The caller-clearance retry only makes sense when the caller actually brought
+// one; otherwise the second attempt would send the identical cookie set.
+func TestCallerClearanceDetection(t *testing.T) {
+	for _, c := range []struct {
+		cookie string
+		want   bool
+	}{
+		{"cf_clearance=abc; bb_session=x", true},
+		{"bb_session=x; cf_clearance=abc", true},
+		{"bb_session=x", false},
+		{"", false},
+		{"cf_clearance", false}, // a name with no value is not a cookie
+	} {
+		if got := callerHasClearance(c.cookie); got != c.want {
+			t.Errorf("callerHasClearance(%q) = %v, want %v", c.cookie, got, c.want)
+		}
+	}
+}
+
+// The session's clearance must still go first. That ordering is what keeps the
+// original bug fixed: an hours-old clearance persisted into a saved auth cookie
+// must not shadow one a solve just minted — which once forced a cold solve per
+// page and buried the browser.
+func TestSessionClearanceIsStillTriedFirst(t *testing.T) {
+	merged := mergeCookies("cf_clearance=FROM_SESSION; bb_guid=g", stripCFManagedCookies("cf_clearance=FROM_CALLER; bb_session=s"))
+	if !strings.Contains(merged, "FROM_SESSION") {
+		t.Errorf("the session's clearance did not win the first attempt: %s", merged)
+	}
+	if strings.Contains(merged, "FROM_CALLER") {
+		t.Errorf("the caller's clearance leaked into the first attempt: %s", merged)
+	}
+	if !strings.Contains(merged, "bb_session=s") {
+		t.Errorf("the caller's auth cookie was dropped: %s", merged)
+	}
+
+}
+
+// The retry must send the caller's cookie *on its own*. Merging the session
+// back in reproduces the request that was just challenged — which is exactly
+// what the first version of this retry did, and why it changed nothing live.
+// The configuration that was measured to work was the caller's cookie alone
+// with the impersonation profile's own UA.
+func TestRetryUsesTheCallerCookieAlone(t *testing.T) {
+	src, err := os.ReadFile("fetcher.go")
+	if err != nil {
+		t.Fatalf("read source: %v", err)
+	}
+	code := string(src)
+	const want = `retry, rerr := f.doHTTP(http.MethodGet, rawURL, cookie, defaultUserAgent, "", nil, extraHeaders, profile)`
+	if !strings.Contains(code, want) {
+		t.Error("the caller-clearance retry no longer sends the caller's cookie alone with defaultUserAgent")
+	}
+	if strings.Contains(code, "retry, rerr := f.doHTTP(http.MethodGet, rawURL, mergeCookies(") {
+		t.Error("the retry merges the session's cookies back in, reproducing the challenged request")
 	}
 }
