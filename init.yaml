@@ -116,7 +116,6 @@ Bitru:
 
 Toloka:
   host: "https://toloka.to"
-  fetchmode: flaresolverr
   useproxy: false
   reqMinute: 8
   parseDelay: 7000
