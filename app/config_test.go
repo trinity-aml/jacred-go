@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -503,5 +504,41 @@ func TestLegacyReqMinuteStillParses(t *testing.T) {
 	}
 	if cfg.Rutor.ParseDelay != 7000 {
 		t.Errorf("parseDelay = %d", cfg.Rutor.ParseDelay)
+	}
+}
+
+// MarshalYAML builds init.yaml from an explicit writeTracker call per tracker,
+// and a save from /settings replaces the file wholesale — so a tracker missing
+// from config_writer.go is not merely unwritten, its section is *deleted* the
+// first time anyone opens the settings page. That is the quietest of the nine
+// registration points, so it gets the same reflection guard as the UI list.
+func TestEveryTrackerSectionIsWrittenBack(t *testing.T) {
+	cfg := DefaultConfig()
+	out := MarshalYAML(cfg)
+
+	typ := reflect.TypeOf(Config{})
+	var checked int
+	for i := 0; i < typ.NumField(); i++ {
+		f := typ.Field(i)
+		if f.Type != reflect.TypeOf(TrackerSettings{}) {
+			continue
+		}
+		checked++
+		if !strings.Contains(out, "\n"+f.Name+":\n") {
+			t.Errorf("%s has a config section but config_writer.go never writes it — "+
+				"a save from /settings would delete it", f.Name)
+		}
+	}
+	if checked < 20 {
+		t.Fatalf("only %d tracker sections found — the reflection is wrong, not the writer", checked)
+	}
+
+	// And the round-trip keeps them: parse what was written and confirm the
+	// hosts survive.
+	var back Config
+	parseYAMLIntoConfig(out, &back)
+	if back.Rudub.Host == "" || back.SubsPlease.Host == "" || back.Rutor.Host == "" {
+		t.Errorf("a tracker host was lost on write-back: rudub=%q subsplease=%q rutor=%q",
+			back.Rudub.Host, back.SubsPlease.Host, back.Rutor.Host)
 	}
 }

@@ -1022,9 +1022,17 @@ func (f *Fetcher) fetchViaFlare(rawURL, cookie string, extraHeaders map[string]s
 				// dropping it forces a cold solve per page, which is exactly
 				// what buried the browser. See markReplayHostile.
 				sessionWasValid = true
-				if markReplayHostile(domain) {
+				// Three different states share this branch and a log reader
+				// has to tell them apart: a first transient, the second strike
+				// that condemns, and a periodic probe of an already-condemned
+				// domain that came back still broken.
+				wasHostile := replayHostile(domain)
+				switch {
+				case markReplayHostile(domain):
 					log.Printf("flaresolverr: %s challenged a freshly issued clearance twice — replay is unusable here, routing this domain through the browser", domain)
-				} else {
+				case wasHostile:
+					log.Printf("flaresolverr: %s replay probe still challenged — staying on the browser, next probe in %s", domain, flareReplayRetryInterval)
+				default:
 					log.Printf("flaresolverr: %s challenged a clearance issued %s ago — rendering this page in the browser, but keeping the replay for the next one", domain, age.Round(time.Second))
 				}
 			case challenged:
