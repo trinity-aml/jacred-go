@@ -543,8 +543,13 @@ Anibelka:
 # describe a schedule. Only `curl -s "<url>"` lines are accepted and nothing is
 # passed to a shell; anything else is logged and skipped.
 #
-# The file is re-read when it changes, so an edit needs no restart.
-# GET /admin/scheduler shows what is actually loaded.
+# The file is re-read when it changes, so an edit needs no restart, and this
+# flag itself is read on every tick — turning the scheduler on or off takes
+# effect within a minute rather than at the next restart.
+#
+# The /schedule page edits the same file from the browser: one row per rule,
+# with a run button and a toggle that comments a rule out rather than deleting
+# it. Comments in the file are shown in place and preserved on save.
 
 scheduler: false
 schedulerfile: "crontab"

@@ -1337,7 +1337,17 @@ plain `curl` of a local endpoint.
 
 **In-process scheduler** (opt-in). Set `scheduler: true` in `init.yaml` and the
 binary runs the very same file itself — no system cron, no shell. Then remove
-the system crontab entry: with both enabled every job runs twice.
+the system crontab entry: with both enabled every job runs twice. The flag is
+read on every tick, so turning it on or off takes effect within a minute rather
+than at the next restart.
+
+**Editing it from the browser.** `/schedule` shows the file as a list of rules —
+schedule, URL, next run — with a run button per rule and a toggle that comments
+a rule out rather than deleting it. Comments in the file are shown in place and
+preserved on save, so the notes recording why each tracker is polled the way it
+is survive editing. A rule the scheduler could not parse is refused on save
+rather than accepted and skipped. The page works whether or not the scheduler is
+running, since the file has to be set up before it is turned on.
 
 ```yaml
 scheduler: true

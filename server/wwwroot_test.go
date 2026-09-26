@@ -11,7 +11,7 @@ import (
 )
 
 // pages are the documents served to a browser.
-var pages = []string{"index.html", "stats.html", "settings.html", "trackers.html"}
+var pages = []string{"index.html", "stats.html", "settings.html", "trackers.html", "schedule.html"}
 
 func readWWW(t *testing.T, name string) string {
 	t.Helper()
@@ -73,6 +73,7 @@ func TestPagesMountSharedHeader(t *testing.T) {
 		"stats.html":    `id="appHeader" data-page="stats"`,
 		"settings.html": `id="appHeader" data-page="settings"`,
 		"trackers.html": `id="appHeader" data-page="trackers"`,
+		"schedule.html": `id="appHeader" data-page="schedule"`,
 	}
 	for p, marker := range want {
 		if !strings.Contains(readWWW(t, p), marker) {
@@ -123,6 +124,7 @@ func TestNavigationTargetsExist(t *testing.T) {
 	routes := map[string]string{
 		"'/'":         "index.html",
 		"'/trackers'": "trackers.html",
+		"'/schedule'": "schedule.html",
 		"'/stats'":    "stats.html",
 		"'/settings'": "settings.html",
 	}

@@ -1,0 +1,511 @@
+<!DOCTYPE html>
+<html lang="ru">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="Расписание задач jacred-go" />
+  <meta name="theme-color" content="#0a0a0f" />
+  <title>Расписание | jacred-go</title>
+  <link rel="icon" type="image/png" href="./img/jacred.png" />
+  <link rel="icon" type="image/x-icon" href="./img/favicon.ico" />
+  <link rel="apple-touch-icon" href="./img/icon-192.png" />
+
+  <script>
+    // Runs before first paint, so the page never flashes the wrong theme. It has
+    // to be inline for that reason — assets/app.js owns everything else about
+    // the theme. Keep these copies identical.
+    (function () {
+      try {
+        var storedTheme = localStorage.getItem('theme');
+        var prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+        document.documentElement.classList.toggle('dark', storedTheme === 'dark' || (storedTheme === null && prefersDark));
+      } catch (e) {
+        if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+          document.documentElement.classList.add('dark');
+        }
+      }
+    })();
+  </script>
+
+  <link rel="stylesheet" href="./assets/app.css" />
+  <script defer src="./assets/app.js"></script>
+
+  <style>
+    .sc-row {
+      display: grid;
+      grid-template-columns: 40px 185px minmax(220px, 1fr) 124px 88px 76px;
+      gap: 12px;
+      align-items: center;
+      padding: 8px 18px;
+      border-top: 1px solid var(--surface-border, #e5e7eb);
+    }
+
+    .dark .sc-row { border-top-color: #1f2937; }
+
+    .sc-head {
+      font-size: 12px;
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: #6b7280;
+      border-top: none;
+      padding-top: 14px;
+      padding-bottom: 10px;
+    }
+
+    .dark .sc-head { color: #9ca3af; }
+
+    /* A comment line from the file, shown in place. The prose is what explains
+       why a tracker is polled the way it is, so hiding it would leave the page
+       looking like 59 opaque URLs. */
+    .sc-note {
+      padding: 6px 18px 6px 58px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 12px;
+      line-height: 1.55;
+      color: #6b7280;
+      white-space: pre-wrap;
+      word-break: break-word;
+      border-top: 1px solid transparent;
+    }
+
+    .dark .sc-note { color: #7c8797; }
+
+    .sc-blank { height: 8px; }
+
+    .sc-input {
+      width: 100%;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 12.5px;
+      padding: 6px 8px;
+      border-radius: 7px;
+      border: 1px solid #e5e7eb;
+      background: #ffffff;
+      color: #111827;
+      transition: border-color 120ms;
+    }
+
+    .dark .sc-input { background: #0b1220; border-color: #1f2937; color: #e5e7eb; }
+    .sc-input:focus { outline: none; border-color: #6366f1; }
+    .sc-input.bad { border-color: #ef4444; }
+
+    .sc-off .sc-input { opacity: 0.5; }
+    .sc-off .sc-meta { opacity: 0.45; }
+
+    .sc-meta { font-size: 12px; color: #6b7280; }
+    .dark .sc-meta { color: #9ca3af; }
+
+    .sc-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 5px;
+      height: 30px;
+      padding: 0 10px;
+      border-radius: 8px;
+      font-size: 12.5px;
+      font-weight: 500;
+      border: 1px solid #e5e7eb;
+      background: #ffffff;
+      color: #374151;
+      cursor: pointer;
+      transition: background 120ms, border-color 120ms;
+    }
+
+    .dark .sc-btn { background: #111827; border-color: #1f2937; color: #d1d5db; }
+    .sc-btn:hover:not(:disabled) { border-color: #6366f1; color: #4f46e5; }
+    .dark .sc-btn:hover:not(:disabled) { color: #a5b4fc; }
+    .sc-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+    .sc-primary { background: #4f46e5; border-color: #4f46e5; color: #ffffff; }
+    .sc-primary:hover:not(:disabled) { background: #4338ca; border-color: #4338ca; color: #ffffff; }
+    .dark .sc-primary { background: #4f46e5; border-color: #4f46e5; color: #ffffff; }
+
+    .sc-bar {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 10px;
+      padding: 12px 18px;
+      backdrop-filter: blur(8px);
+      background: rgba(255, 255, 255, 0.86);
+      border-bottom: 1px solid #e5e7eb;
+    }
+
+    .dark .sc-bar { background: rgba(17, 24, 39, 0.86); border-bottom-color: #1f2937; }
+
+    .sc-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 3px 9px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 500;
+    }
+
+    .sc-toast {
+      position: fixed;
+      left: 50%;
+      bottom: 24px;
+      transform: translateX(-50%);
+      max-width: min(92vw, 640px);
+      padding: 10px 16px;
+      border-radius: 10px;
+      background: #111827;
+      color: #f9fafb;
+      font-size: 13px;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 180ms;
+      z-index: 60;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+    }
+
+    @media (max-width: 900px) {
+      .sc-row {
+        grid-template-columns: 34px 1fr auto;
+        grid-template-areas:
+          "tog sched acts"
+          "tog url   url"
+          "tog meta  meta";
+        row-gap: 7px;
+      }
+
+      .sc-head { display: none; }
+      .sc-c-toggle { grid-area: tog; }
+      .sc-c-sched { grid-area: sched; }
+      .sc-c-url { grid-area: url; }
+      .sc-c-next { grid-area: meta; }
+      .sc-c-runs { display: none; }
+      .sc-c-acts { grid-area: acts; display: flex; gap: 6px; }
+      .sc-note { padding-left: 52px; }
+    }
+  </style>
+</head>
+
+<body class="bg-gray-50 dark:bg-[#0a0a0f] text-gray-900 dark:text-gray-100 min-h-screen">
+  <header id="appHeader" data-page="schedule"></header>
+
+  <div class="max-w-6xl mx-auto px-3 sm:px-4 md:px-6 py-4 sm:py-6">
+    <div class="mb-4">
+      <h1 class="text-xl sm:text-2xl font-semibold">Расписание</h1>
+      <p id="subtitle" class="text-sm text-gray-500 dark:text-gray-400 mt-1">Загрузка…</p>
+    </div>
+
+    <div id="stateNote" class="hidden mb-4 rounded-xl px-4 py-3 text-sm"></div>
+
+    <div class="rounded-2xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 overflow-hidden">
+      <div class="sc-bar">
+        <button type="button" id="btnSave" class="sc-btn sc-primary" disabled>Сохранить</button>
+        <button type="button" id="btnReload" class="sc-btn">Перечитать файл</button>
+        <button type="button" id="btnAdd" class="sc-btn">Добавить задачу</button>
+        <span id="dirty" class="sc-meta"></span>
+      </div>
+
+      <div class="sc-row sc-head">
+        <div></div>
+        <div>Расписание</div>
+        <div>URL</div>
+        <div>Следующий запуск</div>
+        <div>Запусков</div>
+        <div></div>
+      </div>
+
+      <div id="rows"></div>
+    </div>
+
+    <p class="mt-4 text-xs text-gray-500 dark:text-gray-400 leading-relaxed">
+      Это тот же файл, что читает системный cron — правки применяются к нему напрямую.
+      Комментарии показаны на своих местах и сохраняются при записи, но редактируются только в файле.
+      Выключенная задача остаётся в файле закомментированной, а не удаляется.
+      «Запустить» выполняет задачу немедленно и не меняет расписание.
+    </p>
+  </div>
+
+  <div id="toast" class="sc-toast"></div>
+
+  <script>
+    (function () {
+      'use strict';
+
+      var el = {
+        rows: document.getElementById('rows'),
+        subtitle: document.getElementById('subtitle'),
+        stateNote: document.getElementById('stateNote'),
+        save: document.getElementById('btnSave'),
+        reload: document.getElementById('btnReload'),
+        add: document.getElementById('btnAdd'),
+        dirty: document.getElementById('dirty'),
+        toast: document.getElementById('toast')
+      };
+
+      var state = { entries: [], clean: '', enabled: false, path: '', busy: {} };
+
+      function esc(s) {
+        return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+          return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+        });
+      }
+
+      function toast(msg) {
+        el.toast.textContent = msg;
+        el.toast.style.opacity = '1';
+        clearTimeout(toast._t);
+        toast._t = setTimeout(function () { el.toast.style.opacity = '0'; }, 4000);
+      }
+
+      // Only the parts that go into the file count as a change, so re-rendering
+      // or a counter ticking never marks the page dirty.
+      function fingerprint() {
+        return JSON.stringify(state.entries.map(function (e) {
+          return e.kind === 'job'
+            ? ['j', e.spec, e.url, e.flags || '', !!e.disabled]
+            : ['t', e.text || ''];
+        }));
+      }
+
+      function markDirty() {
+        var dirty = fingerprint() !== state.clean;
+        el.save.disabled = !dirty;
+        el.dirty.textContent = dirty ? 'есть несохранённые изменения' : '';
+      }
+
+      function whenText(iso) {
+        if (!iso) return '';
+        var d = new Date(iso);
+        if (isNaN(d)) return '';
+        var mins = Math.round((d.getTime() - Date.now()) / 60000);
+        var hhmm = String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+        if (mins < 1) return 'меньше минуты';
+        if (mins < 60) return 'через ' + mins + ' мин';
+        if (mins < 24 * 60) return hhmm + ' (через ' + Math.round(mins / 60) + ' ч)';
+        return d.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' }) + ' ' + hhmm;
+      }
+
+      // The file stores absolute URLs pointing at the instance's own listener.
+      // Running one from a browser opened on another host has to go to *this*
+      // origin, so only the path is reused.
+      function pathOf(url) {
+        try {
+          return new URL(url, window.location.origin).pathname + (new URL(url, window.location.origin).search || '');
+        } catch (e) {
+          return url;
+        }
+      }
+
+      function shortLabel(url) {
+        var p = pathOf(url);
+        return p.length > 46 ? p.slice(0, 44) + '…' : p;
+      }
+
+      function render() {
+        var html = state.entries.map(function (e, i) {
+          if (e.kind !== 'job') {
+            var t = (e.text || '').trim();
+            if (t === '') return '<div class="sc-blank"></div>';
+            return '<div class="sc-note">' + esc(t) + '</div>';
+          }
+
+          var busy = !!state.busy[i];
+          var runs = (e.runs == null) ? '' : String(e.runs);
+          var skipped = (e.skipped ? ' / ' + e.skipped + ' пропущ.' : '');
+
+          return '' +
+            '<div class="sc-row' + (e.disabled ? ' sc-off' : '') + '" data-i="' + i + '">' +
+              '<div class="sc-c-toggle">' +
+                '<input type="checkbox" data-act="toggle" data-i="' + i + '"' + (e.disabled ? '' : ' checked') +
+                  ' title="Включить или выключить задачу" aria-label="Включить задачу" />' +
+              '</div>' +
+              '<div class="sc-c-sched">' +
+                '<input class="sc-input" data-act="spec" data-i="' + i + '" value="' + esc(e.spec) + '"' +
+                  ' spellcheck="false" aria-label="Расписание cron" />' +
+              '</div>' +
+              '<div class="sc-c-url">' +
+                '<input class="sc-input" data-act="url" data-i="' + i + '" value="' + esc(e.url) + '"' +
+                  ' spellcheck="false" aria-label="URL задачи" />' +
+              '</div>' +
+              '<div class="sc-c-next sc-meta">' + esc(e.disabled ? 'выключена' : whenText(e.nextRun)) + '</div>' +
+              '<div class="sc-c-runs sc-meta">' + esc(runs + skipped) + '</div>' +
+              '<div class="sc-c-acts" style="display:flex;gap:6px;justify-content:flex-end">' +
+                '<button type="button" class="sc-btn" data-act="run" data-i="' + i + '"' + (busy ? ' disabled' : '') +
+                  ' title="Запустить ' + esc(shortLabel(e.url)) + ' сейчас">' + (busy ? '…' : '▶') + '</button>' +
+                '<button type="button" class="sc-btn" data-act="del" data-i="' + i + '" title="Удалить строку">✕</button>' +
+              '</div>' +
+            '</div>';
+        }).join('');
+
+        el.rows.innerHTML = html;
+        markDirty();
+      }
+
+      function setNote(kind, html) {
+        if (!kind) { el.stateNote.className = 'hidden'; return; }
+        var cls = kind === 'warn'
+          ? 'mb-4 rounded-xl px-4 py-3 text-sm bg-amber-50 text-amber-900 border border-amber-200 dark:bg-amber-500/10 dark:text-amber-200 dark:border-amber-500/30'
+          : 'mb-4 rounded-xl px-4 py-3 text-sm bg-red-50 text-red-900 border border-red-200 dark:bg-red-500/10 dark:text-red-200 dark:border-red-500/30';
+        el.stateNote.className = cls;
+        el.stateNote.innerHTML = html;
+      }
+
+      function load() {
+        return fetch('/admin/scheduler', { headers: { Accept: 'application/json' } })
+          .then(function (r) { return r.json(); })
+          .then(function (d) {
+            if (d.badip) { setNote('err', 'Доступ к расписанию разрешён только с локального адреса.'); return; }
+            state.enabled = !!d.enabled;
+            state.path = d.path || '';
+            state.entries = d.entries || [];
+            state.clean = fingerprint();
+
+            var jobs = state.entries.filter(function (e) { return e.kind === 'job'; });
+            var on = jobs.filter(function (e) { return !e.disabled; }).length;
+            el.subtitle.textContent = 'Файл ' + state.path + ' · задач ' + jobs.length +
+              ' (включено ' + on + ') · ' + (state.enabled
+                ? 'выполняет сам jacred'
+                : 'выполняет системный cron');
+
+            if (!d.ok) {
+              setNote('err', 'Файл не прочитан: ' + esc(d.error || 'неизвестная ошибка'));
+            } else if ((d.warnings || []).length) {
+              setNote('warn', 'Строки, которые не разобрались как задача и оставлены как текст:<br>' +
+                d.warnings.map(esc).join('<br>'));
+            } else if (!state.enabled) {
+              setNote('warn', 'Встроенный планировщик выключен — этот файл выполняет системный cron. ' +
+                'Правки здесь меняют тот же файл. Чтобы задачи выполнял сам jacred, включите <code>scheduler</code> в ' +
+                '<a class="underline" href="/settings">настройках</a> и уберите запись из системного cron.');
+            } else {
+              setNote(null);
+            }
+            render();
+          })
+          .catch(function (e) { setNote('err', 'Не удалось загрузить расписание: ' + esc(e.message)); });
+      }
+
+      function save() {
+        el.save.disabled = true;
+        fetch('/admin/scheduler', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ entries: state.entries })
+        })
+          .then(function (r) { return r.json().then(function (b) { return { ok: r.ok, body: b }; }); })
+          .then(function (res) {
+            var b = res.body || {};
+            if (!res.ok || !b.ok) {
+              toast('Не сохранено: ' + (b.error || 'ошибка'));
+              markBad(b.errors || []);
+              markDirty();
+              return;
+            }
+            toast(b.applied
+              ? 'Сохранено — планировщик подхватит файл сам'
+              : 'Сохранено в ' + (b.path || state.path));
+            return load();
+          })
+          .catch(function (e) { toast('Не сохранено: ' + e.message); markDirty(); });
+      }
+
+      // Highlight the rows the server complained about, matched by the schedule
+      // it quoted back.
+      function markBad(errors) {
+        el.rows.querySelectorAll('.sc-input').forEach(function (n) { n.classList.remove('bad'); });
+        errors.forEach(function (msg) {
+          var m = /^"([^"]*)"/.exec(msg);
+          if (!m) return;
+          state.entries.forEach(function (e, i) {
+            if (e.kind === 'job' && e.spec.trim() === m[1].trim()) {
+              var n = el.rows.querySelector('[data-act="spec"][data-i="' + i + '"]');
+              if (n) n.classList.add('bad');
+            }
+          });
+        });
+      }
+
+      function run(i) {
+        var e = state.entries[i];
+        if (!e || e.kind !== 'job') return;
+        state.busy[i] = true;
+        render();
+        var label = shortLabel(e.url);
+        toast(label + ': запущено…');
+        fetch(pathOf(e.url), { headers: { Accept: 'application/json' } })
+          .then(function (r) {
+            return r.text().then(function (txt) {
+              var b = null;
+              try { b = JSON.parse(txt); } catch (err) { /* not every endpoint answers JSON */ }
+              return { ok: r.ok, status: r.status, body: b, text: txt };
+            });
+          })
+          .then(function (res) {
+            var b = res.body || {};
+            if (!res.ok || b.error) toast(label + ': ' + (b.error || ('HTTP ' + res.status)));
+            else toast(label + ': ' + (b.text || b.status || 'готово'));
+          })
+          .catch(function (err) { toast(label + ': ' + err.message); })
+          .then(function () { delete state.busy[i]; render(); });
+      }
+
+      el.rows.addEventListener('input', function (ev) {
+        var n = ev.target.closest('[data-act]');
+        if (!n) return;
+        var i = Number(n.getAttribute('data-i'));
+        var act = n.getAttribute('data-act');
+        if (act === 'spec') state.entries[i].spec = n.value;
+        else if (act === 'url') state.entries[i].url = n.value;
+        else return;
+        n.classList.remove('bad');
+        markDirty();
+      });
+
+      el.rows.addEventListener('change', function (ev) {
+        var n = ev.target.closest('[data-act="toggle"]');
+        if (!n) return;
+        var i = Number(n.getAttribute('data-i'));
+        state.entries[i].disabled = !n.checked;
+        render();
+      });
+
+      el.rows.addEventListener('click', function (ev) {
+        var n = ev.target.closest('button[data-act]');
+        if (!n || n.disabled) return;
+        var i = Number(n.getAttribute('data-i'));
+        if (n.getAttribute('data-act') === 'run') run(i);
+        else if (n.getAttribute('data-act') === 'del') {
+          state.entries.splice(i, 1);
+          render();
+        }
+      });
+
+      el.save.addEventListener('click', save);
+      el.reload.addEventListener('click', function () {
+        if (fingerprint() !== state.clean && !window.confirm('Несохранённые изменения будут потеряны. Перечитать файл?')) return;
+        load();
+      });
+      el.add.addEventListener('click', function () {
+        state.entries.push({
+          kind: 'job', spec: '*/15 * * * *',
+          url: window.location.origin + '/cron/rutor/parse',
+          flags: '-s', disabled: true
+        });
+        render();
+        var last = el.rows.querySelector('.sc-row:last-of-type [data-act="url"]');
+        if (last) { last.focus(); last.select(); }
+      });
+
+      window.addEventListener('beforeunload', function (ev) {
+        if (fingerprint() === state.clean) return;
+        ev.preventDefault();
+        ev.returnValue = '';
+      });
+
+      load();
+    })();
+  </script>
+</body>
+
+</html>

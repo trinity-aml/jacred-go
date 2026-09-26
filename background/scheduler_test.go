@@ -159,7 +159,7 @@ func TestOverlappingRunIsSkipped(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	s := NewScheduler("", srv.URL)
+	s := NewScheduler("", srv.URL, nil)
 	j := &job{spec: "* * * * *", url: srv.URL, schedule: mustSchedule(t, "* * * * *")}
 	s.jobs = []*job{j}
 
@@ -197,7 +197,7 @@ func TestJobFiresOverLoopbackHTTP(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	s := NewScheduler("", srv.URL)
+	s := NewScheduler("", srv.URL, nil)
 	j := &job{url: srv.URL + "/cron/rutor/parse?limit_page=2", schedule: mustSchedule(t, "* * * * *")}
 	s.jobs = []*job{j}
 	s.tick(t.Context(), time.Now())
@@ -227,7 +227,7 @@ func TestReloadPicksUpEditsAndKeepsJobsOnError(t *testing.T) {
 	}
 	write("*/5 * * * *  curl -s \"http://x/a\"\n")
 
-	s := NewScheduler(path, "http://x")
+	s := NewScheduler(path, "http://x", nil)
 	if err := s.reload(); err != nil {
 		t.Fatal(err)
 	}

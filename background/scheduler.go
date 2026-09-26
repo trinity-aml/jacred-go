@@ -43,6 +43,11 @@ type Scheduler struct {
 	path    string
 	baseURL string
 	client  *http.Client
+	// enabled is consulted on every tick rather than at startup, so flipping
+	// `scheduler` in the settings takes effect within a minute instead of
+	// needing a restart — and the page can report the real state rather than
+	// whatever was true when the process launched.
+	enabled func() bool
 
 	mu      sync.Mutex
 	jobs    []*job
@@ -62,14 +67,18 @@ type job struct {
 
 // jobLineRe matches the one shape the crontab uses: five schedule fields, then
 // a bare curl of a quoted URL.
-var jobLineRe = regexp.MustCompile(`^(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+curl\s+(?:-[a-zA-Z]+\s+)*["']([^"']+)["']\s*$`)
+var jobLineRe = regexp.MustCompile(`^(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+curl\s+((?:-[a-zA-Z]+\s+)*)["']([^"']+)["']\s*$`)
 
 // NewScheduler prepares a scheduler for the jobs in path, firing them at base
 // (the process's own listen address).
-func NewScheduler(path, base string) *Scheduler {
+func NewScheduler(path, base string, enabled func() bool) *Scheduler {
+	if enabled == nil {
+		enabled = func() bool { return true }
+	}
 	return &Scheduler{
 		path:    path,
 		baseURL: strings.TrimRight(base, "/"),
+		enabled: enabled,
 		// No timeout: a cron parser legitimately runs for hours, which is why
 		// the HTTP server sets WriteTimeout to 0 as well. An in-flight job is
 		// bounded by the run guard below, not by a clock.
@@ -77,16 +86,20 @@ func NewScheduler(path, base string) *Scheduler {
 	}
 }
 
-// Run ticks once a minute, on the minute, until ctx is cancelled.
+// Run ticks once a minute, on the minute, until ctx is cancelled. It runs even
+// when the scheduler is disabled, firing nothing — that is what lets the flag
+// be flipped at runtime.
 func (s *Scheduler) Run(ctx context.Context) {
 	if err := s.reload(); err != nil {
-		log.Printf("scheduler: %v — nothing scheduled", err)
-		return
+		log.Printf("scheduler: %v", err)
 	}
-	s.mu.Lock()
-	n := len(s.jobs)
-	s.mu.Unlock()
-	log.Printf("scheduler: %d job(s) from %s, firing against %s", n, s.path, s.baseURL)
+	wasOn := s.enabled()
+	if wasOn {
+		s.mu.Lock()
+		n := len(s.jobs)
+		s.mu.Unlock()
+		log.Printf("scheduler: %d job(s) from %s, firing against %s", n, s.path, s.baseURL)
+	}
 
 	for {
 		// Align to the next minute so a job written for :05 runs at :05 rather
@@ -96,6 +109,21 @@ func (s *Scheduler) Run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-time.After(time.Until(next)):
+		}
+		on := s.enabled()
+		if on != wasOn {
+			s.mu.Lock()
+			n := len(s.jobs)
+			s.mu.Unlock()
+			if on {
+				log.Printf("scheduler: enabled, %d job(s) from %s", n, s.path)
+			} else {
+				log.Printf("scheduler: disabled, nothing will fire until it is turned back on")
+			}
+			wasOn = on
+		}
+		if !on {
+			continue
 		}
 		if err := s.reload(); err != nil {
 			log.Printf("scheduler: reload failed, keeping the previous jobs: %v", err)
@@ -257,7 +285,7 @@ func parseCrontab(r io.Reader) ([]*job, []string) {
 		jobs = append(jobs, &job{
 			line:     n,
 			spec:     strings.Join(m[1:6], " "),
-			url:      m[6],
+			url:      m[7],
 			schedule: sch,
 		})
 	}

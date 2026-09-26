@@ -204,15 +204,19 @@ func main() {
 	// it fires its jobs over loopback HTTP — that is what keeps a scheduled
 	// run indistinguishable from a curl, including the recordCronRuns
 	// middleware that /trackers is built from.
-	if cfg.Scheduler {
-		file := cfg.SchedulerFile
-		if strings.TrimSpace(file) == "" {
-			file = "crontab"
-		}
-		sched := background.NewScheduler(file, "http://127.0.0.1:"+strconv.Itoa(cfg.ListenPort))
-		srv.SetScheduler(sched)
-		go sched.Run(ctx)
+	file := cfg.SchedulerFile
+	if strings.TrimSpace(file) == "" {
+		file = "crontab"
 	}
+	// Always constructed, and its loop always runs: whether it fires is read
+	// from the live config on every tick, so turning the scheduler on or off
+	// in the settings takes effect within a minute rather than at the next
+	// restart. The /schedule page reads the same state, so it never claims
+	// something the process is not doing.
+	sched := background.NewScheduler(file, "http://127.0.0.1:"+strconv.Itoa(cfg.ListenPort),
+		func() bool { return srv.GetConfig().Scheduler })
+	srv.SetScheduler(sched)
+	go sched.Run(ctx)
 
 	// Ожидание сигнала завершения
 	quit := make(chan os.Signal, 1)

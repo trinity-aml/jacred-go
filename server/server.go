@@ -22,6 +22,7 @@ import (
 	"runtime"
 
 	"jacred/app"
+	"jacred/background"
 	"jacred/cron/anibelka"
 	"jacred/cron/anidub"
 	"jacred/cron/anifilm"
@@ -116,9 +117,9 @@ type Server struct {
 	ViruseprojectParser *viruseproject.Parser
 	AnibelkaParser      *anibelka.Parser
 	SubsPleaseParser    *subsplease.Parser
-	// scheduler is set only when the in-process scheduler runs; it exists so
-	// /admin/scheduler can show what is actually loaded rather than what the
-	// file on disk says.
+	// scheduler is always set; whether it fires comes from the config, which
+	// it re-reads each tick. It exists here so /admin/scheduler can show what
+	// is actually loaded rather than what the file on disk says.
 	scheduler   interface{ Jobs() []map[string]any }
 	RudubParser *rudub.Parser
 	// Runs remembers the outcome of every cron call so /stats/parsers can
@@ -271,6 +272,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/dev/fixselezenurls", s.handleDevFixSelezenUrls)
 	mux.HandleFunc("/dev/migrateviruseprojecturls", s.handleDevMigrateViruseprojectUrls)
 	mux.HandleFunc("/admin/config", s.handleAdminConfig)
+	mux.HandleFunc("/schedule", s.handleSchedulePage)
 	mux.HandleFunc("/admin/scheduler", s.handleAdminScheduler)
 	mux.HandleFunc("/admin/cf-domains", s.handleAdminCFDomains)
 
@@ -366,6 +368,14 @@ func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
 	}
 	s.serveHTMLFile(w, r, "index.html")
 }
+func (s *Server) handleSchedulePage(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/schedule" && r.URL.Path != "/schedule/" {
+		s.serveMaybeStatic(w, r)
+		return
+	}
+	s.serveHTMLFile(w, r, "schedule.html")
+}
+
 func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path != "/stats" && r.URL.Path != "/stats/" {
 		s.serveMaybeStatic(w, r)
@@ -1349,20 +1359,125 @@ func (s *Server) SetScheduler(sched interface{ Jobs() []map[string]any }) {
 	s.scheduler = sched
 }
 
+// handleAdminScheduler reads and writes the schedule file.
+//
+// It works whether or not the in-process scheduler is running: the file is the
+// schedule either way, and the point of the editor is to be able to set one up
+// before turning the scheduler on. When it *is* running, per-job counters are
+// merged in so the page can show what has actually fired.
 func (s *Server) handleAdminScheduler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		w.WriteHeader(http.StatusMethodNotAllowed)
+	if !isLocalRequest(r) {
+		writeJSON(w, http.StatusForbidden, map[string]any{"badip": true})
 		return
 	}
-	if s.scheduler == nil {
+	switch r.Method {
+	case http.MethodGet:
+		s.schedulerGet(w)
+	case http.MethodPost:
+		s.schedulerSave(w, r)
+	default:
+		w.Header().Set("Allow", "GET, POST")
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"ok": false, "error": "GET or POST only"})
+	}
+}
+
+// schedulerEnabled reports whether the in-process scheduler is actually firing.
+// It reads the live config, which is the same thing the scheduler consults on
+// each tick, so the page can never claim something the process is not doing.
+func (s *Server) schedulerEnabled() bool { return s.GetConfig().Scheduler }
+
+// schedulerFilePath is where the schedule lives, defaulting to the same file
+// system cron would read.
+func (s *Server) schedulerFilePath() string {
+	if p := strings.TrimSpace(s.GetConfig().SchedulerFile); p != "" {
+		return p
+	}
+	return "crontab"
+}
+
+func (s *Server) schedulerGet(w http.ResponseWriter) {
+	path := s.schedulerFilePath()
+	entries, warnings, err := background.ReadCrontabFile(path)
+	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{
-			"enabled": false,
-			"note":    "in-process scheduler is off; jobs come from system cron",
+			"ok": false, "enabled": s.schedulerEnabled(), "path": path,
+			"error": err.Error(), "entries": []any{},
 		})
 		return
 	}
-	jobs := s.scheduler.Jobs()
-	writeJSON(w, http.StatusOK, map[string]any{"enabled": true, "count": len(jobs), "jobs": jobs})
+
+	// Counters live in the running scheduler, keyed the same way it keys its
+	// own jobs. With the scheduler off this is simply empty.
+	counters := map[string]map[string]any{}
+	if s.scheduler != nil && s.schedulerEnabled() {
+		for _, j := range s.scheduler.Jobs() {
+			counters[asString(j["spec"])+"\x00"+asString(j["url"])] = j
+		}
+	}
+
+	now := time.Now()
+	out := make([]map[string]any, 0, len(entries))
+	for _, e := range entries {
+		row := map[string]any{"line": e.Line, "kind": e.Kind}
+		if e.Kind != "job" {
+			row["text"] = e.Text
+			out = append(out, row)
+			continue
+		}
+		row["spec"] = e.Spec
+		row["url"] = e.URL
+		row["flags"] = e.Flags
+		row["disabled"] = e.Disabled
+		if !e.Disabled {
+			if next := background.NextRun(e.Spec, now); !next.IsZero() {
+				row["nextRun"] = next.Format(time.RFC3339)
+			}
+		}
+		if c, ok := counters[strings.Join(strings.Fields(e.Spec), " ")+"\x00"+e.URL]; ok {
+			row["runs"], row["skipped"], row["running"] = c["runs"], c["skipped"], c["running"]
+		}
+		out = append(out, row)
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok": true, "enabled": s.schedulerEnabled(), "path": path,
+		"entries": out, "warnings": warnings,
+	})
+}
+
+func (s *Server) schedulerSave(w http.ResponseWriter, r *http.Request) {
+	defer r.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	var payload struct {
+		Entries []background.CrontabEntry `json:"entries"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "invalid JSON: " + err.Error()})
+		return
+	}
+	if len(payload.Entries) == 0 {
+		// An empty file would silently disable every job. If that is really
+		// wanted, the jobs can be toggled off individually and stay visible.
+		writeJSON(w, http.StatusBadRequest, map[string]any{
+			"ok": false, "error": "refusing to write an empty schedule; disable jobs individually instead"})
+		return
+	}
+	if errs := background.ValidateCrontabEntries(payload.Entries); len(errs) > 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": strings.Join(errs, "; "), "errors": errs})
+		return
+	}
+	path := s.schedulerFilePath()
+	if err := background.WriteCrontabEntries(path, payload.Entries); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	// The running scheduler re-reads on mtime change, so nothing else is
+	// needed here; saying so keeps the UI from implying a restart.
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "path": path, "applied": s.schedulerEnabled()})
 }
 
 func (s *Server) handleCronSubsPleaseParse(w http.ResponseWriter, r *http.Request) {
