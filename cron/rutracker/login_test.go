@@ -1,9 +1,13 @@
 package rutracker
 
 import (
+	"errors"
+	"os"
 	"strings"
 	"testing"
 	"time"
+
+	"jacred/core"
 )
 
 // The real login form as rutracker served it on 2026-09-26, once its
@@ -123,7 +127,52 @@ func TestEnsureLoginRespectsTheCooldown(t *testing.T) {
 	if _, _, blocked := p.loginBlocked(); !blocked {
 		t.Fatal("setup: not blocked")
 	}
-	if p.ensureLogin(t.Context()) {
-		t.Error("ensureLogin succeeded while blocked")
+	err := p.ensureLogin(t.Context())
+	if err == nil {
+		t.Fatal("ensureLogin succeeded while blocked")
+	}
+	if !errors.Is(err, core.ErrNotAuthorized) {
+		t.Errorf("blocked login does not wrap ErrNotAuthorized: %v", err)
+	}
+	// The cause has to survive to the caller. All four entrypoints used to
+	// flatten a cooldown, a CAPTCHA block and a rejected password into one
+	// string, which is why production could not say which had happened.
+	if !strings.Contains(err.Error(), "credentials rejected") {
+		t.Errorf("ensureLogin dropped the reason: %v", err)
+	}
+}
+
+// A category that could not be fetched used to be logged and dropped, counting
+// toward nothing: res.Failed only ever held row-level save failures. So a run
+// where nearly every category failed still answered `status: ok` with a small
+// fetched count, which on /trackers is indistinguishable from a quiet day.
+// Production 2026-09-27 showed exactly that: `fetched=50 added=2 failed=7`
+// against ~4433 for a healthy 98-category pass.
+func TestCategoryFailuresAreCounted(t *testing.T) {
+	src, err := os.ReadFile("rutracker.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(src)
+	i := strings.Index(body, "func (p *Parser) Parse(")
+	if i < 0 {
+		t.Fatal("Parse не найдена")
+	}
+	fn := body[i : i+strings.Index(body[i:], "\nfunc ")]
+
+	j := strings.Index(fn, "cat %s error")
+	if j < 0 {
+		t.Fatal("ветка ошибки категории не найдена")
+	}
+	// The counters must be bumped in that branch, not merely logged.
+	branch := fn[max(0, j-400) : j+100]
+	for _, want := range []string{"catErrors++", "res.Failed++"} {
+		if !strings.Contains(branch, want) {
+			t.Errorf("ветка ошибки категории не содержит %s — отказ снова станет невидимым", want)
+		}
+	}
+	// And a run that reached nothing must not report success.
+	if !strings.Contains(fn, "%d of %d categories failed to fetch") {
+		t.Error("прогон, потерявший большинство категорий, не сообщает об ошибке")
 	}
 }

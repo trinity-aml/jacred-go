@@ -85,9 +85,54 @@ func hasAuthCookie(cookie string) bool {
 // reported as failed=N/withoutMag=N with nothing naming the cause. Worse, on a
 // warm database most episodes are served from the stored-magnet cache, so a dead
 // session shows up only on new episodes and looks like an ordinary quiet day.
-func (p *Parser) authorize() error {
+// looksLoggedOut reports a guest page from the account pane. Live guest markup
+// (2026-09-27): <div class="user-pane"><a href="/login" class="link">Вход</a>
+// … <a href="/reg" …>Регистрация</a>.
+//
+// **One-sided on purpose.** CLAUDE.md's rule is to demand the logout affordance
+// as well, but the logged-in markup cannot be verified from this box — there is
+// no working lostfilm cookie here, only the 15-character note the deployed
+// config used to carry. So the check is built to fail *silent*: if lostfilm
+// renames /login it simply stops firing and we are no worse off than before,
+// whereas a check that demanded a logout marker would flag a perfectly good
+// session as a guest the day that marker changed and stop the tracker dead.
+func looksLoggedOut(body string) bool {
+	i := strings.Index(body, `class="user-pane"`)
+	if i < 0 {
+		return false
+	}
+	pane := body[i:]
+	if len(pane) > 600 {
+		pane = pane[:600]
+	}
+	return strings.Contains(pane, `href="/login"`) && strings.Contains(pane, `href="/reg"`)
+}
+
+// authorize proves the session rather than inspecting the cookie's shape.
+//
+// The old version stopped at hasAuthCookie, which only asks whether the value
+// could be a cookie at all. An expired cookie of the right shape therefore
+// sailed through, and every episode after it landed in failed++/noMagnet++ —
+// production 2026-09-27 answered `ok` with `fetched=36772 added=922
+// failed=3311`, which is indistinguishable from a sweep across old episodes
+// that genuinely have no magnets. A refused session has to be one named
+// failure before the run, not three thousand anonymous ones during it.
+func (p *Parser) authorize(ctx context.Context) error {
 	if !hasAuthCookie(p.Config.Lostfilm.Cookie) {
 		return errNoCookie
+	}
+	host := strings.TrimRight(p.Config.Lostfilm.Host, "/")
+	body, err := p.fetchText(ctx, host+"/", p.Config.Lostfilm.Cookie, "")
+	if err != nil {
+		// A probe that could not run is not proof of a refusal; let the run
+		// proceed and report its own fetch errors rather than inventing an
+		// authorization failure out of a network hiccup.
+		log.Printf("lostfilm: authorization probe could not run (%v) — continuing", err)
+		return nil
+	}
+	if looksLoggedOut(body) {
+		return fmt.Errorf("lostfilm: the configured cookie is refused — %s serves the guest account pane: %w",
+			host, core.ErrNotAuthorized)
 	}
 	return nil
 }
@@ -100,7 +145,14 @@ func (p *Parser) noteVPageWithoutMagnets(url string) {
 		return
 	}
 	p.vPageReported = true
-	log.Printf("lostfilm: %s returned no magnet links — the session cookie was refused; "+
+	// Does not assert a cause it has not established. A V page without
+	// inner-box--link is what a refused session looks like *and* what an
+	// episode with no release looks like, and this code cannot tell them apart
+	// — it used to print "the session cookie was refused" for both. authorize()
+	// now rules the session out before the run, so by the time this fires the
+	// likelier reading is the second one.
+	log.Printf("lostfilm: %s carries no magnet links — either the episode has none or the session was refused "+
+		"(authorize() passed before this run, so the episode is the likelier reading); "+
 		"further episodes this run are not reported individually", url)
 }
 
@@ -189,7 +241,7 @@ func (p *Parser) parseRange(ctx context.Context, pageFrom, pageTo int) (ParseRes
 	if host == "" {
 		return ParseResult{Status: "conf"}, nil
 	}
-	if err := p.authorize(); err != nil {
+	if err := p.authorize(ctx); err != nil {
 		log.Printf("%v", err)
 		return ParseResult{Status: core.StatusWorkLogin}, err
 	}
@@ -271,7 +323,7 @@ func (p *Parser) ParseSeasonPacks(ctx context.Context, series string) (string, e
 	// Season packs are magnets, so this needs a session. VerifyPage deliberately
 	// does not: it only reads air dates off the public /new/ page, and gating it
 	// would break a diagnostic that works fine anonymously.
-	if err := p.authorize(); err != nil {
+	if err := p.authorize(ctx); err != nil {
 		log.Printf("%v", err)
 		return "", err
 	}

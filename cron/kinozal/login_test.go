@@ -101,3 +101,82 @@ func TestMissingCredentialsAreNamed(t *testing.T) {
 		t.Errorf("причина не названа: %v", err)
 	}
 }
+
+// A dead session used to produce `ok fetched=0 failed=0` for all 25 categories,
+// byte-identical to a quiet day — measured in production 2026-09-27 with a
+// session saved the previous afternoon. Three stacked silent returns caused it:
+// fetchBrowse turned a non-2xx into ("", nil), parsePage turned that into
+// (nil, nil), and the mid-run guest check sat *after* the brand-title gate and
+// so could never run. loggedIn is the proof authorize() demands instead.
+func TestLoggedInIsProvedFromThePage(t *testing.T) {
+	listing, err := os.ReadFile("testdata/browse_cat46.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(listing)
+
+	ok, renamed := loggedIn(body)
+	if !ok || renamed {
+		t.Errorf("реальный листинг с маркером выхода: ok=%v renamed=%v, ожидалось true/false", ok, renamed)
+	}
+
+	// Marker renamed: the listing itself still proves the session, or every page
+	// would go into a re-login loop the day kinozal renames the logout link.
+	noMarker := strings.ReplaceAll(body, ">Выход</a>", ">Exit</a>")
+	if ok, renamed := loggedIn(noMarker); !ok || !renamed {
+		t.Errorf("листинг без маркера: ok=%v renamed=%v, ожидалось true/true", ok, renamed)
+	}
+
+	// A Cloudflare interstitial is not a session.
+	challenge, err := os.ReadFile("testdata/cf_challenge.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok, _ := loggedIn(string(challenge)); ok {
+		t.Error("заглушка Cloudflare принята за рабочую сессию")
+	}
+
+	// A branded page with no rows and no marker — the shape of login.php — is not
+	// a session either.
+	if ok, _ := loggedIn(`<html><head><title>Вход :: Кинозал.GURU</title></head><body></body></html>`); ok {
+		t.Error("страница входа принята за рабочую сессию")
+	}
+}
+
+// The three silent returns are the bug, so their shape is what is pinned.
+func TestNoSilentZeroInTheFetchPath(t *testing.T) {
+	src, err := os.ReadFile("kinozal.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(src)
+
+	for name, marker := range map[string]string{
+		"fetchBrowse": "func (p *Parser) fetchBrowse(",
+		"parsePage":   "func (p *Parser) parsePage(",
+	} {
+		i := strings.Index(body, marker)
+		if i < 0 {
+			t.Fatalf("%s не найдена", name)
+		}
+		end := strings.Index(body[i:], "\nfunc ")
+		fn := body[i : i+end]
+		for _, silent := range []string{"return \"\", nil", "return nil, nil"} {
+			if strings.Contains(fn, silent) {
+				t.Errorf("%s снова содержит `%s` — отказ станет неотличим от пустой категории", name, silent)
+			}
+		}
+	}
+
+	// And the run must be gated up front rather than per row.
+	for _, entry := range []string{") Parse(", ") UpdateTasksParse(", ") ParseAllTask(", ") ParseLatest("} {
+		i := strings.Index(body, entry)
+		if i < 0 {
+			t.Fatalf("точка входа не найдена: %s", entry)
+		}
+		end := strings.Index(body[i:], "\nfunc ")
+		if !strings.Contains(body[i:i+end], "p.authorize(ctx)") {
+			t.Errorf("%s не проверяет авторизацию до прогона", entry)
+		}
+	}
+}

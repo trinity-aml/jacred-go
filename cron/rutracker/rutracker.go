@@ -373,15 +373,30 @@ func (p *Parser) loginViaBrowser(ctx context.Context, loginURL, postData, cookie
 	return cookieStr, strings.Contains(cookieStr, "bb_session")
 }
 
-func (p *Parser) ensureLogin(ctx context.Context) bool {
+// ensureLogin names why it failed. It used to return a bare bool while logging
+// the reason, so all four entrypoints answered the same flat
+// `rutracker: login failed: not authorized` — and a 15-minute Cloudflare
+// cooldown, a 2-hour CAPTCHA block and a rejected password need completely
+// different responses from whoever reads /trackers. Seen in production
+// 2026-09-27: `updatetasksparse` reported exactly that string and the page
+// could not say which of the three it was.
+func (p *Parser) ensureLogin(ctx context.Context) error {
 	if p.getCookie() != "" {
-		return true
+		return nil
 	}
 	if remaining, reason, blocked := p.loginBlocked(); blocked {
-		log.Printf("rutracker: not retrying login for %s — %s", remaining.Round(time.Second), reason)
-		return false
+		return fmt.Errorf("rutracker: not retrying login for %s — %s: %w",
+			remaining.Round(time.Second), reason, core.ErrNotAuthorized)
 	}
-	return p.takeLogin(ctx)
+	if p.takeLogin(ctx) {
+		return nil
+	}
+	// takeLogin records the cause through noteLoginFailure on every failure
+	// path, so read it back rather than inventing a generic message.
+	if _, reason, blocked := p.loginBlocked(); blocked && reason != "" {
+		return fmt.Errorf("rutracker: login failed — %s: %w", reason, core.ErrNotAuthorized)
+	}
+	return fmt.Errorf("rutracker: login failed: %w", core.ErrNotAuthorized)
 }
 
 func (p *Parser) Parse(ctx context.Context, page int) (ParseResult, error) {
@@ -396,11 +411,12 @@ func (p *Parser) Parse(ctx context.Context, page int) (ParseResult, error) {
 	if isDisabled(p.Config.DisableTrackers, trackerName) {
 		return ParseResult{Status: "disabled"}, nil
 	}
-	if !p.ensureLogin(ctx) {
-		return ParseResult{Status: core.StatusWorkLogin}, fmt.Errorf("rutracker: login failed: %w", core.ErrNotAuthorized)
+	if err := p.ensureLogin(ctx); err != nil {
+		return ParseResult{Status: core.StatusWorkLogin}, err
 	}
 	res := ParseResult{Status: "ok", PerCategory: map[string]int{}}
 	seenURLs := map[string]struct{}{} // cross-category duplicate tracking
+	catErrors := 0
 	log.Printf("rutracker: starting parse, %d categories, masterDb=%d entries", len(firstPageCats), len(p.DB.MasterEntries()))
 	for i, cat := range firstPageCats {
 		items, err := p.parsePage(ctx, cat, page)
@@ -412,8 +428,16 @@ func (p *Parser) Parse(ctx context.Context, page int) (ParseResult, error) {
 			return res, err
 		}
 		if err != nil {
+			// Counted, not merely logged. A category that could not be fetched
+			// is data this run was supposed to get and did not, and leaving it
+			// out of the result let a run where nearly every category failed
+			// report `status: ok` with a small fetched count — which on
+			// /trackers reads as a quiet day. Production 2026-09-27:
+			// `fetched=50 added=2 failed=7` against ~4433 for a healthy pass.
+			catErrors++
+			res.Failed++
 			log.Printf("rutracker: cat %s error: %v (continuing)", cat, err)
-			continue // don't abort all categories on single failure
+			continue // one bad category must not abort the other 97
 		}
 		res.Fetched += len(items)
 		res.PerCategory[cat] = len(items)
@@ -434,14 +458,28 @@ func (p *Parser) Parse(ctx context.Context, page int) (ParseResult, error) {
 			log.Printf("rutracker: progress %d/%d cats, fetched=%d added=%d dup=%d", i+1, len(firstPageCats), res.Fetched, res.Added, res.Duplicates)
 		}
 	}
+	if catErrors > 0 {
+		log.Printf("rutracker: %d/%d categories could not be fetched", catErrors, len(firstPageCats))
+	}
+	// A run that lost most of the sweep is a failed run, not a quiet one, and
+	// losing *most* of it is the normal shape here rather than an edge case:
+	// one flaresolverr stall puts the domain in a 3-minute cooldown, after
+	// which every remaining category returns 503 in ~0 ms. Measured on this
+	// box 2026-09-27 — one category fetched, `97/98 categories could not be
+	// fetched`, and without this the answer was still `status: ok`.
+	if catErrors*2 > len(firstPageCats) {
+		res.Status = "error"
+		return res, fmt.Errorf("rutracker: %d of %d categories failed to fetch",
+			catErrors, len(firstPageCats))
+	}
 	log.Printf("rutracker: parse done, fetched=%d added=%d updated=%d skipped=%d duplicates=%d failed=%d", res.Fetched, res.Added, res.Updated, res.Skipped, res.Duplicates, res.Failed)
 	log.Printf("rutracker: done fetched=%d added=%d skipped=%d failed=%d", res.Fetched, res.Added, res.Skipped, res.Failed)
 	return res, nil
 }
 
 func (p *Parser) UpdateTasksParse(ctx context.Context) (map[string][]Task, error) {
-	if !p.ensureLogin(ctx) {
-		return nil, fmt.Errorf("rutracker: login failed: %w", core.ErrNotAuthorized)
+	if err := p.ensureLogin(ctx); err != nil {
+		return nil, err
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -534,8 +572,8 @@ func (p *Parser) settle(cycle *core.ParseAllCycle, cat string, page int, ok bool
 }
 
 func (p *Parser) ParseAllTask(ctx context.Context, force bool) (string, error) {
-	if !p.ensureLogin(ctx) {
-		return "", fmt.Errorf("rutracker: login failed: %w", core.ErrNotAuthorized)
+	if err := p.ensureLogin(ctx); err != nil {
+		return "", err
 	}
 	p.mu.Lock()
 	if p.busy {
@@ -628,8 +666,8 @@ func (p *Parser) ParseLatest(ctx context.Context, pages int) (string, error) {
 		return "work", nil
 	}
 	defer p.latestMu.Unlock()
-	if !p.ensureLogin(ctx) {
-		return "", fmt.Errorf("rutracker: login failed: %w", core.ErrNotAuthorized)
+	if err := p.ensureLogin(ctx); err != nil {
+		return "", err
 	}
 	if pages <= 0 {
 		pages = 5

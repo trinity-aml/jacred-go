@@ -171,6 +171,9 @@ func (p *Parser) Parse(ctx context.Context, page int) (ParseResult, error) {
 	if err := p.requireLogin(ctx); err != nil {
 		return ParseResult{Status: core.StatusWorkLogin}, err
 	}
+	if err := p.authorize(ctx); err != nil {
+		return ParseResult{Status: core.StatusWorkLogin}, err
+	}
 	res := ParseResult{Status: "ok", PerCategory: map[string]int{}}
 	{
 		log.Printf("kinozal: starting parse, cookie=[%s]", core.CookieNames(p.getCookie()))
@@ -201,6 +204,9 @@ func (p *Parser) Parse(ctx context.Context, page int) (ParseResult, error) {
 
 func (p *Parser) UpdateTasksParse(ctx context.Context) (map[string]map[string][]Task, error) {
 	if err := p.requireLogin(ctx); err != nil {
+		return nil, err
+	}
+	if err := p.authorize(ctx); err != nil {
 		return nil, err
 	}
 	p.mu.Lock()
@@ -296,6 +302,9 @@ func (p *Parser) settle(cycle *core.ParseAllCycle, cat, arg string, page int, ok
 
 func (p *Parser) ParseAllTask(ctx context.Context, force bool) (string, error) {
 	if err := p.requireLogin(ctx); err != nil {
+		return "", err
+	}
+	if err := p.authorize(ctx); err != nil {
 		return "", err
 	}
 	p.mu.Lock()
@@ -398,6 +407,9 @@ func (p *Parser) ParseLatest(ctx context.Context, pages int) (string, error) {
 	if err := p.requireLogin(ctx); err != nil {
 		return "", err
 	}
+	if err := p.authorize(ctx); err != nil {
+		return "", err
+	}
 	if pages <= 0 {
 		pages = 100
 	}
@@ -483,7 +495,12 @@ func (p *Parser) parsePage(ctx context.Context, cat string, page int, arg string
 		return nil, err
 	}
 	if htmlBody == "" || !kinozalTitleRe.MatchString(htmlBody) {
-		return nil, nil
+		// Not (nil, nil): authorize() has already proved the session, so a 200
+		// that is not a kinozal page is an anomaly and has to be named. Silence
+		// here is what made a rebrand ("Кинозал.ТВ" -> "Кинозал.GURU") read as
+		// 25 quiet categories for weeks.
+		return nil, fmt.Errorf("kinozal: c=%s page=%d returned %d bytes that are not a kinozal listing",
+			cat, page, len(htmlBody))
 	}
 	if p.getCookie() == "" || !strings.Contains(htmlBody, ">Выход</a>") {
 		// This page was served to a guest and cannot be salvaged; re-login so the
@@ -697,9 +714,66 @@ func (p *Parser) fetchBrowse(ctx context.Context, cat string, page int, arg stri
 		text = string(data)
 	}
 	if status < 200 || status >= 300 {
-		return "", nil
+		// Never ("", nil). browse.php answers 403 for a Cloudflare challenge and
+		// 302 to login.php?m=5 for a guest; both used to return an empty body
+		// with no error, after which parsePage returned (nil, nil) and the run
+		// reported `ok fetched=0 failed=0` for all 25 categories — byte-identical
+		// to a quiet day. Measured in production 2026-09-27 with a session saved
+		// the day before.
+		return "", fmt.Errorf("kinozal: browse.php c=%s page=%d answered HTTP %d", cat, page, status)
 	}
 	return text, nil
+}
+
+// loggedIn proves the session from the page itself. Positive evidence first: the
+// logout affordance. If that is missing, a body that is unmistakably a browse
+// listing still counts as authorized — kinozal bounces guests to login.php, so a
+// real listing means we are in, and insisting on the marker alone would put every
+// page into a re-login loop the day kinozal renames it. That is the two-sided
+// rule from CLAUDE.md, applied in the direction this check needs.
+func loggedIn(body string) (ok, markerMissing bool) {
+	if strings.Contains(body, ">Выход</a>") {
+		return true, false
+	}
+	if kinozalTitleRe.MatchString(body) && len(rowSplitRe.Split(body, -1)) > 1 {
+		return true, true
+	}
+	return false, false
+}
+
+// authorize proves the session once, before the run, instead of letting all 25
+// categories discover it separately and report nothing. A dead session is one
+// named failure (`work_login`, HTTP 500) rather than a clean zero.
+func (p *Parser) authorize(ctx context.Context) error {
+	probe := func() (string, error) { return p.fetchBrowse(ctx, parseCats[0], 0, "") }
+
+	body, err := probe()
+	if err == nil {
+		if ok, renamed := loggedIn(body); ok {
+			if renamed {
+				log.Printf("kinozal: authorized, but the >Выход</a> marker is gone — the listing itself was used as proof")
+			}
+			return nil
+		}
+	} else {
+		log.Printf("kinozal: authorization probe failed: %v", err)
+	}
+
+	// A saved session going stale overnight is the common case, so spend one
+	// re-login on it and then demand proof again.
+	if lerr := p.takeLogin(ctx); lerr != nil {
+		return lerr
+	}
+	body, err = probe()
+	if err != nil {
+		return fmt.Errorf("kinozal: browse.php still unreachable after a fresh login: %w: %v",
+			core.ErrNotAuthorized, err)
+	}
+	if ok, _ := loggedIn(body); !ok {
+		return fmt.Errorf("kinozal: browse.php is served to a guest even after a fresh login: %w",
+			core.ErrNotAuthorized)
+	}
+	return nil
 }
 
 // errLoginCooldown marks the "we tried recently, wait" branch so a caller doing

@@ -2,6 +2,9 @@ package lostfilm
 
 import (
 	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -45,7 +48,7 @@ func TestAuthorizeRefusesAnUnusableCookie(t *testing.T) {
 
 	for _, bad := range []string{"", "   ", "надо обновить"} {
 		cfg.Lostfilm.Cookie = bad
-		err := (&Parser{Config: cfg}).authorize()
+		err := (&Parser{Config: cfg}).authorize(t.Context())
 		if err == nil {
 			t.Errorf("cookie %q accepted", bad)
 			continue
@@ -59,9 +62,34 @@ func TestAuthorizeRefusesAnUnusableCookie(t *testing.T) {
 		}
 	}
 
+	// A cookie of the right *shape* is no longer enough — that is the change.
+	// An expired one used to sail through here and then produce thousands of
+	// anonymous failed++/noMagnet++ rows instead of one named refusal.
 	cfg.Lostfilm.Cookie = "lf_session=abc; PHPSESSID=xyz"
-	if err := (&Parser{Config: cfg}).authorize(); err != nil {
-		t.Errorf("a usable cookie was rejected: %v", err)
+
+	serve := func(body string) *Parser {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			_, _ = io.WriteString(w, body)
+		}))
+		t.Cleanup(srv.Close)
+		c := cfg
+		c.Lostfilm.Host = srv.URL
+		return &Parser{Config: c, Fetcher: core.NewFetcher(c)}
+	}
+
+	if err := serve(guestUserPane).authorize(t.Context()); err == nil {
+		t.Error("гостевая панель принята за рабочую сессию")
+	} else if !errors.Is(err, core.ErrNotAuthorized) {
+		t.Errorf("отказ не оборачивает ErrNotAuthorized: %v", err)
+	}
+
+	authorized := strings.NewReplacer(
+		`<a href="/login" class="link">Вход</a>`, `<a href="/my" class="link">аккаунт</a>`,
+		`<a href="/reg" class="link gray-color">Регистрация</a>`, `<a href="/logout" class="link">Выход</a>`,
+	).Replace(guestUserPane)
+	if err := serve(authorized).authorize(t.Context()); err != nil {
+		t.Errorf("рабочая сессия отвергнута: %v", err)
 	}
 }
 
@@ -83,5 +111,40 @@ func TestVPageRejectionIsReportedOncePerRun(t *testing.T) {
 	p.noteVPageWithoutMagnets("https://example/v3")
 	if !p.vPageReported {
 		t.Error("a new run does not report again")
+	}
+}
+
+// The account pane as lostfilm served it to a guest on 2026-09-27. Inline
+// rather than a 70 KB fixture: this snippet is the whole contract.
+const guestUserPane = `<div id="main-rightt-side">
+<div class="user-pane">
+	<a href="/login" class="link">Вход</a>
+	<div class="divider">|</div>
+	<a href="/reg" class="link gray-color">Регистрация</a>
+	<div class="tail"></div>
+</div>`
+
+func TestLooksLoggedOut(t *testing.T) {
+	if !looksLoggedOut(guestUserPane) {
+		t.Error("гостевая панель аккаунта не распознана")
+	}
+	// An authorized page offers neither. Derived, because there is no working
+	// lostfilm cookie on this box to capture a real one with.
+	authorized := strings.NewReplacer(
+		`<a href="/login" class="link">Вход</a>`, `<a href="/my" class="link">trinity1980</a>`,
+		`<a href="/reg" class="link gray-color">Регистрация</a>`, `<a href="/logout" class="link">Выход</a>`,
+	).Replace(guestUserPane)
+	if looksLoggedOut(authorized) {
+		t.Error("авторизованная панель принята за гостевую — трекер встал бы на ровном месте")
+	}
+	// No pane at all (an error page, a partial body) is not evidence of a guest.
+	if looksLoggedOut(`<html><body>что-то другое</body></html>`) {
+		t.Error("тело без панели аккаунта принято за гостевое")
+	}
+	// The pane markers must be read from the pane, not from anywhere on the page:
+	// a footer link to /login elsewhere must not condemn a live session.
+	far := authorized + strings.Repeat("x", 2000) + `<a href="/login">Вход</a><a href="/reg">Регистрация</a>`
+	if looksLoggedOut(far) {
+		t.Error("ссылка на вход вне панели принята за признак гостя")
 	}
 }
