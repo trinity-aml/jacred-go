@@ -119,11 +119,13 @@ func TestSuccessfulLoginClearsTheBlock(t *testing.T) {
 
 // ensureLogin must not reach takeLogin while blocked — that is the whole point.
 func TestEnsureLoginRespectsTheCooldown(t *testing.T) {
+	// Configured on purpose: with an empty config the "login is not configured"
+	// branch fires first and this would stop testing the cooldown at all.
 	p := &Parser{}
+	p.Config.Rutracker.Host = "https://rutracker.org"
+	p.Config.Rutracker.Login.U = "someone"
+	p.Config.Rutracker.Login.P = "secret"
 	p.noteLoginFailure(loginCooldown, "credentials rejected")
-	// Host and credentials are empty, so if the cooldown were ignored
-	// takeLogin would run and log "login skipped"; either way it returns
-	// false. What we assert is that it reports blocked.
 	if _, _, blocked := p.loginBlocked(); !blocked {
 		t.Fatal("setup: not blocked")
 	}
@@ -174,5 +176,21 @@ func TestCategoryFailuresAreCounted(t *testing.T) {
 	// And a run that reached nothing must not report success.
 	if !strings.Contains(fn, "%d of %d categories failed to fetch") {
 		t.Error("прогон, потерявший большинство категорий, не сообщает об ошибке")
+	}
+}
+
+// "Not configured" is the third case ensureLogin has to keep separate from a
+// cooldown and from rejected credentials — production could not tell them
+// apart because all three answered the same flat string.
+func TestUnconfiguredLoginIsNamed(t *testing.T) {
+	err := (&Parser{}).ensureLogin(t.Context())
+	if err == nil {
+		t.Fatal("пустой конфиг отрапортовал успешный вход")
+	}
+	if !errors.Is(err, core.ErrNotAuthorized) {
+		t.Errorf("не обёрнут ErrNotAuthorized: %v", err)
+	}
+	if !strings.Contains(err.Error(), "not configured") {
+		t.Errorf("причина не названа: %v", err)
 	}
 }

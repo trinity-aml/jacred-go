@@ -384,6 +384,14 @@ func (p *Parser) ensureLogin(ctx context.Context) error {
 	if p.getCookie() != "" {
 		return nil
 	}
+	// "Not configured" is the third of the three cases this function exists to
+	// tell apart, and takeLogin returns false for it without recording a
+	// reason (deliberately — a config problem must not open a 15-minute
+	// cooldown), so it has to be named here or it falls through to the generic
+	// message and the distinction is lost again.
+	if strings.TrimSpace(p.Config.Rutracker.Host) == "" || strings.TrimSpace(p.Config.Rutracker.Login.U) == "" {
+		return fmt.Errorf("rutracker: login is not configured: %w", core.ErrNotAuthorized)
+	}
 	if remaining, reason, blocked := p.loginBlocked(); blocked {
 		return fmt.Errorf("rutracker: not retrying login for %s — %s: %w",
 			remaining.Round(time.Second), reason, core.ErrNotAuthorized)
