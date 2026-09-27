@@ -451,6 +451,18 @@ func (p *Parser) ParseAllTask(ctx context.Context, force bool) (string, error) {
 			}
 			items, err := p.parsePage(ctx, cat, task.Page)
 			if err != nil {
+				// An authorization failure is not one bad page — every
+				// remaining page will fail the same way, and the refusal
+				// budget in parsePage cannot stop a loop that swallows its
+				// errors. Production 2026-09-27 ground on for a quarter of an
+				// hour logging `login on cooldown for 4m10s` once per page,
+				// from page 194 to 232, and reported `session refused, 4/2`:
+				// twice the budget, because nothing here honoured it.
+				if errors.Is(err, core.ErrNotAuthorized) {
+					log.Printf("toloka: parsealltask cat=%s page=%d — stopping the sweep: %v", cat, task.Page, err)
+					_ = p.saveTasks()
+					return "", err
+				}
 				log.Printf("toloka: parsealltask cat=%s page=%d error: %v", cat, task.Page, err)
 				p.settle(cycle, cat, task.Page, false)
 				errs++
@@ -527,6 +539,10 @@ func (p *Parser) ParseLatest(ctx context.Context, pages int) (string, error) {
 			}
 			items, err := p.parsePage(ctx, cat, task.Page)
 			if err != nil {
+				if errors.Is(err, core.ErrNotAuthorized) {
+					log.Printf("toloka: parselatest cat=%s page=%d — stopping: %v", cat, task.Page, err)
+					return "", err
+				}
 				log.Printf("toloka: parselatest cat=%s page=%d error: %v", cat, task.Page, err)
 				errs++
 				continue
@@ -586,21 +602,36 @@ func (p *Parser) parsePage(ctx context.Context, cat string, page int) ([]parseIt
 		p.sessionRejects++
 		n := p.sessionRejects
 		p.cookieMu.Unlock()
-		log.Printf("toloka: cat=%s page=%d returned login form (session refused, %d/%d)", cat, page, n, maxSessionRejects)
 		p.logSessionRejection(cat, page)
-		p.invalidateCookie()
-		// A session the site refuses on the very next request after issuing it
-		// will not be fixed by logging in again, and each attempt is another
-		// credentials POST. Unbounded, this is one login per category: measured
-		// in production 2026-09-26 as four logins in 45 seconds, each reporting
-		// success. Repeated login attempts are how a tracker's anti-bruteforce
-		// gets triggered — that is how rutracker ended up showing a CAPTCHA.
-		if n >= maxSessionRejects {
-			return nil, fmt.Errorf("toloka: the site refused a freshly created session %d times — "+
-				"logging in again will not help, a phpBB session is bound to the User-Agent that created it "+
-				"and the pages are fetched by the flaresolverr browser: %w", n, core.ErrNotAuthorized)
+
+		// **One login page does not mean the session died.** Measured in
+		// production 2026-09-27: `cat=16 page=230 empty (marking today)`
+		// succeeded and `page=231` came back as the login form eight seconds
+		// later — same sid, confirmed by the matching tag on both log lines.
+		// toloka intersperses these, and throwing the session away on the first
+		// one is what produced the whole re-login loop: drop the cookie, log in
+		// again, spend the 5-minute cooldown, stall the sweep, repeat.
+		//
+		// Upstream (`TolokaSyncService.parsePage`) simply returns false and
+		// keeps its hour-long cookie — too quiet, since a genuinely expired
+		// session is then never noticed. This sits between the two: a dead
+		// session refuses *everything*, so only consecutive refusals are
+		// evidence, and any page that parses clears the count.
+		if n < sessionRefusalsBeforeRelogin {
+			log.Printf("toloka: cat=%s page=%d served the login form (%d/%d in a row) — skipping the page, keeping the session",
+				cat, page, n, sessionRefusalsBeforeRelogin)
+			return nil, fmt.Errorf("toloka: cat=%s page=%d served the login form", cat, page)
 		}
-		return nil, nil
+
+		log.Printf("toloka: cat=%s page=%d served the login form %d times in a row — dropping the session", cat, page, n)
+		p.invalidateCookie()
+		// States the observation, not a cause. Earlier wording blamed phpBB's
+		// User-Agent binding and "the flaresolverr browser": the first was
+		// investigated and NOT confirmed, the second is simply false since
+		// toloka moved to standard mode. logSessionRejection prints what was
+		// actually sent; compare its sid tag with the one on the login line.
+		return nil, fmt.Errorf("toloka: %d pages in a row served the login form, so the session is treated as dead; "+
+			"the cause is not established: %w", n, core.ErrNotAuthorized)
 	}
 	if !strings.Contains(htmlBody, `<html lang="uk"`) {
 		// Body is neither the login form nor a Ukrainian forum view — toloka
@@ -609,15 +640,24 @@ func (p *Parser) parsePage(ctx context.Context, cat string, page int) ([]parseIt
 		log.Printf("toloka: cat=%s page=%d unexpected body (bodyLen=%d, not login form, not uk forum)", cat, page, len(htmlBody))
 		return nil, nil
 	}
+	// A page that parses proves the session is alive, so the run of refusals
+	// starts over. This reset is what makes "consecutive" mean consecutive.
+	p.cookieMu.Lock()
+	p.sessionRejects = 0
+	p.cookieMu.Unlock()
 	return parsePageHTML(strings.TrimRight(p.Config.Toloka.Host, "/"), cat, htmlBody), nil
 }
 
-// maxSessionRejects bounds the re-login loop described in parsePage. It counts
+// sessionRefusalsBeforeRelogin bounds the re-login loop described in parsePage. It counts
 // refusals **per run**, not consecutive ones: production alternates refused and
 // accepted pages (both refusals in the 18:06 log are logged `1/2`, so the old
 // reset-on-success had put the counter back to zero between them), and a bound
 // that resets on any good page never trips at all.
-const maxSessionRejects = 2
+// sessionRefusalsBeforeRelogin is how many pages in a row must come back as the
+// login form before the session is presumed dead. A dead session refuses every
+// page, so consecutive refusals are the evidence; an isolated one is toloka
+// being toloka and must not cost the session.
+const sessionRefusalsBeforeRelogin = 3
 
 // resetSessionRejects starts a run's refusal budget. Called by the entrypoints
 // rather than by parsePage, so the budget spans the whole sweep.

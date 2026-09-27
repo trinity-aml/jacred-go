@@ -56,11 +56,42 @@ func TestParserInventsNoUserAgent(t *testing.T) {
 // category — four in 45 seconds in production — which is how a tracker's
 // anti-bruteforce gets tripped.
 func TestReloginLoopIsBounded(t *testing.T) {
-	if maxSessionRejects < 1 {
-		t.Fatalf("граница перелогинов должна быть положительной, получено %d", maxSessionRejects)
+	// Must be >1: a single login page is not evidence the session died — one
+	// succeeded page and one refused page eight seconds apart, on the same sid,
+	// were measured in production 2026-09-27.
+	if sessionRefusalsBeforeRelogin < 2 {
+		t.Errorf("порог %d сбросит живую сессию на первом же случайном отказе", sessionRefusalsBeforeRelogin)
 	}
-	if maxSessionRejects > 3 {
-		t.Errorf("граница перелогинов %d слишком велика: каждая попытка — отдельный POST с паролем", maxSessionRejects)
+	// And must stay small: past the threshold every page is another credentials
+	// POST, which is how a tracker's anti-bruteforce gets tripped.
+	if sessionRefusalsBeforeRelogin > 5 {
+		t.Errorf("порог %d слишком велик: мёртвая сессия будет замечена слишком поздно", sessionRefusalsBeforeRelogin)
+	}
+}
+
+// A refusal that is *not* yet conclusive must keep the session and report an
+// ordinary page error, so the sweep skips one page instead of stalling for the
+// login cooldown. Only a run of them is treated as authorization.
+func TestIsolatedRefusalKeepsTheSession(t *testing.T) {
+	src, err := os.ReadFile("toloka.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(src)
+	i := strings.Index(body, "func (p *Parser) parsePage(")
+	fn := body[i : i+strings.Index(body[i:], "\nfunc ")]
+
+	below := fn[strings.Index(fn, "if n < sessionRefusalsBeforeRelogin"):]
+	below = below[:strings.Index(below, "\n\t\t}")]
+	if strings.Contains(below, "invalidateCookie") {
+		t.Error("одиночный отказ снова сбрасывает сессию")
+	}
+	if strings.Contains(below, "ErrNotAuthorized") {
+		t.Error("одиночный отказ помечен как ошибка авторизации — проход остановится на ровном месте")
+	}
+	// The counter only means "consecutive" if a good page clears it.
+	if !strings.Contains(fn, "p.sessionRejects = 0") {
+		t.Error("успешная страница не обнуляет счётчик — «подряд» перестанет значить подряд")
 	}
 }
 
@@ -89,35 +120,6 @@ func TestInvalidateKeepsTheLoginCooldown(t *testing.T) {
 	}
 	if !errors.Is(err, core.ErrNotAuthorized) {
 		t.Errorf("ошибка кулдауна не обёрнута в ErrNotAuthorized: %v", err)
-	}
-}
-
-// The budget spans a run, so an intermittent refusal actually trips it. When it
-// reset on every good page, production's alternating success/refusal logged
-// `1/2` both times and the bound never fired.
-func TestRejectBudgetIsNotResetByAGoodPage(t *testing.T) {
-	src, err := os.ReadFile("toloka.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	body := string(src)
-	i := strings.Index(body, "func (p *Parser) parsePage(")
-	if i < 0 {
-		t.Fatal("parsePage не найдена")
-	}
-	end := strings.Index(body[i:], "\nfunc ")
-	if strings.Contains(body[i:i+end], "p.sessionRejects = 0") {
-		t.Error("parsePage снова обнуляет бюджет отказов — ограничитель перестанет срабатывать")
-	}
-	for _, entry := range []string{"func (p *Parser) Parse(", "func (p *Parser) ParseAllTask(", "func (p *Parser) ParseLatest("} {
-		j := strings.Index(body, entry)
-		if j < 0 {
-			t.Fatalf("точка входа не найдена: %s", entry)
-		}
-		e := strings.Index(body[j:], "\nfunc ")
-		if !strings.Contains(body[j:j+e], "resetSessionRejects()") {
-			t.Errorf("%s не сбрасывает бюджет отказов на старте прогона", entry)
-		}
 	}
 }
 
@@ -182,6 +184,28 @@ func TestEntrypointsUseTheSharedFlag(t *testing.T) {
 		e := strings.Index(body[i:], "\nfunc ")
 		if !strings.Contains(body[i:i+e], "p.acquire(") {
 			t.Errorf("%s не берёт общий флаг", entry)
+		}
+	}
+}
+
+// An authorization failure must stop the sweep, not be counted as one bad page.
+// The refusal budget in parsePage cannot bound a loop that swallows its errors:
+// production 2026-09-27 logged `login on cooldown` once per page from page 194
+// to 232 and reported `session refused, 4/2` — twice the budget.
+func TestSweepStopsOnAnAuthorizationError(t *testing.T) {
+	src, err := os.ReadFile("toloka.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(src)
+	for _, entry := range []string{"func (p *Parser) ParseAllTask(", "func (p *Parser) ParseLatest("} {
+		i := strings.Index(body, entry)
+		if i < 0 {
+			t.Fatalf("точка входа не найдена: %s", entry)
+		}
+		fn := body[i : i+strings.Index(body[i:], "\nfunc ")]
+		if !strings.Contains(fn, "errors.Is(err, core.ErrNotAuthorized)") {
+			t.Errorf("%s не прерывает проход на ошибке авторизации — цикл снова будет сыпать ошибку на каждой странице", entry)
 		}
 	}
 }
