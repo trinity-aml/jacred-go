@@ -1059,7 +1059,13 @@ func (p *Parser) fetchPageHTML(ctx context.Context, cat string, page int) (strin
 		if err := ctx.Err(); err != nil {
 			return "", err
 		}
-		body, status, err := p.Fetcher.GetStringExt(urlv, p.Config.Toloka, cookie, defaultUA())
+		res, err := p.Fetcher.GetExt(urlv, p.Config.Toloka, cookie, defaultUA())
+		var body string
+		var status int
+		if res != nil {
+			body, status = string(res.Body), res.StatusCode
+			cookie = p.applySetCookie(res.Header.Values("Set-Cookie"), cookie)
+		}
 		if err != nil {
 			return "", err
 		}
@@ -1089,7 +1095,13 @@ func (p *Parser) downloadMagnet(ctx context.Context, downloadID, cookie string) 
 		if err := ctx.Err(); err != nil {
 			return "", err
 		}
-		data, status, err := p.Fetcher.DownloadExt(rawURL, p.Config.Toloka, cookie, defaultUA())
+		res, err := p.Fetcher.GetExt(rawURL, p.Config.Toloka, cookie, defaultUA())
+		var data []byte
+		var status int
+		if res != nil {
+			data, status = res.Body, res.StatusCode
+			cookie = p.applySetCookie(res.Header.Values("Set-Cookie"), cookie)
+		}
 		if err != nil {
 			return "", err
 		}
@@ -1265,4 +1277,49 @@ func (p *Parser) release() {
 	p.busy = false
 	p.busyOp = ""
 	p.mu.Unlock()
+}
+
+// applySetCookie carries the server's Set-Cookie forward, which toloka requires
+// and a frozen login cookie cannot do.
+//
+// **Measured 2026-10-02, and it is the whole explanation.** toloka's phpBB
+// rotates toloka_sid on essentially every request. Replaying the string
+// captured at login therefore works for about one request and is then a stale
+// sid, which phpBB answers with `302 → /login.php?redirect=…` while issuing yet
+// another new sid. Four sequential fetches with a frozen cookie went
+// 302/302/302/200; the same four through a cookie jar went 200/200/200/200.
+// That is why the browser never breaks (it keeps a jar), why plain curl
+// reproduces the failure (no jar), why `login OK` was followed eight seconds
+// later by a refused page, and why the sid tag on the refusal always matched
+// the login line — we kept sending the one cookie we had.
+//
+// Returns the updated cookie so the caller's loop uses it for the next request,
+// and persists it so the next run starts from a current session rather than a
+// dead one.
+func (p *Parser) applySetCookie(setCookies []string, current string) string {
+	if len(setCookies) == 0 {
+		return current
+	}
+	fresh := make([]string, 0, len(setCookies))
+	for _, line := range setCookies {
+		pair := strings.TrimSpace(strings.SplitN(line, ";", 2)[0])
+		name, value, ok := strings.Cut(pair, "=")
+		// A deletion (empty value, as phpBB does for toloka___lastvisit) must
+		// not overwrite a live cookie with nothing.
+		if !ok || strings.TrimSpace(name) == "" || strings.TrimSpace(value) == "" {
+			continue
+		}
+		fresh = append(fresh, pair)
+	}
+	if len(fresh) == 0 {
+		return current
+	}
+	merged := core.MergeCookieStrings(current, strings.Join(fresh, "; "))
+	p.cookieMu.Lock()
+	if p.cookie != "" {
+		p.cookie = merged
+	}
+	p.cookieMu.Unlock()
+	_ = core.DefaultSessionStore().SaveAuth(p.domain, merged)
+	return merged
 }

@@ -209,3 +209,61 @@ func TestSweepStopsOnAnAuthorizationError(t *testing.T) {
 		}
 	}
 }
+
+// toloka's phpBB rotates toloka_sid on essentially every request, so a frozen
+// login cookie is stale after about one fetch. Measured 2026-10-02: four
+// sequential requests with a fixed cookie went 302/302/302/200, the same four
+// through a cookie jar went 200/200/200/200. Carrying Set-Cookie forward is
+// therefore not an optimisation — it is the difference between working and not.
+func TestSetCookieIsCarriedForward(t *testing.T) {
+	core.SetSessionStoreDir(t.TempDir())
+	p := &Parser{domain: "toloka.to"}
+	p.cookie = "toloka_sid=OLD; toloka_ssl=1; toloka_data=DATA;"
+
+	got := p.applySetCookie([]string{
+		"toloka_sid=NEW; path=/; secure; httponly",
+		"toloka___tt=123; path=/",
+	}, p.cookie)
+
+	if !strings.Contains(got, "toloka_sid=NEW") {
+		t.Errorf("прокрученный sid не подхвачен: %q", got)
+	}
+	if strings.Contains(got, "toloka_sid=OLD") {
+		t.Errorf("старый sid остался в строке: %q", got)
+	}
+	if !strings.Contains(got, "toloka_data=DATA") {
+		t.Errorf("потеряна cookie, которую сервер не переставлял: %q", got)
+	}
+	if !strings.Contains(got, "toloka___tt=123") {
+		t.Errorf("новая cookie не добавлена: %q", got)
+	}
+	// The parser's own copy must advance too, or the next run starts from a
+	// session that is already dead.
+	if p.cookie != got {
+		t.Errorf("сохранённая копия не обновлена: %q против %q", p.cookie, got)
+	}
+}
+
+// phpBB deletes toloka___lastvisit by setting it empty; that must not wipe a
+// live cookie of the same name out of the string we send.
+func TestDeletionDoesNotWipeALiveCookie(t *testing.T) {
+	core.SetSessionStoreDir(t.TempDir())
+	p := &Parser{domain: "toloka.to"}
+	p.cookie = "toloka_sid=LIVE; toloka_data=DATA;"
+
+	got := p.applySetCookie([]string{"toloka_sid=; expires=Thu, 01-Jan-1970 00:00:00 GMT; path=/"}, p.cookie)
+	if !strings.Contains(got, "toloka_sid=LIVE") {
+		t.Errorf("удаляющая Set-Cookie затёрла живую сессию: %q", got)
+	}
+}
+
+// Nothing from the server means nothing changes — an empty header list must not
+// clear the session.
+func TestNoSetCookieLeavesTheSessionAlone(t *testing.T) {
+	core.SetSessionStoreDir(t.TempDir())
+	p := &Parser{domain: "toloka.to"}
+	p.cookie = "toloka_sid=LIVE; toloka_data=DATA;"
+	if got := p.applySetCookie(nil, p.cookie); got != p.cookie {
+		t.Errorf("пустой Set-Cookie изменил сессию: %q", got)
+	}
+}
