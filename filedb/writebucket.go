@@ -2,6 +2,7 @@ package filedb
 
 import (
 	"compress/gzip"
+	"encoding/json"
 	"errors"
 	"io"
 	"log"
@@ -35,10 +36,25 @@ func isCorruptBucketErr(err error) bool {
 	if err == nil {
 		return false
 	}
-	return errors.Is(err, io.EOF) ||
+	if errors.Is(err, io.EOF) ||
 		errors.Is(err, io.ErrUnexpectedEOF) ||
 		errors.Is(err, gzip.ErrChecksum) ||
-		errors.Is(err, gzip.ErrHeader)
+		errors.Is(err, gzip.ErrHeader) {
+		return true
+	}
+	// A bucket whose JSON does not parse is damaged by definition — intact gzip
+	// wrapping malformed JSON, which the four checks above all miss. That gap is
+	// why the quarantine never fired in production on 2026-10-02: rutracker
+	// logged `save error: invalid character ':' after object key:value pair`
+	// once per page for a whole category (the sport forum f=1997, whose records
+	// mostly share the key `nba20242025:nba20242025`), which is exactly the
+	// "parser hangs on the same page forever" this function exists to prevent.
+	//
+	// Only a *syntax* error counts. json.UnmarshalTypeError means the JSON
+	// parsed and a value had the wrong type — a schema problem, not file
+	// damage, and quarantining on it would throw away readable records.
+	var syntax *json.SyntaxError
+	return errors.As(err, &syntax)
 }
 
 // quarantineCorruptBucket renames a corrupt file to <path>.corrupt so the

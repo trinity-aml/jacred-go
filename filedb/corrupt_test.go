@@ -3,6 +3,7 @@ package filedb
 import (
 	"bytes"
 	"compress/gzip"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -103,5 +104,62 @@ func TestFindCorruptReportsUnreadableBuckets(t *testing.T) {
 	}
 	if p, _ := sample[0]["path"].(string); !strings.Contains(p, "fdb") {
 		t.Errorf("выборка не называет путь: %v", sample[0])
+	}
+}
+
+// The quarantine existed and sat on the right path (saveTorrents reads through
+// OpenReadOrEmpty) — but isCorruptBucketErr only recognised truncation and gzip
+// damage, so intact gzip wrapping malformed JSON slipped past it. That is the
+// gap production fell into on 2026-10-02: the parser re-read the same bad bucket
+// on every page of a category, which is the exact failure the quarantine's own
+// comment says it prevents.
+func TestCorruptJSONBucketIsQuarantined(t *testing.T) {
+	tmp := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(tmp, "fdb"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	db := New(app.Config{}, tmp)
+	key := db.KeyDb("nba 2024 2025", "nba 2024 2025")
+	path := db.PathDb(key)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Valid gzip, malformed JSON — the production shape.
+	var buf bytes.Buffer
+	zw := gzip.NewWriter(&buf)
+	if _, err := zw.Write([]byte(`{"http://x/a": {"title": "A"}: }`)); err != nil {
+		t.Fatal(err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, buf.Bytes(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	bucket, err := db.OpenReadOrEmpty(key)
+	if err != nil {
+		t.Fatalf("битый бакет не был помещён в карантин, ошибка дошла до вызывающего: %v", err)
+	}
+	if len(bucket) != 0 {
+		t.Errorf("ожидался пустой бакет, получено %d записей", len(bucket))
+	}
+	if _, err := os.Stat(path + ".corrupt"); err != nil {
+		t.Errorf("битая копия не сохранена рядом как .corrupt: %v", err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Errorf("битый файл остался на месте, следующая запись не создаст свежий: %v", err)
+	}
+}
+
+// A value of the wrong type is a schema problem, not file damage — quarantining
+// on it would throw away records that read perfectly well.
+func TestWrongTypeIsNotTreatedAsCorruption(t *testing.T) {
+	if isCorruptBucketErr(&json.UnmarshalTypeError{Value: "number", Type: nil}) {
+		t.Error("UnmarshalTypeError принят за повреждение файла")
+	}
+	if !isCorruptBucketErr(&json.SyntaxError{}) {
+		t.Error("SyntaxError не распознан как повреждение файла")
 	}
 }
