@@ -202,12 +202,20 @@ func (db *DB) openReadPath(path string) (map[string]TorrentDetails, error) {
 	defer f.Close()
 	gz, err := core.AcquireGzipReader(f)
 	if err != nil {
-		return nil, err
+		// Name the file. A damaged bucket surfaces at the far end of the save
+		// path as the parser's `save error: <err>` — production 2026-10-02
+		// logged `invalid character ':' after object key:value pair` once per
+		// page for a whole rutracker category, and that text identifies neither
+		// the file nor the key, so the bad bucket cannot be found from the log.
+		// %w keeps errors.Is working for callers that test for os.ErrNotExist.
+		return nil, fmt.Errorf("filedb: %s is not readable as gzip: %w", path, err)
 	}
 	defer core.ReleaseGzipReader(gz)
 	var out map[string]TorrentDetails
-	err = json.NewDecoder(gz).Decode(&out)
-	return out, err
+	if err := json.NewDecoder(gz).Decode(&out); err != nil {
+		return nil, fmt.Errorf("filedb: %s holds invalid JSON: %w", path, err)
+	}
+	return out, nil
 }
 func (db *DB) RebuildIndexes() error {
 	master := map[string]TorrentInfo{}

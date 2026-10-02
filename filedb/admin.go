@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/md5"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"math"
@@ -351,9 +352,28 @@ func (db *DB) FindCorrupt(sampleSize int) map[string]any {
 	missingNameSample := []map[string]any{}
 	missingOriginalnameSample := []map[string]any{}
 	missingTrackerNameSample := []map[string]any{}
+	unreadableCount := 0
+	unreadableSample := []map[string]any{}
 	for _, item := range db.UnorderedMasterEntries() {
 		bucket, err := db.OpenReadNoCache(item.Key)
 		if err != nil {
+			// A bucket that cannot be read **is** the corruption this endpoint is
+			// named after, and it used to be the one thing skipped in silence — so
+			// /dev/findcorrupt reported a clean database while every save against
+			// that bucket failed. Production 2026-10-02: `save error: invalid
+			// character ':' after object key:value pair` once per page for a whole
+			// rutracker category, with nothing naming the file. A *missing* file is
+			// not corruption, so that case stays skipped.
+			if !errors.Is(err, os.ErrNotExist) {
+				unreadableCount++
+				if len(unreadableSample) < sampleSize {
+					unreadableSample = append(unreadableSample, map[string]any{
+						"fdbKey": item.Key,
+						"path":   db.PathDb(item.Key),
+						"error":  err.Error(),
+					})
+				}
+			}
 			continue
 		}
 		for url, t := range bucket {
@@ -390,6 +410,10 @@ func (db *DB) FindCorrupt(sampleSize int) map[string]any {
 		"totalFdbKeys":  len(db.MasterEntries()),
 		"totalTorrents": totalTorrents,
 		"corrupt": map[string]any{
+			// First, because it is the only entry that means a file on disk is
+			// damaged rather than a record being incomplete — and the only one
+			// that blocks every save against that bucket.
+			"unreadableBucket":    map[string]any{"count": unreadableCount, "sample": unreadableSample},
 			"nullValue":           map[string]any{"count": nullValueCount, "sample": nullValueSample},
 			"missingName":         map[string]any{"count": missingNameCount, "sample": missingNameSample},
 			"missingOriginalname": map[string]any{"count": missingOriginalnameCount, "sample": missingOriginalnameSample},
