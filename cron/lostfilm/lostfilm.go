@@ -976,7 +976,13 @@ func (p *Parser) fetchBytes(ctx context.Context, rawURL, cookie, referer string)
 		return nil, err
 	}
 	if status < 200 || status >= 300 {
-		return nil, fmt.Errorf("status %d", status)
+		// Names the tracker, the status and the URL. A bare "status %d" is what
+		// production reported on 2026-10-02 (`parse` HTTP 500, error `status
+		// 503`) and it says neither which request failed nor that the 503 came
+		// from flaresolverr's own cooldown rather than from lostfilm — two very
+		// different problems. This file's own rule is that an error names the
+		// tracker and the cause.
+		return nil, fmt.Errorf("lostfilm: %s answered HTTP %d", rawURL, status)
 	}
 	return data, nil
 }
