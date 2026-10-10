@@ -194,3 +194,66 @@ func TestUnconfiguredLoginIsNamed(t *testing.T) {
 		t.Errorf("причина не названа: %v", err)
 	}
 }
+
+// A challenged login POST is intermittent, so the response to it must not be a
+// flat quarter-hour block: that turned one coin-flip loss into fifteen minutes
+// in which every entrypoint answered work_login, and the single retry at the
+// end lost the toss about as often. Production 2026-10-10 re-armed for over an
+// hour that way, which is why restarting the process appeared to "fix" it —
+// a restart clears the block and retries at once.
+func TestCFLoginBackoffEscalatesAndResets(t *testing.T) {
+	p := &Parser{}
+	p.Config.Rutracker.Host = "https://rutracker.org"
+	p.Config.Rutracker.Login.U = "someone"
+
+	var got []time.Duration
+	for i := 0; i < 6; i++ {
+		got = append(got, p.noteCFLoginFailure())
+	}
+	want := []time.Duration{30 * time.Second, 2 * time.Minute, 5 * time.Minute,
+		loginCooldown, loginCooldown, loginCooldown}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("шаг %d: окно %s, ожидалось %s", i+1, got[i], want[i])
+		}
+	}
+
+	// The first loss must cost seconds, not minutes — that is the whole point.
+	if got[0] >= time.Minute {
+		t.Errorf("первая неудача блокирует на %s — транзиент снова станет простоем", got[0])
+	}
+	// And it must still end at the old window, so a genuinely gated login is
+	// not hammered.
+	if got[len(got)-1] != loginCooldown {
+		t.Errorf("лестница не доходит до %s", loginCooldown)
+	}
+
+	// The block is real while it lasts.
+	if _, reason, blocked := p.loginBlocked(); !blocked || reason == "" {
+		t.Error("после неудачи блокировка не установлена или без причины")
+	}
+
+	// A success returns the ladder to the first step, or a tracker that
+	// recovered would keep paying the long window.
+	p.acceptLoginCookies("bb_session=abc", "")
+	if _, _, blocked := p.loginBlocked(); blocked {
+		t.Error("успешный вход не снял блокировку")
+	}
+	if d := p.noteCFLoginFailure(); d != cfLoginBackoff[0] {
+		t.Errorf("после успеха лестница не сброшена: %s вместо %s", d, cfLoginBackoff[0])
+	}
+}
+
+// The CAPTCHA and rejected-password paths must keep their own longer windows —
+// retrying those fast is exactly what earns an anti-bruteforce block.
+func TestOtherLoginFailuresKeepTheirOwnWindows(t *testing.T) {
+	p := &Parser{}
+	p.noteLoginFailure(loginCaptchaCooldown, "login form is showing a CAPTCHA")
+	d, reason, blocked := p.loginBlocked()
+	if !blocked || d <= loginCooldown {
+		t.Errorf("окно каптчи сократилось до %s", d)
+	}
+	if reason == "" {
+		t.Error("причина не сохранена")
+	}
+}

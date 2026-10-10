@@ -81,6 +81,8 @@ type Parser struct {
 	cookieMu sync.Mutex
 	cookie   string
 	cookieT  time.Time
+	// cfLoginFailures indexes cfLoginBackoff; reset on a successful login.
+	cfLoginFailures int
 	// loginBlockedUntil throttles re-login attempts. The crontab drives four
 	// rutracker entrypoints, each of which calls ensureLogin, so a session
 	// that cannot be established would otherwise POST the login form up to a
@@ -208,6 +210,33 @@ const (
 	loginCaptchaCooldown = 2 * time.Hour
 )
 
+// cfLoginBackoff is the escalation for a challenged login POST: a transient
+// costs seconds, while a genuinely gated login still backs off to the same
+// 15 minutes the flat block used to apply immediately.
+var cfLoginBackoff = []time.Duration{
+	30 * time.Second,
+	2 * time.Minute,
+	5 * time.Minute,
+	loginCooldown,
+}
+
+// noteCFLoginFailure arms the next step of the ladder and reports the window it
+// chose. The step counter is reset by acceptLoginCookies, so a success returns
+// the ladder to 30 s.
+func (p *Parser) noteCFLoginFailure() time.Duration {
+	p.cookieMu.Lock()
+	i := p.cfLoginFailures
+	if i >= len(cfLoginBackoff) {
+		i = len(cfLoginBackoff) - 1
+	}
+	d := cfLoginBackoff[i]
+	p.cfLoginFailures++
+	p.loginBlockedUntil = time.Now().Add(d)
+	p.loginBlockReason = "cloudflare challenge on the login form"
+	p.cookieMu.Unlock()
+	return d
+}
+
 func (p *Parser) noteLoginFailure(d time.Duration, reason string) {
 	p.cookieMu.Lock()
 	p.loginBlockedUntil = time.Now().Add(d)
@@ -313,8 +342,24 @@ func (p *Parser) takeLogin(ctx context.Context) bool {
 		if cookieStr, ok := p.loginViaBrowser(ctx, loginURL, form.Encode(), postCookie); ok {
 			return p.acceptLoginCookies(cookieStr, postCookie)
 		}
-		log.Printf("rutracker: login BLOCKED by cloudflare challenge (credentials were never checked)")
-		p.noteLoginFailure(loginCooldown, "cloudflare challenge on the login form")
+		// Back off in steps rather than a flat 15 minutes. A challenged login
+		// POST is **intermittent** here — measured as 302 on one attempt and
+		// 403 cf-mitigated=challenge on the next — so a quarter-hour block
+		// turns one coin-flip loss into a quarter hour in which every
+		// entrypoint answers work_login and nothing is parsed, and the single
+		// retry at the end of it loses the toss again about as often.
+		//
+		// That is why restarting the process "fixed" it while waiting did not:
+		// a restart clears loginBlockedUntil and retries at once, and an
+		// immediate retry often wins. Production 2026-10-10 showed the loop
+		// re-arming for over an hour — blocks set at ~05:06 and again at
+		// ~06:26 — before a login finally succeeded at 06:35.
+		//
+		// Credentials are never checked on this path, so a fast retry costs
+		// nothing on the anti-bruteforce side. The CAPTCHA and
+		// rejected-password paths keep their own, longer windows.
+		d := p.noteCFLoginFailure()
+		log.Printf("rutracker: login BLOCKED by cloudflare challenge (credentials were never checked) — not retrying for %s", d)
 		return false
 	}
 	if loginCaptchaRe.MatchString(text) {
@@ -348,6 +393,7 @@ func (p *Parser) acceptLoginCookies(cookieStr, postCookie string) bool {
 	p.cookieT = time.Now()
 	p.loginBlockedUntil = time.Time{}
 	p.loginBlockReason = ""
+	p.cfLoginFailures = 0
 	p.cookieMu.Unlock()
 	_ = core.DefaultSessionStore().SaveAuth(p.domain, merged)
 	log.Printf("rutracker: login OK, got bb_session")
