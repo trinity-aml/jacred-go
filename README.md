@@ -41,7 +41,9 @@ port.
 - [FDB Audit Log](#fdb-audit-log)
 - [Parser Logging](#parser-logging)
 - [Cron Examples](#cron-examples)
+- [Debug and Profiling](#debug-and-profiling)
 - [Database Structure](#database-structure)
+- [Utility Endpoints](#utility-endpoints)
 - [Releases (CI)](#releases-ci)
 
 ---
@@ -113,6 +115,7 @@ logFdbRetentionDays: 7       # Delete FDB log files older than N days
 logFdbMaxSizeMb: 0           # Max total FDB log size in MB (0 = unlimited)
 logFdbMaxFiles: 0            # Max number of FDB log files (0 = unlimited)
 fdbPathLevels: 2             # Directory nesting depth for bucket files
+maxreadfile: 200             # Cap on bucket files one search may read (0 = no cap)
 mergeduplicates: true        # Merge duplicate torrents from different trackers
 mergenumduplicates: true     # Merge numeric ID variations
 openstats: true              # Enable /stats/* endpoints (no auth)
@@ -143,9 +146,15 @@ gcpercent: 50    # Go's GOGC knob: 50 = GC at +50% heap growth (default 50, Go d
 
 `memlimit: 0` disables the hard cap (Go default behaviour).
 
+`maxreadfile` bounds the cost of a single search: a very broad query can match
+thousands of index keys, and reading every matching bucket off disk is what
+turns one request into a stall. It applies only while reads are actually hitting
+disk — with `evercache.enable: true` **and** `evercache.validHour: 0` (cache
+never expires) the whole working set is in memory and the cap is ignored.
+
 ### CloudFlare Bypass (flaresolverr-go)
 
-For CloudFlare-gated trackers the system uses an embedded **flaresolverr-go** solver — no external Docker service required. Which trackers those are is decided at runtime by auto-detection (see below), not by this list; the domains currently hinted in `init.yaml` are megapeer, nnmclub, bitru, toloka, mazepa, selezen, anistar and anifilm, and rutracker is CF-gated too but left to auto-detect.
+For CloudFlare-gated trackers the system uses an embedded **flaresolverr-go** solver — no external Docker service required. Which trackers those are is decided at runtime by auto-detection (see below), not by this list; the domains currently hinted in `init.yaml` are megapeer, nnmclub, bitru, mazepa, selezen, anistar and anifilm, while rutracker and kinozal are CF-gated too but left to auto-detect. Toloka's hint was removed on 2026-09-26: with its auth cookie a plain fetch returns the full listing in ~0.8 s against several seconds for a browser render, and auto-detect brings the browser back by itself if the tracker ever gates again.
 
 How it works:
 
@@ -209,6 +218,41 @@ evercache:
   maxOpenWriteTask: 500      # Max buckets held in memory (hard cap)
   dropCacheTake: 100         # How many to evict when the cap is hit
 ```
+
+### Track Enrichment (ffprobe)
+
+Off by default. When enabled, the server analyses torrents with **ffprobe** and
+stores the media streams on the record's `ffprobe` field, which also fills
+`languages`. The analysis is native — `ffprobe` is downloaded on first start
+into `Data/` (verified against the publisher's checksum, and a PGP signature
+where one is published), so no external service is involved.
+
+```yaml
+tracks: false          # Master switch; everything below is inert while false
+tracksdelay: 20000     # Random delay between analyses, ms
+tracksatempt: 5        # Attempts per torrent before giving up
+tracksmod: 0           # 1 = only recent torrents (skips the two oldest passes)
+trackslog: false       # Write Data/log/tracks.log
+tracksinterval:
+  task0: 180           # Minutes between passes over older torrents
+  task1: 60            # Minutes between passes over the last 24 hours
+```
+
+Five passes run concurrently, split by how old a record is — the last 24 hours,
+the last month, the last year, everything older, and records whose `updateTime`
+is recent but whose `createTime` is not. `task1` paces the first of those;
+`task0` paces the rest (each pass waits `task0 + N` minutes). With
+`tracksmod: 1` the two oldest passes never run, which is the setting to use if
+enrichment is only wanted for fresh releases.
+
+`tracksatempt` doubles as the merge parameter for every parser — it is passed to
+`MergeTorrent`, so lowering it also reduces how often an existing record is
+re-analysed.
+
+Two keys are kept only so an existing `init.yaml` still loads, and are read by
+nothing: **`trackscategory`** and **`tsuri`**. Both belonged to the TorrServer
+era, before the native analyzer; `tsuri` still defaults to
+`http://127.0.0.1:8090`, which is not contacted.
 
 ### Sync (Multi-Instance)
 
@@ -312,7 +356,7 @@ Multi-category parsers also include `"by_category": [...]`.
 
 ### Parsing Strategies
 
-There are five distinct parsing strategies across the 21 trackers:
+There are five distinct parsing strategies across the 25 parsers:
 
 #### 1. Single-page (`page=N`)
 
@@ -400,6 +444,15 @@ stopped, and it resumes across midnight. Progress belongs to a **sweep cycle**
 outstanding until the current cycle has visited it, and the cycle rotates only
 once every page has been. A page whose fetch keeps failing is given up on after
 three consecutive tries, so one broken page cannot hold a cycle open forever.
+
+**`parse` and `parsealltask` share one run flag.** They drive the same session,
+the same re-login path and the same rate limit, so they are not allowed to sweep
+at once: whichever starts second answers `{"status":"work"}` and logs that it
+was skipped. The deployed schedule runs `parsealltask` every few minutes against
+a sweep that takes hours, so during a full sweep the shorter `parse` is skipped
+for its whole duration — a tracker can therefore look idle on `/trackers` for
+hours while it is in fact working. A `work` answer never overwrites the last
+real result on that page, for the same reason.
 
 #### 5. Full vs. incremental (`fullparse=true/false`)
 
@@ -552,7 +605,7 @@ GET /cron/kinozal/parsealltask
 GET /cron/kinozal/parselatest
   pages=N   (default 100, max 100) — scan unfiltered pages 0..N-1 per category, no year filter
 ```
-Login required for browsing, not just for magnets: every path except `/login.php`, `/rss.xml` and `/robots.txt` redirects to `login.php?m=5`. The host moved from `kinozal.tv` (DNS gone) to `kinozal.guru`, and the site rebranded "Кинозал.ТВ" to "Кинозал.GURU" at the same time. Fronted by CloudFlare but it does not challenge, so no `fetchmode` hint is needed.
+Login required for browsing, not just for magnets: every path except `/login.php`, `/rss.xml` and `/robots.txt` redirects to `login.php?m=5`. The host moved from `kinozal.tv` (DNS gone) to `kinozal.guru`, and the site rebranded "Кинозал.ТВ" to "Кинозал.GURU" at the same time. Since 2026-09-26 it sits behind a CloudFlare **managed challenge**, and `/login.php` is no longer an exception — `login.php`, `takelogin.php` and `browse.php` all answer 403 with `cf_chl_opt`. A clearance is obtainable (one cold solve returns `cf_clearance`), so the tracker works, but login has to go through the same fetcher as everything else. No `fetchmode` hint is set: auto-detect promotes the domain on the first challenge.
 
 #### Knaben
 ```
@@ -588,6 +641,13 @@ GET /cron/lostfilm/verifypage
 
 GET /cron/lostfilm/stats            — Lostfilm-specific stats
 ```
+
+**`failed` here means "episodes with no magnet", not "errors".** Listings are
+public but magnets are not, and the same empty result is what an episode with no
+release looks like — so on an old catalogue this number is normally large and
+permanent. A genuinely dead session is reported separately, as `work_login` with
+HTTP 500, by a gate that fetches the homepage and reads the account pane before
+the run starts.
 
 #### Mazepa
 ```
@@ -677,6 +737,17 @@ GET /cron/toloka/parsealltask
 GET /cron/toloka/parselatest
   pages=N   (default 5)
 ```
+
+Toloka's phpBB rotates its `toloka_sid` on essentially **every** request, and a
+stale sid is answered with `302 → /login.php`, which reads exactly like a
+refused session. The parser therefore carries each response's `Set-Cookie`
+forward — into the next request and into the stored session — instead of
+replaying the cookie it got at login. Before that fix a run was refused within
+seconds of logging in and re-authenticated once per category.
+
+`download.php` is rate-limited hard (HTTP 429 with a 17-byte body); the retry
+ladder absorbs it, at roughly 3 minutes per category. A cold category is ~90
+downloads because the listing carries no magnets.
 
 #### TorrentBy
 ```
@@ -990,6 +1061,16 @@ curl "http://127.0.0.1:9117/sync/torrents?time=0&trackerName=Rutor"
 
 Response: flat array of `{ "key": "name:originalname", "value": {...} }`
 
+### `GET /sync/tracks`, `GET /sync/tracks/check`
+
+Both are registered and both deliberately answer **404**. They were meant to let
+a downstream instance pull ffprobe data on its own, which turned out to be
+unnecessary: `/sync/fdb/torrents` already carries the `ffprobe` field, filled by
+`enrichTorrentWithTracks` as the payload is built, so a consumer gets the track
+data with the records and has nothing to fetch separately. The routes stay so
+that an older client calling them gets a clean 404 rather than falling through
+to the search page.
+
 ---
 
 ## Database Admin Endpoints
@@ -1037,10 +1118,83 @@ curl "http://127.0.0.1:9117/dev/findcorrupt?sampleSize=50"
     "nullValue":           { "count": 0, "sample": [] },
     "missingName":         { "count": 12, "sample": [...] },
     "missingOriginalname": { "count": 3, "sample": [...] },
-    "missingTrackerName":  { "count": 0, "sample": [] }
+    "missingTrackerName":  { "count": 0, "sample": [] },
+    "unreadableBucket":    { "count": 1, "sample": [
+      { "fdbKey": "nba20242025:nba20242025",
+        "path":   "Data/fdb/2f/15f214d05799b2719d09831979a7d2",
+        "error":  "filedb: Data/fdb/2f/... holds invalid JSON: unexpected EOF" }
+    ] }
   }
 }
 ```
+
+`unreadableBucket` is the one category that blocks **writes** rather than
+returning bad data: the bucket cannot be decoded, so every save that touches it
+fails. It is reported with the key, the path and the decoder error so the file
+can be found; feed those keys to `/dev/restorebucket` below. Until 2026-10-02
+this scan skipped unreadable files entirely and answered "clean" while a
+tracker was stuck re-reading the same bad bucket on every page.
+
+#### `GET /dev/restorebucket`
+
+Restores unreadable buckets from the daily hard-link snapshots in
+`Data/backup/fdb-DD-MM-YYYY` (see [Database Structure](#database-structure)).
+Local-only, like every `/dev/*` endpoint.
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `key` | — | Restore one bucket, as `name:originalname` — exactly what `/dev/findcorrupt` prints as `fdbKey` |
+| `all` | `false` | Restore every unreadable bucket; without it the call only reports |
+| `date` | newest | Pick a specific snapshot, `DD-MM-YYYY` |
+| `dry` | `false` | Report the available snapshots without writing anything |
+
+```bash
+# What is damaged, and what can it be restored from? (read-only)
+curl "http://127.0.0.1:9117/dev/restorebucket"
+
+# Restore everything unreadable from the newest snapshot that has it
+curl "http://127.0.0.1:9117/dev/restorebucket?all=1"
+
+# One bucket, from a named day
+curl "http://127.0.0.1:9117/dev/restorebucket?key=nba20242025:nba20242025&date=09-10-2026"
+```
+
+The bare call answers with a plan rather than an action:
+
+```json
+{
+  "ok": true,
+  "unreadable": 1,
+  "damaged": [
+    { "key": "nba20242025:nba20242025",
+      "snapshots": [
+        { "date": "10-10-2026", "path": "Data/backup/fdb-10-10-2026/2f/15f2...", "readable": true, "records": 1 }
+      ] }
+  ],
+  "hint": "add all=1 to restore them, or key=<fdbKey> for one"
+}
+```
+
+`all=1` reports each key separately and returns **HTTP 500** if any of them
+could not be restored, so a partial recovery is not mistaken for a complete
+one:
+
+```json
+{ "ok": true, "unreadable": 1, "restored": 1, "failed": 0,
+  "results": [ { "key": "nba...", "restored": true, "restoredFrom": "10-10-2026", "records": 1 } ] }
+```
+
+Three refusals are deliberate: a restore **will not run while unsaved changes
+are pending** (call `/jsondb/save` first, or the restored file is overwritten by
+the in-memory copy), it **verifies the snapshot reads back** before installing
+it rather than swapping one unreadable file for another, and it installs through
+a temp file plus `rename` — never `cp` over the live path, which would truncate
+in place and destroy the hard-linked snapshot along with it.
+
+**Repair usually needs no endpoint at all.** A damaged bucket is quarantined to
+`<path>.corrupt` by the next save that touches it and rewritten from scratch,
+and the records it held come back on the next sweep. `/dev/restorebucket` is for
+when those records matter sooner than the next full parse.
 
 #### `GET /dev/removeNullValues`
 
@@ -1156,6 +1310,15 @@ Appends `?hash=<btih>` to Aniliberty URLs using magnet link hashes.
 curl "http://127.0.0.1:9117/dev/migrateAnilibertyUrls"
 ```
 
+#### `GET /dev/migrateViruseprojectUrls`
+
+The Viruseproject counterpart of the Aniliberty migration above — rewrites
+stored Viruseproject URLs to the current form.
+
+```bash
+curl "http://127.0.0.1:9117/dev/migrateViruseprojectUrls"
+```
+
 #### `GET /dev/removeDuplicateAniliberty`
 
 Deduplicates Aniliberty torrents by magnet hash, keeping the most recent.
@@ -1188,6 +1351,33 @@ Normalizes Selezen host (old hosts like `open.selezen.org` → configured `Selez
 curl "http://127.0.0.1:9117/dev/fixSelezenUrls"
 ```
 
+### Diagnostics
+
+#### `GET /dev/testfetch`
+
+Fetches a tracker's front page through the normal fetcher and reports what came
+back — status, body size, whether a CloudFlare challenge was detected, and how
+long it took. Useful for separating "the site is blocking us" from "the parser's
+markup expectations are wrong" without running a parse.
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `tracker` | — | Required: `megapeer`, `bitru`, `rutor` or `torrentby` |
+| `nocookie` | `false` | Send no cookie, to see whether the IP itself is blocked |
+| `ua` | Chrome 146 | Override the User-Agent |
+
+```bash
+curl "http://127.0.0.1:9117/dev/testfetch?tracker=bitru"
+curl "http://127.0.0.1:9117/dev/testfetch?tracker=bitru&nocookie=true"
+```
+
+The cookie is reported as a 30-character preview only, never in full.
+
+Only those four trackers are wired up — it was written while debugging them and
+never generalised. For everything else, `/stats/parsers` (behind
+[`/trackers`](#web-ui)) shows the route and session state, and the per-tracker
+log in `Data/log/<tracker>.log` carries the fetch outcomes.
+
 ### Bucket Management
 
 #### `GET /dev/removeBucket`
@@ -1212,7 +1402,7 @@ curl "http://127.0.0.1:9117/dev/removeBucket?key=матрица:the+matrix&migra
 
 ## Web UI
 
-When `web: true`, three pages are served. The UI assets (HTML, icons, manifest) are embedded into the binary at build time via `//go:embed all:wwwroot` in `server/embed.go` — no external `wwwroot/` directory is required at runtime. If a `wwwroot/` directory exists alongside the binary, individual files in it override the embedded copy (handy for live-editing during development).
+When `web: true`, five pages are served. The UI assets (HTML, icons, manifest) are embedded into the binary at build time via `//go:embed all:wwwroot` in `server/embed.go` — no external `wwwroot/` directory is required at runtime. If a `wwwroot/` directory exists alongside the binary, individual files in it override the embedded copy (handy for live-editing during development).
 
 | Path | Purpose |
 |------|---------|
@@ -1220,9 +1410,10 @@ When `web: true`, three pages are served. The UI assets (HTML, icons, manifest) 
 | `/stats` | `stats.html` — per-tracker statistics dashboard (new/updated/checked counts, last run time) |
 | `/settings` | `settings.html` — editor for the full `init.yaml` config (server, logging, sync, trackers, proxies) |
 | `/trackers` | `trackers.html` — health of all 25 parsers: last run, route, authorization, run-now |
+| `/schedule` | `schedule.html` — editor for the `crontab` file, with a run button per rule (see [Cron Examples](#cron-examples)) |
 | `/opensearch.xml` | OpenSearch description, so the browser can search this instance from its address bar |
 
-The Settings page talks to `/admin/config` (GET to load, POST to save) and is local-only (`127.0.0.1` / RFC1918 / link-local / ULA). On save the server writes `init.yaml` atomically, re-parses it with the same loader used on startup, and calls `UpdateConfig` to apply new values to the running server, DB, and all 21 parsers — no restart needed.
+The Settings page talks to `/admin/config` (GET to load, POST to save) and is local-only (`127.0.0.1` / RFC1918 / link-local / ULA). On save the server writes `init.yaml` atomically, re-parses it with the same loader used on startup, and calls `UpdateConfig` to apply new values to the running server, DB, and all 25 parsers — no restart needed.
 
 ### `GET /admin/config`
 
@@ -1392,16 +1583,56 @@ Typical external crontab (`/etc/cron.d/jacred` or `Data/crontab`):
 
 ---
 
+## Debug and Profiling
+
+Go's standard profiling handlers, plus two of our own. All of them are
+local-only, like `/dev/*` and `/admin/*`.
+
+| Endpoint | Purpose |
+|----------|---------|
+| `/debug/pprof/` | pprof index — heap, goroutine, allocs, block, mutex profiles |
+| `/debug/pprof/profile` | 30 s CPU profile (`?seconds=N` to change) |
+| `/debug/pprof/trace` | Execution trace |
+| `/debug/pprof/cmdline`, `/debug/pprof/symbol` | Command line, symbol lookup |
+| `/debug/memstats` | `runtime.MemStats` as JSON |
+| `/debug/freeosmem` | Calls `debug.FreeOSMemory()` and returns memory before/after |
+
+```bash
+# Where is the heap going?
+go tool pprof "http://127.0.0.1:9117/debug/pprof/heap"
+
+# Goroutine dump, readable in a browser
+curl "http://127.0.0.1:9117/debug/pprof/goroutine?debug=1"
+
+# Hand pages back to the OS after a big sweep
+curl "http://127.0.0.1:9117/debug/freeosmem"
+```
+
+`/debug/freeosmem` is worth knowing on a small VPS: Go keeps freed heap mapped
+for reuse, so RSS stays high after a full parse even though the heap is mostly
+empty. It is a diagnostic convenience, not something to call on a schedule —
+`memlimit` and `gcpercent` are the real controls.
+
+---
+
 ## Database Structure
 
 ```
 Data/
   masterDb.bz               # Gzipped JSON index: key → {fileTime, updateTime, path}
-  masterDb_DD-MM-YYYY.bz    # Daily backups (auto-created, kept 3 days)
+  masterDb_DD-MM-YYYY.bz    # Daily index backups (auto-created, kept 3 days)
   fdb/
     ab/cdef012...            # Bucket files (gzipped JSON): url → torrent object
+  backup/
+    fdb-DD-MM-YYYY/          # Daily data snapshot: hard links to fdb/ + masterDb.bz (kept 3 days)
+  cookie/
+    <domain>.json            # Per-domain session: login cookie + flare cookie/UA
   temp/
     stats.json               # Pre-computed stats cache
+    cf_auto.json             # Domains promoted to flaresolverr by auto-detect (30-day TTL)
+    tracker_runs.json        # Last run per tracker per op, behind /trackers
+    <tracker>_taskParse.json         # Page map for parsealltask
+    <tracker>_parseAllCycle.json     # Which sweep cycle each page belongs to
   log/
     YYYY-MM-DD.log           # Application log (when log: true)
     kinozal.log              # Per-tracker add/update/skip/fail logs
@@ -1410,6 +1641,44 @@ Data/
 ```
 
 Each bucket file key is derived from MD5 of the bucket key (`name:originalname`) split into 2-char prefix directory.
+
+### Backups and snapshots
+
+Two separate things are backed up daily, both on each `/jsondb/save`:
+
+| What | Where | Cost |
+|------|-------|------|
+| The index | `masterDb_DD-MM-YYYY.bz` | A real copy, a few MB |
+| The data | `Data/backup/fdb-DD-MM-YYYY/` | **Hard links** — near zero |
+
+Both keep 3 days. The data snapshot is a mirror of `Data/fdb` built from hard
+links, so three days of a 7 GB database cost a few percent rather than 21 GB:
+the extra directory entries point at the same inodes, and a day's snapshot only
+starts consuming space as the live buckets beneath it are replaced. The index is
+hard-linked into the snapshot directory too, so a restore is self-contained.
+
+**This works only because bucket writes are atomic.** `writeBucket` never
+modifies a bucket in place — it writes a temp file and renames it over the
+target, which swaps the directory entry and leaves the old inode alive wherever
+another link to it exists. Anything that later opens a bucket for writing
+instead of replacing it silently turns every snapshot ever taken into a copy of
+the live data; `TestSnapshotSurvivesABucketRewrite` exists to catch that.
+
+For the same reason, **never restore with `cp`** — it opens the destination and
+truncates it in place, writing through the shared inode into the snapshot as
+well, so the backup is destroyed by the attempt to use it. Use
+[`/dev/restorebucket`](#get-devrestorebucket), which writes a temp file and
+renames.
+
+A snapshot is built under `fdb-DD-MM-YYYY.partial` and the directory is renamed
+into place at the end, so an interrupted snapshot is never mistaken for a
+complete one.
+
+**What this does and does not protect against.** It covers *logical* damage — a
+corrupt bucket, a bad migration, a parser that wrote nonsense — which is what
+has actually happened here. It shares a filesystem with the live data, so it is
+**not** protection against losing the disk; that needs a copy off the box and is
+a separate job that this binary does not do.
 
 ### Torrent Object Fields
 
