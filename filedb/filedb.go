@@ -244,6 +244,13 @@ func (db *DB) RebuildIndexes() error {
 			if err != nil || info == nil || info.IsDir() {
 				return err
 			}
+			// A half-written bucket left by a crash between fsync and rename.
+			// It is not a bucket and must not be folded into the index: its
+			// records would be counted a second time under a path no key maps
+			// to. writeBucket's own cleanup removes it on the next write.
+			if strings.HasSuffix(path, bucketTmpSuffix) {
+				return nil
+			}
 			bucket, err := db.openReadPath(path)
 			if err != nil {
 				return nil

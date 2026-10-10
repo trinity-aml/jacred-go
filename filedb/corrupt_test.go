@@ -163,3 +163,83 @@ func TestWrongTypeIsNotTreatedAsCorruption(t *testing.T) {
 		t.Error("SyntaxError не распознан как повреждение файла")
 	}
 }
+
+// The corruption found in production came from writeBucket doing
+// `os.Create(path)` straight onto the live file: that truncates it before any
+// new content exists, so a process killed in the window leaves an intact gzip
+// header over a truncated JSON body. masterDb.bz was already written
+// temp→rename with a comment explaining exactly this; the rule had simply never
+// been applied to the bucket files. This is the test that holds the line.
+func TestAFailedWriteLeavesThePreviousBucketIntact(t *testing.T) {
+	tmp := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(tmp, "fdb"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	db := New(app.Config{}, tmp)
+	key := db.KeyDb("atomic probe", "atomic probe")
+	path := db.PathDb(key)
+
+	good := map[string]TorrentDetails{
+		"http://x/a": {"title": "A", "name": "a", "originalname": "a", "trackerName": "rutracker"},
+	}
+	if err := writeBucket(path, good); err != nil {
+		t.Fatal(err)
+	}
+
+	// A value encoding/json cannot marshal fails the write half-way, which is
+	// the same shape as being killed mid-write.
+	broken := map[string]TorrentDetails{"http://x/b": {"title": make(chan int)}}
+	if err := writeBucket(path, broken); err == nil {
+		t.Fatal("битая запись прошла без ошибки")
+	}
+
+	// The point: the previous bucket must still be there and readable.
+	back, err := db.OpenReadNoCache(key)
+	if err != nil {
+		t.Fatalf("после неудачной записи прежний бакет не читается: %v", err)
+	}
+	if len(back) != 1 || back["http://x/a"] == nil {
+		t.Errorf("прежнее содержимое потеряно: %v", back)
+	}
+	// And no temp file is left behind on the error path.
+	if _, err := os.Stat(path + bucketTmpSuffix); !os.IsNotExist(err) {
+		t.Errorf("временный файл не убран после ошибки: %v", err)
+	}
+}
+
+// The write must never touch the target until the content is complete, and the
+// index walk must not mistake a leftover temp file for a bucket.
+func TestBucketWriteIsAtomicByShape(t *testing.T) {
+	src, err := os.ReadFile("admin.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(src)
+	i := strings.Index(body, "func writeBucket(")
+	if i < 0 {
+		t.Fatal("writeBucket не найдена")
+	}
+	fn := body[i : i+strings.Index(body[i:], "\nfunc ")]
+	if strings.Contains(fn, "os.Create(path)") {
+		t.Error("writeBucket снова создаёт файл поверх живого — обрезание вернулось")
+	}
+	for _, want := range []string{"os.Rename(tmp, path)", "f.Sync()"} {
+		if !strings.Contains(fn, want) {
+			t.Errorf("writeBucket не содержит %s", want)
+		}
+	}
+
+	dbsrc, err := os.ReadFile("filedb.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(dbsrc), "strings.HasSuffix(path, bucketTmpSuffix)") {
+		t.Error("обход индекса не пропускает недописанные бакеты")
+	}
+
+	adm := body[strings.Index(body, "func (db *DB) doSave("):]
+	adm = adm[:strings.Index(adm, "\nfunc ")]
+	if !strings.Contains(adm, "f.Sync()") {
+		t.Error("masterDb пишется без fsync перед переименованием")
+	}
+}

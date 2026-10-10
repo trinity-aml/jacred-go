@@ -191,7 +191,16 @@ func (db *DB) doSave() error {
 	encErr := enc.Encode(master)
 	gzErr := gz.Close()
 	core.ReleaseGzipWriter(gz)
+	// fsync before the rename. temp+rename alone orders nothing against the
+	// disk, so a power loss can land the rename ahead of the bytes and leave a
+	// short or empty masterDb.bz — which costs the slow full .gz walk at the
+	// next start, the very thing this temp+rename was added to avoid.
+	syncErr := f.Sync()
 	fErr := f.Close()
+	if syncErr != nil {
+		_ = os.Remove(tmp)
+		return syncErr
+	}
 	if encErr != nil {
 		_ = os.Remove(tmp)
 		return encErr
@@ -546,24 +555,68 @@ func (db *DB) FindEmptySearchFields(sampleSize int) map[string]any {
 	}
 }
 
+// bucketTmpSuffix marks a half-written bucket. It stays in the same directory
+// as the target, because rename is only atomic within one filesystem, and
+// RebuildIndexes skips files carrying it.
+const bucketTmpSuffix = ".tmp"
+
+// writeBucket replaces the bucket file atomically: temp file → fsync → rename.
+//
+// It used to `os.Create(path)` straight onto the live file, which truncates it
+// before a single byte of the new content exists. A process killed in that
+// window — the OOM killer is the suspect named in doSave's own comment — leaves
+// an intact gzip header over a truncated JSON body, which is exactly the
+// corruption found in production 2026-10-02 (`Data/fdb/2f/15f214…`: one bad
+// bucket blocking the save of every page of a whole rutracker category).
+//
+// doSave already wrote masterDb.bz this way, with a comment spelling out the
+// reason. The rule was simply never applied to the 551k bucket files beside it.
+// With temp+rename a crash leaves either the complete old file or the complete
+// new one and never half of either; the fsync is what stops a power loss from
+// landing the rename ahead of the data.
+//
+// A crash between fsync and rename leaves one `<bucket>.tmp` behind. That is
+// harmless and self-limiting: the next write of the same key reuses the same
+// temp name, so the litter cannot grow past one file per bucket, and the
+// index rebuild skips the suffix.
 func writeBucket(path string, bucket map[string]TorrentDetails) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	f, err := os.Create(path)
+	tmp := path + bucketTmpSuffix
+	f, err := os.Create(tmp)
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	fail := func(e error) error {
+		_ = f.Close()
+		_ = os.Remove(tmp)
+		return e
+	}
 	gz := core.AcquireGzipWriter(f)
-	defer core.ReleaseGzipWriter(gz)
 	enc := json.NewEncoder(gz)
 	enc.SetEscapeHTML(false)
-	if err := enc.Encode(bucket); err != nil {
-		_ = gz.Close()
+	encErr := enc.Encode(bucket)
+	gzErr := gz.Close()
+	core.ReleaseGzipWriter(gz)
+	if encErr != nil {
+		return fail(encErr)
+	}
+	if gzErr != nil {
+		return fail(gzErr)
+	}
+	if err := f.Sync(); err != nil {
+		return fail(err)
+	}
+	if err := f.Close(); err != nil {
+		_ = os.Remove(tmp)
 		return err
 	}
-	return gz.Close()
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return nil
 }
 
 func allDigits(s string) bool {
