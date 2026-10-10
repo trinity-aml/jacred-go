@@ -391,6 +391,102 @@ func (s *Server) handleJSONDBSave(w http.ResponseWriter, r *http.Request) {
 	writePlainUTF8(w, http.StatusOK, "ok")
 }
 
+// handleDevRestoreBucket puts damaged buckets back from a daily snapshot.
+//
+// Three shapes, and the bare call is the safe one:
+//
+//	/dev/restorebucket                      → report every unreadable bucket and
+//	                                          which snapshots could restore it.
+//	                                          Read-only.
+//	/dev/restorebucket?all=1                → restore all of them
+//	/dev/restorebucket?key=<fdbKey>         → restore one
+//	…&date=DD-MM-YYYY                       → pick a snapshot instead of the newest
+//	…&dry=1                                 → report without touching anything
+//
+// The bare call reports rather than acts because scanning is harmless and a
+// bulk mutation should be asked for. There is deliberately no need to copy keys
+// from /dev/findcorrupt into a query string by hand: the same scan is done here.
+//
+// Takes the **fdbKey**, never a path — deriving the path through PathDb keeps
+// path traversal out of the question. Local-only, like the rest of /dev.
+// Whole-database restore is deliberately *not* offered: it needs the service
+// stopped, and an endpoint cannot replace the tree it is reading from — see
+// CLAUDE.md for that procedure.
+func (s *Server) handleDevRestoreBucket(w http.ResponseWriter, r *http.Request) {
+	if !isLocalRequest(r) {
+		writeJSON(w, http.StatusForbidden, map[string]any{"badip": true})
+		return
+	}
+	q := r.URL.Query()
+	key := strings.TrimSpace(q.Get("key"))
+	date := strings.TrimSpace(q.Get("date"))
+	all := parseBool(q.Get("all"))
+	dry := parseBool(q.Get("dry"))
+
+	// One named bucket.
+	if key != "" {
+		if !strings.Contains(key, ":") {
+			writeJSON(w, http.StatusBadRequest, map[string]any{
+				"error": "key must be name:originalname, as /dev/findcorrupt prints it",
+			})
+			return
+		}
+		candidates := s.DB.SnapshotsForKey(key)
+		if dry {
+			writeJSON(w, http.StatusOK, map[string]any{"ok": true, "key": key, "snapshots": candidates})
+			return
+		}
+		picked, err := s.DB.RestoreBucketFromSnapshot(key, date)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]any{
+				"ok": false, "key": key, "error": err.Error(), "snapshots": candidates,
+			})
+			return
+		}
+		log.Printf("filedb: restored bucket %s from snapshot %s (%d records)", key, picked.Date, picked.Records)
+		writeJSON(w, http.StatusOK, map[string]any{
+			"ok": true, "key": key, "restoredFrom": picked.Date, "records": picked.Records,
+		})
+		return
+	}
+
+	// Everything that cannot be read. Without all=1 this only reports.
+	damaged := s.DB.UnreadableKeys()
+	if !all || dry {
+		report := make([]map[string]any, 0, len(damaged))
+		for _, k := range damaged {
+			report = append(report, map[string]any{"key": k, "snapshots": s.DB.SnapshotsForKey(k)})
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"ok": true, "unreadable": len(damaged), "damaged": report,
+			"hint": "add all=1 to restore them, or key=<fdbKey> for one",
+		})
+		return
+	}
+	if len(damaged) == 0 {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "unreadable": 0, "restored": 0, "results": []any{}})
+		return
+	}
+	results := s.DB.RestoreAllUnreadable(date)
+	restored := 0
+	for _, res := range results {
+		if res.Restored {
+			restored++
+			log.Printf("filedb: restored bucket %s from snapshot %s (%d records)", res.Key, res.RestoredFrom, res.Records)
+		} else {
+			log.Printf("filedb: could not restore bucket %s: %s", res.Key, res.Error)
+		}
+	}
+	status := http.StatusOK
+	if restored < len(results) {
+		status = http.StatusInternalServerError
+	}
+	writeJSON(w, status, map[string]any{
+		"ok": restored == len(results), "unreadable": len(results),
+		"restored": restored, "failed": len(results) - restored, "results": results,
+	})
+}
+
 func (s *Server) handleDevFindCorrupt(w http.ResponseWriter, r *http.Request) {
 	writeCanonicalJSON(w, http.StatusOK, s.DB.FindCorrupt(defaultInt(firstQuery(r.URL.Query(), "sampleSize", "sample", "limit"), 20)))
 }

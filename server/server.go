@@ -253,6 +253,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/sync/tracks/check", s.handleSyncTracksCheck)
 	mux.HandleFunc("/jsondb/save", s.handleJSONDBSave)
 	mux.HandleFunc("/dev/findcorrupt", s.handleDevFindCorrupt)
+	mux.HandleFunc("/dev/restorebucket", s.handleDevRestoreBucket)
 	mux.HandleFunc("/dev/updatesize", s.handleDevUpdateSize)
 	mux.HandleFunc("/dev/updatesearchname", s.handleDevUpdateSearchName)
 	mux.HandleFunc("/dev/removenullvalues", s.handleDevRemoveNullValues)

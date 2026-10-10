@@ -234,16 +234,15 @@ func (db *DB) dailyBackup(masterPath string) {
 	backupPath := filepath.Join(filepath.Dir(masterPath), backupName)
 
 	if _, err := os.Stat(backupPath); os.IsNotExist(err) {
-		src, err := os.Open(masterPath)
-		if err == nil {
-			dst, err := os.Create(backupPath)
-			if err == nil {
-				_, _ = dst.ReadFrom(src)
-				dst.Close()
-			}
-			src.Close()
+		// The copy is itself written temp→rename. A backup truncated by a
+		// crash mid-copy is worse than no backup: it looks like one until the
+		// day you need it.
+		if err := copyFileAtomic(masterPath, backupPath); err != nil {
+			log.Printf("filedb: masterDb backup failed: %v", err)
 		}
 	}
+
+	db.dailyDataSnapshot()
 
 	// Remove backups older than 3 days
 	cutoff := time.Now().AddDate(0, 0, -3)
@@ -634,4 +633,166 @@ func allDigits(s string) bool {
 func filedbKeyPath(key string) string {
 	md5key := fmt.Sprintf("%x", md5.Sum([]byte(key)))
 	return filepath.ToSlash(filepath.Join(md5key[:2], md5key[2:]))
+}
+
+// copyFileAtomic copies src over dst through a temp file in dst's directory.
+func copyFileAtomic(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	tmp := dst + ".partial"
+	out, err := os.Create(tmp)
+	if err != nil {
+		return err
+	}
+	if _, err := out.ReadFrom(in); err != nil {
+		_ = out.Close()
+		_ = os.Remove(tmp)
+		return err
+	}
+	if err := out.Sync(); err != nil {
+		_ = out.Close()
+		_ = os.Remove(tmp)
+		return err
+	}
+	if err := out.Close(); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	if err := os.Rename(tmp, dst); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return nil
+}
+
+// dataSnapshotKeepDays matches the masterDb retention. Hard links make extra
+// days nearly free — a snapshot only costs space for buckets that changed
+// since — so this can be raised without much thought if a longer window is
+// wanted.
+const dataSnapshotKeepDays = 3
+
+// dailyDataSnapshot mirrors Data/fdb into Data/backup/fdb-DD-MM-YYYY using
+// **hard links**, so the 2.58M records finally have a backup at all. Until
+// 2026-10-10 only masterDb.bz was backed up — the index, not the data — which
+// meant losing Data/fdb left nothing to restore but a full re-parse of every
+// tracker.
+//
+// **Hard links are a true point-in-time snapshot here only because writeBucket
+// is atomic.** It never modifies a bucket in place; it writes a temp file and
+// renames over the target, which replaces the directory entry and leaves the
+// old inode alive wherever another link to it exists. Before the atomicity fix
+// landed the same day, an in-place write would have mutated the snapshot's
+// bytes too, and this design would have quietly backed up nothing. That
+// invariant is load-bearing: anything that later opens a bucket for writing
+// instead of replacing it breaks every snapshot ever taken, which is what
+// TestSnapshotSurvivesABucketRewrite exists to catch.
+//
+// What this protects against is *logical* damage — a corrupt bucket, a bad
+// migration, a parser that wrote nonsense — which is what has actually bitten
+// here. It shares a filesystem with the live data, so it is **not** protection
+// against disk loss; that needs a copy off the box and is a separate job.
+func (db *DB) dailyDataSnapshot() {
+	fdbDir := filepath.Join(db.DataDir, "fdb")
+	if st, err := os.Stat(fdbDir); err != nil || !st.IsDir() {
+		return
+	}
+	backupRoot := filepath.Join(db.DataDir, "backup")
+	today := time.Now().Format("02-01-2006")
+	final := filepath.Join(backupRoot, "fdb-"+today)
+	if _, err := os.Stat(final); err == nil {
+		db.pruneDataSnapshots(backupRoot)
+		return
+	}
+	// Build under .partial and rename the directory into place, so a snapshot
+	// interrupted half-way is never mistaken for a complete one.
+	staging := final + ".partial"
+	_ = os.RemoveAll(staging)
+	if err := os.MkdirAll(staging, 0o755); err != nil {
+		log.Printf("filedb: data snapshot failed: %v", err)
+		return
+	}
+
+	linked, failed := 0, 0
+	err := filepath.Walk(fdbDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info == nil || info.IsDir() {
+			return nil
+		}
+		if strings.HasSuffix(path, bucketTmpSuffix) {
+			return nil
+		}
+		rel, rerr := filepath.Rel(fdbDir, path)
+		if rerr != nil {
+			return nil
+		}
+		dst := filepath.Join(staging, rel)
+		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+			failed++
+			return nil
+		}
+		if err := os.Link(path, dst); err != nil {
+			failed++
+			return nil
+		}
+		linked++
+		return nil
+	})
+	if err != nil || linked == 0 {
+		_ = os.RemoveAll(staging)
+		// An empty Data/fdb is the normal state of a fresh install and of the
+		// first save after one, so it is not worth a line that reads like a
+		// failure. Only say something when there was data and it could not be
+		// linked.
+		if err != nil || failed > 0 {
+			log.Printf("filedb: data snapshot produced nothing (linked=%d failed=%d err=%v)", linked, failed, err)
+		}
+		return
+	}
+	// Keep the index beside the data so a restore is self-contained.
+	masterPath := filepath.Join(db.DataDir, "masterDb.bz")
+	if _, serr := os.Stat(masterPath); serr == nil {
+		if lerr := os.Link(masterPath, filepath.Join(staging, "masterDb.bz")); lerr != nil {
+			_ = copyFileAtomic(masterPath, filepath.Join(staging, "masterDb.bz"))
+		}
+	}
+	if err := os.Rename(staging, final); err != nil {
+		_ = os.RemoveAll(staging)
+		log.Printf("filedb: data snapshot could not be published: %v", err)
+		return
+	}
+	if failed > 0 {
+		log.Printf("filedb: data snapshot %s — %d buckets linked, %d could not be (is Data/backup on another filesystem?)", today, linked, failed)
+	} else {
+		log.Printf("filedb: data snapshot %s — %d buckets", today, linked)
+	}
+	db.pruneDataSnapshots(backupRoot)
+}
+
+// pruneDataSnapshots drops snapshots older than dataSnapshotKeepDays, and any
+// .partial left by an interrupted run.
+func (db *DB) pruneDataSnapshots(backupRoot string) {
+	entries, err := os.ReadDir(backupRoot)
+	if err != nil {
+		return
+	}
+	cutoff := time.Now().AddDate(0, 0, -dataSnapshotKeepDays)
+	for _, e := range entries {
+		name := e.Name()
+		if !strings.HasPrefix(name, "fdb-") {
+			continue
+		}
+		if strings.HasSuffix(name, ".partial") {
+			_ = os.RemoveAll(filepath.Join(backupRoot, name))
+			continue
+		}
+		t, perr := time.Parse("02-01-2006", strings.TrimPrefix(name, "fdb-"))
+		if perr != nil {
+			continue
+		}
+		if t.Before(cutoff) {
+			_ = os.RemoveAll(filepath.Join(backupRoot, name))
+		}
+	}
 }
