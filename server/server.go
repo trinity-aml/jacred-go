@@ -276,6 +276,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/schedule", s.handleSchedulePage)
 	mux.HandleFunc("/admin/scheduler", s.handleAdminScheduler)
 	mux.HandleFunc("/admin/cf-domains", s.handleAdminCFDomains)
+	mux.HandleFunc("/admin/backup", s.handleAdminBackup)
+	mux.HandleFunc("/admin/backup/restore", s.handleAdminBackupRestore)
 
 	// pprof: live heap/goroutine/CPU profiling. Routes are gated by the
 	// middleware's local-only check (see isLocalOnlyPath: "/debug/") and by

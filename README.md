@@ -1434,6 +1434,68 @@ jq '.log = true' current.json | curl -X POST -H 'Content-Type: application/json'
 
 Responses: `{"ok": true}` on success, `{"ok": false, "error": "..."}` on failure. The JSON writer normalizes to the structure `init.yaml` parser expects — existing comments in `init.yaml` are lost on save (the file is regenerated from the config struct).
 
+### `GET /admin/backup`, `POST /admin/backup/restore`
+
+Exports and restores the settings and state — the half of an installation that
+nothing can re-derive. Local-only, and reachable from **Settings → Бэкап
+настроек**.
+
+The archive is a `tar.gz` of kilobytes holding `init.yaml`, the scheduler file
+*with its comments*, `Data/temp/cf_auto.json`, `tracker_runs.json`, the
+`*_taskParse.json` page maps and the `*_parseAllCycle.json` cursors, plus a
+`MANIFEST.json`. `stats.json` is deliberately left out — it is derived from the
+database and rebuilt on a timer, so a restored stale copy would only mislead the
+stats page.
+
+**The database is deliberately not in it.** `Data/fdb` has atomic writes and
+daily snapshots already, and failing both, the parsers put the records back — a
+cold sweep is slow but automatic. Nothing puts `init.yaml` back: the hosts, the
+hand-tuned `parseDelay` values, the crontab's measured timings. Size is the other
+half of the reason: the buckets expand 4.1x when decompressed (measured), so
+2.6M records are not something to move through a browser.
+
+```bash
+# Settings and state, no credentials
+curl -s -o jacred-settings.tar.gz "http://127.0.0.1:9117/admin/backup"
+
+# Including tracker passwords and live sessions
+curl -s -o secrets.tar.gz "http://127.0.0.1:9117/admin/backup?credentials=1"
+
+# Restore (raw body or a multipart file field, both work)
+curl -s -X POST --data-binary @jacred-settings.tar.gz \
+  "http://127.0.0.1:9117/admin/backup/restore"
+```
+
+**Credentials are opt-in and off by default.** `init.yaml` holds tracker
+passwords in clear text and `Data/cookie/` holds live sessions — a `cf_clearance`
+is a replayable credential, which is why this codebase refuses to log one. An
+archive in a downloads folder is a worse place for them than a log, so the
+default export carries none, records that in its manifest, and the full export
+is named `jacred-settings-secrets-*.tar.gz` so the two are not mixed up.
+
+Restoring a **credential-free** archive onto a working instance keeps the live
+passwords and cookies in place; without that, yesterday's settings would log
+every tracker out and the next run would be a wall of `work_login`. An archive
+that *does* carry credentials is the authority for them.
+
+Four things the restore refuses or protects, each for a reason that has already
+bitten something here:
+
+- **Member names are whitelisted, never cleaned and reused.** An uploaded archive
+  is attacker-supplied; `../../etc/passwd` is rejected rather than sanitised.
+- **Validation happens before any write.** `init.yaml` has to load through the
+  same parser startup uses, and the schedule through the same one the scheduler
+  uses.
+- **A schedule with no runnable job is refused.** A line the parser does not
+  recognise is kept as *prose* — that is what preserves the measured-timing
+  comments — so a crontab whose job lines were all mistyped would write cleanly
+  and schedule nothing, silently.
+- **Writes are temp+rename, and the replaced file is kept** beside it as
+  `<name>.before-restore`.
+
+The response is a per-file report, and it answers **HTTP 500** if any member
+could not be written, so a partial restore is not mistaken for a complete one.
+
 ### `GET /admin/cf-domains`
 
 Returns the auto-detected CloudFlare domain registry — domains that returned a CF challenge during a standard fetch and were promoted to flaresolverr routing automatically. **Local IPs only.**

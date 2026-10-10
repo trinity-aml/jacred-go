@@ -425,6 +425,47 @@
           </div>
         </details>
 
+        <!-- Settings backup -->
+        <details class="section">
+          <summary>
+            <span>Бэкап настроек</span>
+            <svg class="chevron w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+          </summary>
+          <div class="body">
+            <p class="text-xs text-gray-500 dark:text-gray-400 mb-3 leading-relaxed">
+              Выгружает то, что нельзя воссоздать: <code>init.yaml</code>, файл расписания с его комментариями,
+              реестр CF-доменов, карты задач и курсоры обхода. Это килобайты.
+              Сама база в архив не входит — у неё есть атомарная запись и ежедневные снапшоты,
+              а записи возвращают парсеры.
+            </p>
+            <div class="checkbox-row">
+              <input type="checkbox" id="cb_backupCreds"/>
+              <label for="cb_backupCreds" title="Пароли трекеров лежат в init.yaml открытым текстом, а в Data/cookie — действующие сессии, включая cf_clearance.">включить пароли и сессии в архив</label>
+            </div>
+            <p id="backupCredsWarn" class="text-xs text-amber-600 dark:text-amber-500 mt-2 mb-3 leading-relaxed hidden">
+              Такой файл — носитель действующих credentials. Храните его там же, где пароли, а не в загрузках.
+            </p>
+            <div class="flex flex-wrap items-center gap-3 mt-3">
+              <button type="button" id="backupDownloadBtn"
+                class="inline-flex items-center gap-1.5 px-4 h-10 rounded-lg bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 text-sm font-medium transition-colors">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+                Скачать архив
+              </button>
+              <input type="file" id="backupFile" accept=".gz,.tgz,application/gzip" class="field-input max-w-xs"/>
+              <button type="button" id="backupRestoreBtn"
+                class="inline-flex items-center gap-1.5 px-4 h-10 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                Восстановить
+              </button>
+            </div>
+            <p class="text-xs text-gray-500 dark:text-gray-400 mt-3 leading-relaxed">
+              При восстановлении заменяемые файлы сохраняются рядом как <code>&lt;имя&gt;.before-restore</code>.
+              Архив без паролей не затирает действующие — они остаются на месте.
+            </p>
+            <pre id="backupReport" class="hidden mt-3 text-xs bg-gray-100 dark:bg-gray-800 rounded-lg p-3 overflow-x-auto"></pre>
+          </div>
+        </details>
+
         <div id="saveBar" class="flex flex-wrap items-center gap-3 justify-end">
           <span id="saveStatus" class="text-sm text-gray-500 dark:text-gray-400 flex-1 min-w-0"></span>
           <button type="button" id="reloadBtn"
@@ -666,6 +707,52 @@
           saveBtn.disabled = false;
         }
       }
+
+      // Settings backup. The download is a plain navigation so the browser
+      // handles the file; only the restore needs a fetch, because its answer is
+      // a per-file report worth showing.
+      const backupCreds = document.getElementById('cb_backupCreds');
+      const backupCredsWarn = document.getElementById('backupCredsWarn');
+      const backupFile = document.getElementById('backupFile');
+      const backupReport = document.getElementById('backupReport');
+
+      backupCreds.addEventListener('change', () => {
+        backupCredsWarn.classList.toggle('hidden', !backupCreds.checked);
+      });
+
+      document.getElementById('backupDownloadBtn').addEventListener('click', () => {
+        const url = '/admin/backup' + (backupCreds.checked ? '?credentials=1' : '');
+        window.location.assign(url);
+      });
+
+      document.getElementById('backupRestoreBtn').addEventListener('click', async () => {
+        const f = backupFile.files && backupFile.files[0];
+        if (!f) { showToast('Выберите файл архива', 'error'); return; }
+        if (!confirm('Восстановить настройки из «' + f.name + '»?\n\nТекущие init.yaml и расписание будут заменены (копии останутся рядом как .before-restore).')) {
+          return;
+        }
+        const btn = document.getElementById('backupRestoreBtn');
+        btn.disabled = true;
+        saveStatus.textContent = 'Восстановление…';
+        backupReport.classList.add('hidden');
+        try {
+          const r = await fetch('/admin/backup/restore', { method: 'POST', body: f });
+          const js = await r.json().catch(() => ({}));
+          backupReport.textContent = JSON.stringify(js, null, 2);
+          backupReport.classList.remove('hidden');
+          if (!r.ok || !js.ok) {
+            throw new Error(js.error || ('HTTP ' + r.status));
+          }
+          saveStatus.textContent = 'Восстановлено файлов: ' + (js.restored || []).length;
+          showToast('Настройки восстановлены', 'success');
+          await load();
+        } catch (e) {
+          saveStatus.textContent = '';
+          showToast('Ошибка: ' + e.message, 'error');
+        } finally {
+          btn.disabled = false;
+        }
+      });
 
       formEl.addEventListener('submit', e => { e.preventDefault(); save(); });
       reloadBtn.addEventListener('click', load);
