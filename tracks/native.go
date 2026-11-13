@@ -28,6 +28,7 @@ type NativeAnalyzer struct {
 	storage     *memStorage
 	infoWait    time.Duration
 	ffprobePath string // absolute path to ffprobe; empty falls back to PATH lookup
+	solveGate   chan struct{}
 }
 
 // NewNativeAnalyzer creates a single shared torrent.Client backed by an
@@ -48,7 +49,7 @@ func NewNativeAnalyzer(ffprobePath string) (*NativeAnalyzer, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &NativeAnalyzer{cl: cl, storage: mem, infoWait: 2 * time.Minute, ffprobePath: ffprobePath}, nil
+	return &NativeAnalyzer{cl: cl, storage: mem, infoWait: 2 * time.Minute, ffprobePath: ffprobePath, solveGate: make(chan struct{}, 1)}, nil
 }
 
 func (n *NativeAnalyzer) Close() {
@@ -82,6 +83,13 @@ func isVideoFile(name string) bool {
 func (n *NativeAnalyzer) Analyze(ctx context.Context, magnet string) (*FFProbeModel, error) {
 	if n == nil || n.cl == nil {
 		return nil, errors.New("native analyzer is not initialised")
+	}
+	// The five task loops share one client and one bounded in-memory probe.
+	select {
+	case n.solveGate <- struct{}{}:
+		defer func() { <-n.solveGate }()
+	case <-ctx.Done():
+		return nil, ctx.Err()
 	}
 	spec, err := torrent.TorrentSpecFromMagnetUri(strings.TrimSpace(magnet))
 	if err != nil {
@@ -117,12 +125,11 @@ func (n *NativeAnalyzer) Analyze(ctx context.Context, magnet string) (*FFProbeMo
 		return nil, errors.New("no video file in torrent")
 	}
 
+	// Reader demand supplies priorities for just the ranges ffprobe reads.
+	// Normal priority on the video would download the entire movie into RAM.
 	for _, f := range t.Files() {
-		if f != biggest {
-			f.SetPriority(torrent.PiecePriorityNone)
-		}
+		f.SetPriority(torrent.PiecePriorityNone)
 	}
-	biggest.SetPriority(torrent.PiecePriorityNormal)
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -157,6 +164,7 @@ func (n *NativeAnalyzer) Analyze(ctx context.Context, magnet string) (*FFProbeMo
 	}
 	cmd := exec.CommandContext(probeCtx, bin,
 		"-v", "error",
+		"-probesize", "33554432", "-analyzeduration", "10000000",
 		"-print_format", "json",
 		"-show_streams",
 		"-i", streamURL,
@@ -194,9 +202,10 @@ func newMemStorage() *memStorage {
 
 func (s *memStorage) OpenTorrent(_ context.Context, info *metainfo.Info, infoHash metainfo.Hash) (storage.TorrentImpl, error) {
 	num := info.NumPieces()
+	budget := &pieceBudget{limit: 128 << 20}
 	pieces := make([]*memPiece, num)
 	for i := 0; i < num; i++ {
-		pieces[i] = &memPiece{size: info.Piece(i).V1Length()}
+		pieces[i] = &memPiece{size: info.Piece(i).V1Length(), budget: budget}
 	}
 	mt := &memTorrent{pieces: pieces}
 	s.mu.Lock()
@@ -227,12 +236,32 @@ type memTorrent struct {
 	pieces []*memPiece
 }
 
+// A probe must never allocate the size of the video, even if it seeks widely.
+type pieceBudget struct {
+	mu          sync.Mutex
+	used, limit int64
+}
+
+func (b *pieceBudget) reserve(size int64) bool {
+	if b == nil {
+		return true
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if size > b.limit-b.used {
+		return false
+	}
+	b.used += size
+	return true
+}
+
 type memPiece struct {
 	mu       sync.Mutex
 	size     int64
 	data     []byte
 	complete bool
 	closed   bool
+	budget   *pieceBudget
 }
 
 func (p *memPiece) ReadAt(b []byte, off int64) (int, error) {
@@ -254,7 +283,13 @@ func (p *memPiece) WriteAt(b []byte, off int64) (int, error) {
 	if p.closed {
 		return len(b), nil
 	}
+	if off < 0 || off > p.size || int64(len(b)) > p.size-off {
+		return 0, io.ErrShortWrite
+	}
 	if p.data == nil {
+		if !p.budget.reserve(p.size) {
+			return 0, errors.New("probe piece memory budget exceeded")
+		}
 		p.data = make([]byte, p.size)
 	}
 	if off+int64(len(b)) > p.size {
