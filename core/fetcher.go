@@ -1616,9 +1616,30 @@ func (f *Fetcher) PostViaBrowser(ctx context.Context, rawURL, postData, cookie s
 		return "", "", fmt.Errorf("flaresolverr service not initialized")
 	}
 	domain := extractDomain(rawURL)
-	if remaining, blocked := flareCooldownRemaining(domain); blocked {
-		return "", "", fmt.Errorf("flaresolverr: %s in cooldown for %s", domain, remaining.Round(time.Second))
-	}
+	// Deliberately NOT gated on flareCooldownRemaining, unlike every page
+	// fetch. Both callers of this are login paths, and for a login the
+	// cooldown was answering the wrong question.
+	//
+	// The cooldown exists so that a parser does not hammer a browser that just
+	// failed with hundreds of page renders. A login is one request, it happens
+	// once per run, and it is the gate for the whole tracker: refusing it does
+	// not save the browser any meaningful work, it just loses the run — and it
+	// loses it with a message about Cloudflare, which is not what went wrong.
+	//
+	// Measured on the production box, 2026-11-13: the WebDriver stalled twice
+	// (`The browser stopped responding after 44.1 seconds`, then 52.0), which
+	// opened the 3-minute cooldown; at 16:10 the scheduler's UpdateTasksParse
+	// had its login POST challenged, the browser fallback was refused with
+	// `in cooldown for 59s`, and /trackers reported `work_login — cloudflare
+	// challenge on the login form` for the next three hours. The credentials
+	// were fine and the login form was fine; a browser stall seventeen minutes
+	// earlier was the whole cause. The same shape had already been recorded
+	// for kinozal that morning and left unfixed.
+	//
+	// A failure here still calls markFlareFailure below, so a genuinely dead
+	// browser keeps page fetches out — that half of the cooldown is correct and
+	// stays. If a non-login caller is ever added, it has to decide this again
+	// rather than inherit the exemption.
 
 	dm := getDomainLock(domain)
 	dm.Lock()
@@ -1686,9 +1707,10 @@ func (f *Fetcher) SolveForLogin(ctx context.Context, rawURL string) (cookies, us
 		return "", "", "", "", fmt.Errorf("flaresolverr service not initialized")
 	}
 	domain := extractDomain(rawURL)
-	if remaining, blocked := flareCooldownRemaining(domain); blocked {
-		return "", "", "", "", fmt.Errorf("flaresolverr: %s in cooldown for %s", domain, remaining.Round(time.Second))
-	}
+	// Not gated on the cooldown, for the reason spelled out in full on
+	// PostViaBrowser: this is a login path, and a cooldown opened by an
+	// unrelated page stall must not be reported as a Cloudflare problem with
+	// the credentials. A failure here still marks the domain.
 	dm := getDomainLock(domain)
 	dm.Lock()
 	defer dm.Unlock()
@@ -1783,9 +1805,10 @@ func (f *Fetcher) LoginViaFlare(ctx context.Context, rawURL, postData string) (c
 		return "", "", "", fmt.Errorf("flaresolverr service not initialized")
 	}
 	domain := extractDomain(rawURL)
-	if remaining, blocked := flareCooldownRemaining(domain); blocked {
-		return "", "", "", fmt.Errorf("flaresolverr: %s in cooldown for %s after recent failure", domain, remaining.Round(time.Second))
-	}
+	// Not gated on the cooldown, for the reason spelled out in full on
+	// PostViaBrowser: this is a login path, and a cooldown opened by an
+	// unrelated page stall must not be reported as a Cloudflare problem with
+	// the credentials. A failure here still marks the domain.
 
 	dm := getDomainLock(domain)
 	dm.Lock()
