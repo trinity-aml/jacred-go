@@ -42,13 +42,14 @@ type TorrentInfo struct {
 }
 
 type DB struct {
-	Config   app.Config
-	cfgMu    sync.RWMutex
-	DataDir  string
-	mu       sync.RWMutex
-	saveMu   sync.Mutex // serializes concurrent SaveChangesToFile calls
-	masterDb map[string]TorrentInfo
-	fastdb   map[string][]string
+	Config        app.Config
+	cfgMu         sync.RWMutex
+	DataDir       string
+	mu            sync.RWMutex
+	saveMu        sync.Mutex // serializes concurrent SaveChangesToFile calls
+	masterDb      map[string]TorrentInfo
+	fastdb        map[string][]string
+	masterVersion uint64 // protected by mu; changes on every index mutation
 	// keyShards holds a fixed pool of mutexes. We hash bucket keys into a
 	// slot to serialize writes, instead of allocating a fresh *sync.Mutex
 	// per key. The old sync.Map design leaked one mutex per distinct key
@@ -68,8 +69,11 @@ type DB struct {
 	dirtyBuckets map[string]*dirtyEntry
 
 	// Sorted masterDb cache: rebuilt every 10 minutes in background.
-	orderedMu    sync.RWMutex
-	orderedCache []MasterEntry
+	orderedMu      sync.RWMutex
+	orderedCache   []MasterEntry
+	orderedVersion uint64
+	orderedReady   bool
+	orderedBuildMu sync.Mutex
 }
 
 // dirtyEntry holds a bucket that has been modified but not yet flushed to disk.
@@ -291,6 +295,7 @@ func (db *DB) RebuildIndexes() error {
 	db.mu.Lock()
 	db.masterDb = master
 	db.fastdb = fast
+	db.masterVersion++
 	db.mu.Unlock()
 	return nil
 }

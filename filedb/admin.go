@@ -68,7 +68,18 @@ func (db *DB) OrderedMasterEntries() []MasterEntry {
 
 // rebuildOrderedCache sorts masterDb and stores in orderedCache. Returns the new slice.
 func (db *DB) rebuildOrderedCache() []MasterEntry {
+	db.orderedBuildMu.Lock()
+	defer db.orderedBuildMu.Unlock()
 	db.mu.RLock()
+	version := db.masterVersion
+	db.orderedMu.RLock()
+	if db.orderedReady && db.orderedVersion == version {
+		cached := db.orderedCache
+		db.orderedMu.RUnlock()
+		db.mu.RUnlock()
+		return cached
+	}
+	db.orderedMu.RUnlock()
 	out := make([]MasterEntry, 0, len(db.masterDb))
 	for k, v := range db.masterDb {
 		out = append(out, MasterEntry{Key: k, Value: v})
@@ -82,6 +93,8 @@ func (db *DB) rebuildOrderedCache() []MasterEntry {
 	})
 	db.orderedMu.Lock()
 	db.orderedCache = out
+	db.orderedVersion = version
+	db.orderedReady = true
 	db.orderedMu.Unlock()
 	return out
 }
@@ -135,8 +148,9 @@ func (db *DB) RemoveKeyFromMasterDb(key string) {
 			db.fastdb[part] = filtered
 		}
 	}
-	db.mu.Unlock()
+	db.masterVersion++
 	db.dirty.Store(true)
+	db.mu.Unlock()
 }
 
 const masterDbSaveInterval = 5 * time.Minute
@@ -167,6 +181,7 @@ func (db *DB) doSave() error {
 	// Flush dirty buckets to disk before saving masterDb
 	db.FlushDirtyBuckets()
 	db.mu.RLock()
+	version := db.masterVersion
 	master := make(map[string]TorrentInfo, len(db.masterDb))
 	for k, v := range db.masterDb {
 		master[k] = v
@@ -217,7 +232,10 @@ func (db *DB) doSave() error {
 		_ = os.Remove(tmp)
 		return err
 	}
-	db.dirty.Store(false)
+	// A writer may have changed the live index while this snapshot was encoded.
+	db.mu.Lock()
+	db.dirty.Store(db.masterVersion != version)
+	db.mu.Unlock()
 	db.lastSaved.Store(time.Now().UnixNano())
 	db.dailyBackup(path)
 	if db.fdbLog != nil {
@@ -338,12 +356,20 @@ func (db *DB) RunBackgroundJobs(ctx context.Context) {
 			}
 			return
 		case <-flushTicker.C:
-			if n := db.FlushDirtyBuckets(); n > 0 {
-				log.Printf("filedb: flushed %d dirty buckets", n)
-			}
+			db.persistPendingChanges()
 		case <-cacheTicker.C:
 			db.rebuildOrderedCache()
 		}
+	}
+}
+
+// Local crawlers need index persistence even when external sync is disabled.
+func (db *DB) persistPendingChanges() {
+	if n := db.FlushDirtyBuckets(); n > 0 {
+		log.Printf("filedb: flushed %d dirty buckets", n)
+	}
+	if err := db.SaveChangesToFile(); err != nil {
+		log.Printf("filedb: periodic index save failed: %v", err)
 	}
 }
 

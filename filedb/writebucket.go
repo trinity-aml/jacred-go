@@ -162,6 +162,8 @@ func (db *DB) saveBucketInternal(key string, bucket map[string]TorrentDetails, u
 				db.fastdb[part] = filtered
 			}
 		}
+		db.masterVersion++
+		db.dirty.Store(true)
 		db.mu.Unlock()
 		return nil
 	}
@@ -183,6 +185,7 @@ func (db *DB) saveBucketInternal(key string, bucket map[string]TorrentDetails, u
 	db.mu.Lock()
 	db.masterDb[key] = TorrentInfo{UpdateTime: updatedAt.UTC(), FileTime: ToFileTimeUTC(updatedAt.UTC())}
 	db.dirty.Store(true)
+	db.masterVersion++
 	for _, part := range strings.Split(key, ":") {
 		part = strings.TrimSpace(part)
 		if part == "" {
