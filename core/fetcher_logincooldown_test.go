@@ -88,3 +88,40 @@ func funcSource(src, marker string) string {
 	}
 	return rest
 }
+
+// A challenge on a domain already known to refuse the replay must not be read
+// as a stale cookie. The two cases are distinguished only by their order in
+// one switch — Go evaluates the cases top to bottom — so what this guards is
+// that order, which no type or signature can express.
+//
+// Getting it wrong is expensive and quiet: the bare `case challenged` calls
+// clearFlareSession, so the next browser trip is a cold solve (8 s and a
+// browser launch) in place of a render (2 s), and a cold solve is the shape
+// that stalls the browser and opens the 3-minute cooldown that loses the rest
+// of the sweep. Verified by swapping the two cases.
+func TestAProbeChallengeDoesNotDropTheSession(t *testing.T) {
+	src, err := os.ReadFile("fetcher.go")
+	if err != nil {
+		t.Fatalf("read fetcher.go: %v", err)
+	}
+	body := string(src)
+	hostile := strings.Index(body, "case challenged && replayHostile(domain):")
+	if hostile < 0 {
+		t.Fatal("fetchViaFlare no longer has a case for a challenge on a replay-hostile domain — a condemned domain's probe will drop its session and pay a cold solve")
+	}
+	bare := strings.Index(body, "\n\t\t\tcase challenged:")
+	if bare < 0 {
+		t.Fatal(`cannot find the bare "case challenged:" arm — adjust this guard rather than deleting it`)
+	}
+	if hostile > bare {
+		t.Fatalf("the replay-hostile case is at %d, after the bare challenged case at %d — Go takes the first match, so a condemned domain's probe falls into the stale-cookie branch and re-solves", hostile, bare)
+	}
+	// And the hostile arm must not be the one that clears the session.
+	arm := body[hostile:bare]
+	if strings.Contains(arm, "clearFlareSession") {
+		t.Error("the replay-hostile arm clears the session — that is the behaviour it exists to avoid")
+	}
+	if !strings.Contains(arm, "sessionWasValid = true") {
+		t.Error("the replay-hostile arm does not keep the session valid, so the next browser trip is a cold solve rather than a render")
+	}
+}

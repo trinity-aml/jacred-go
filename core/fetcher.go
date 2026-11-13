@@ -947,6 +947,9 @@ func (f *Fetcher) doHTTP(method, rawURL, cookie, userAgent, contentType string, 
 	for k, v := range extraHeaders {
 		req.Header.Set(k, v)
 	}
+	// After the caller's headers, so anything it set stays; before the order
+	// is applied, so the names it adds are actually ordered.
+	applyChromeNavigationHeaders(req.Header, rawURL)
 	applyChromeHeaderOrder(req.Header)
 
 	resp, err := client.Do(req)
@@ -1036,8 +1039,27 @@ func (f *Fetcher) fetchViaFlare(rawURL, cookie string, extraHeaders map[string]s
 				default:
 					log.Printf("flaresolverr: %s challenged a clearance issued %s ago — rendering this page in the browser, but keeping the replay for the next one", domain, age.Round(time.Second))
 				}
+			case challenged && replayHostile(domain):
+				// This is the five-minute probe of a condemned domain, and
+				// its challenge says nothing about the cookie's age: the
+				// replay is refused here whatever we send. Measured on
+				// bitru.org 2026-11-13 — a clearance minted seconds earlier
+				// answers `403 cf-mitigated: challenge` ("Just a moment…")
+				// three times out of three while the browser renders the same
+				// page, 139 KB, with the same cookie set.
+				//
+				// So dropping the session buys nothing and costs the
+				// difference between a render (flareRenderWait, 2 s) and a
+				// cold solve (flareSolveWait, 8 s plus a browser launch) —
+				// and a cold solve is also the shape that stalls the browser,
+				// which opens the 3-minute cooldown, which loses the rest of
+				// the sweep. The probe is meant to spend one request, not a
+				// solve.
+				sessionWasValid = true
+				log.Printf("flaresolverr: %s replay probe still challenged (age=%s) — keeping the session, staying on the browser", domain, age.Round(time.Second))
 			case challenged:
-				// Old enough to have genuinely expired.
+				// Old enough to have genuinely expired, and no standing
+				// evidence that this domain refuses the replay outright.
 				f.clearFlareSession(domain)
 				log.Printf("flaresolverr: %s cookie replay got a challenge (status=%d, age=%s) — cookies stale, re-solving", domain, res.StatusCode, age.Round(time.Second))
 			case err != nil:

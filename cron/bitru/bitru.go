@@ -665,6 +665,19 @@ func (p *Parser) fetchBrowse(ctx context.Context, cat string, page int) (string,
 			log.Printf("bitru: flaresolverr unavailable status=503 url=%s", urlv)
 			return "", fmt.Errorf("bitru flaresolverr unavailable")
 		}
+		// 429 is bitru's own rate limit, not Cloudflare and not our cookies.
+		// This parser already treats it as a quota on api.php?download=
+		// (errRateLimited, waited out rather than retried blind); browse.php
+		// answers it too, with a 17-byte body. Invalidating the session on it
+		// throws away a working clearance and buys a cold solve — 8 s in the
+		// browser plus the launch, which is the shape that stalls it — for a
+		// condition the cookie had nothing to do with. Measured on the
+		// production box 2026-11-13: one such invalidation, immediately
+		// followed by `session invalidated for bitru.org` and a cold solve.
+		if status == 429 {
+			log.Printf("bitru: rate limited status=429 bodyLen=%d url=%s — keeping the session", len(body), urlv)
+			return "", fmt.Errorf("bitru rate limited (429)")
+		}
 		// CF block (403 or challenge-body 200) or unknown — cookies likely
 		// stale; invalidate and retry once.
 		if attempt == 0 {
