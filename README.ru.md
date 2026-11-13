@@ -104,7 +104,7 @@ jacred-{version}-{gitSHA}.tar.gz   ← бинарники + init.yaml.example
 ### Глобальные настройки
 
 ```yaml
-listenip: "any"              # IP для привязки ("any" = 0.0.0.0)
+listenip: "any"              # IP для привязки; "any" или пусто = все интерфейсы
 listenport: 9117             # Порт прослушивания
 apikey: ""                   # API-ключ для /api/v1.0/* (пусто = без авторизации)
 devkey: ""                   # Ключ для dev-эндпоинтов (пусто = только локальный IP)

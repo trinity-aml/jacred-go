@@ -547,7 +547,10 @@ func (s *Server) handleJackett(w http.ResponseWriter, r *http.Request) {
 	}
 	q := r.URL.Query()
 	categoryRaw := firstCategoryValue(q)
-	query := firstQueryURL(q, "query", "q")
+	// Jackett's own API spells it `Query`, and url.Values.Get is a plain map
+	// lookup — case-sensitive — so a client sending Query= used to get an empty
+	// query and no results. Every spelling has to be listed (from PR #1).
+	query := firstQueryURL(q, "query", "Query", "q")
 	params := filedb.SearchParams{
 		APIKey:        firstQueryURL(q, "apikey", "apiKey"),
 		Query:         query,

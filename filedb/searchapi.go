@@ -70,7 +70,6 @@ func (db *DB) MasterEntries() map[string]TorrentInfo {
 }
 
 func (db *DB) JackettSearch(p SearchParams) (JackettResult, error) {
-	fastdb := db.FastDB()
 	torrents := make(map[string]TorrentDetails, 64)
 	rqnum := p.IsSerial == -1 && p.UserAgent == "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/106.0.0.0 Safari/537.36"
 
@@ -108,17 +107,7 @@ func (db *DB) JackettSearch(p SearchParams) (JackettResult, error) {
 	if strings.TrimSpace(title) != "" || strings.TrimSpace(titleOriginal) != "" {
 		n := core.SearchName(title)
 		o := core.SearchName(titleOriginal)
-		keys := map[string]struct{}{}
-		updateKeys := func(k string) {
-			if k == "" {
-				return
-			}
-			for _, val := range fastdb[k] {
-				keys[val] = struct{}{}
-			}
-		}
-		updateKeys(n)
-		updateKeys(o)
+		keys := db.matchingShardKeys([]string{n, o}, false, 0)
 		for _, key := range db.limitKeysMap(keys) {
 			bucket, err := db.OpenRead(key)
 			if err != nil {
@@ -147,27 +136,11 @@ func (db *DB) JackettSearch(p SearchParams) (JackettResult, error) {
 		s := core.SearchName(query)
 		if s != "" {
 			torrentsSearch := func(exact, exactdb bool) {
-				var keys map[string]struct{}
-				if exactdb {
-					if vals, ok := fastdb[s]; ok && len(vals) > 0 {
-						keys = map[string]struct{}{}
-						for _, val := range vals {
-							keys[val] = struct{}{}
-						}
-					}
-				} else {
-					keys = map[string]struct{}{}
-					for fk, fv := range fastdb {
-						if strings.Contains(fk, s) {
-							for _, k := range fv {
-								keys[k] = struct{}{}
-							}
-							if db.limitReads() && len(keys) > db.GetConfig().MaxReadFile {
-								break
-							}
-						}
-					}
+				limit := 0
+				if !exactdb && db.limitReads() {
+					limit = db.GetConfig().MaxReadFile
 				}
+				keys := db.matchingShardKeys([]string{s}, !exactdb, limit)
 				for _, key := range db.limitKeysMap(keys) {
 					bucket, err := db.OpenRead(key)
 					if err != nil {
@@ -197,17 +170,9 @@ func (db *DB) JackettSearch(p SearchParams) (JackettResult, error) {
 				}
 			}
 
-			if isSerial == -1 {
-				torrentsSearch(false, true)
-				if len(torrents) == 0 {
-					torrentsSearch(false, false)
-				}
-			} else {
-				torrentsSearch(true, true)
-				if len(torrents) == 0 {
-					torrentsSearch(false, false)
-				}
-			}
+			// Free text is a partial title search even when an exact alias exists.
+			// Card requests above remain exact and year/type constrained.
+			torrentsSearch(false, false)
 		}
 	}
 
@@ -600,7 +565,7 @@ func matchJackettSearch(t TorrentDetails, isSerial, year int) bool {
 		}
 		return true
 	default:
-		return true
+		return matchJackettExact(t, isSerial, year)
 	}
 }
 

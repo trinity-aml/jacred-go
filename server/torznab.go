@@ -116,14 +116,14 @@ func (s *Server) handleTorznab(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	query := firstQueryURL(q, "q", "query")
+	query := firstQueryURL(q, "q", "query", "Query")
 	title := q.Get("title")
 	titleOriginal := q.Get("title_original")
 	if strings.TrimSpace(query) == "" && strings.TrimSpace(title) == "" && strings.TrimSpace(titleOriginal) == "" {
 		// A bare feed request with nothing to search for. Clients send this on
 		// "Test", and an empty channel is a valid answer that keeps the test
 		// green without running a wildcard query across the whole database.
-		writeXML(w, torznabRSS("", origin, apiURL))
+		writeXML(w, torznabRSS("", origin, apiURL, 0, 0))
 		return
 	}
 
@@ -153,7 +153,7 @@ func (s *Server) handleTorznab(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		// A broken search must not look like "nothing found": a client would
 		// cache the empty feed and stop asking.
-		writeXMLStatus(w, http.StatusInternalServerError, torznabRSS("", origin, apiURL))
+		writeXMLStatus(w, http.StatusInternalServerError, torznabRSS("", origin, apiURL, 0, 0))
 		return
 	}
 	// Same fallbacks as the other two search paths — one list, in
@@ -176,10 +176,17 @@ func (s *Server) handleTorznab(w http.ResponseWriter, r *http.Request) {
 	if !aggregateIndexerNames[strings.ToLower(indexer)] {
 		items = filterByTracker(items, indexer)
 	}
-	items = applyTorznabWindow(items, q)
+	// Drop what a client cannot act on, and do it before the window so that
+	// `total` describes what is actually on offer. Taken from PR #1: a details
+	// page is not a downloadable enclosure, and emitting one as <link> hands
+	// the client a URL it will fail on. Every record here normally carries a
+	// magnet, so this is a guard rather than a filter.
+	items = withDownloadableLink(items)
+	total := len(items)
+	items, offset := applyTorznabWindow(items, q)
 
 	cat := assignedCategory(t, q)
-	body := torznabRSS(s.torznabItems(items, res.RqNum, cat, cfg.Torznab.EnrichTitles), origin, apiURL)
+	body := torznabRSS(s.torznabItems(items, res.RqNum, cat, cfg.Torznab.EnrichTitles), origin, apiURL, offset, total)
 	s.cache.Set(cacheKey, []byte(body))
 	writeXML(w, body)
 }
@@ -210,7 +217,7 @@ func filterByTracker(items []filedb.TorrentDetails, indexer string) []filedb.Tor
 // applyTorznabWindow applies offset/limit, which caps advertises as max 1000
 // and default 100. The search itself returns everything it found, so without
 // this a client asking for a page would get the lot.
-func applyTorznabWindow(items []filedb.TorrentDetails, q map[string][]string) []filedb.TorrentDetails {
+func applyTorznabWindow(items []filedb.TorrentDetails, q map[string][]string) ([]filedb.TorrentDetails, int) {
 	get := func(k string) int {
 		if v, ok := q[k]; ok && len(v) > 0 {
 			return atoi(v[0])
@@ -222,7 +229,7 @@ func applyTorznabWindow(items []filedb.TorrentDetails, q map[string][]string) []
 		offset = 0
 	}
 	if offset >= len(items) {
-		return nil
+		return nil, offset
 	}
 	items = items[offset:]
 	limit := get("limit")
@@ -235,7 +242,7 @@ func applyTorznabWindow(items []filedb.TorrentDetails, q map[string][]string) []
 	if limit < len(items) {
 		items = items[:limit]
 	}
-	return items
+	return items, offset
 }
 
 // assignedCategory is the category a client's search mode implies, which wins
@@ -310,7 +317,11 @@ func torznabIndexerEntry(id, title, description string) string {
 `
 }
 
-func torznabRSS(itemsXML, origin, apiURL string) string {
+// torznabRSS wraps the items. offset and total are reported in
+// <torznab:response>, which is how a client knows there is a next page: a feed
+// that simply ends looks identical to one that was truncated by `limit`.
+// Mine shipped without it; PR #1 had it.
+func torznabRSS(itemsXML, origin, apiURL string, offset, total int) string {
 	return xmlHeader + `<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:torznab="http://torznab.com/schemas/2015/feed">
   <channel>
     <atom:link href="` + xmlEscape(strings.TrimRight(apiURL, "/")) + `" rel="self" type="application/rss+xml"/>
@@ -319,8 +330,20 @@ func torznabRSS(itemsXML, origin, apiURL string) string {
     <link>` + xmlEscape(strings.TrimRight(origin, "/")) + `/</link>
     <language>en-us</language>
     <category>search</category>
+    <torznab:response offset="` + strconv.Itoa(offset) + `" total="` + strconv.Itoa(total) + `"/>
 ` + itemsXML + `  </channel>
 </rss>`
+}
+
+// withDownloadableLink keeps only rows carrying a magnet.
+func withDownloadableLink(items []filedb.TorrentDetails) []filedb.TorrentDetails {
+	out := make([]filedb.TorrentDetails, 0, len(items))
+	for _, it := range items {
+		if strings.HasPrefix(strings.ToLower(asString(it["magnet"])), "magnet:") {
+			out = append(out, it)
+		}
+	}
+	return out
 }
 
 func (s *Server) torznabItems(items []filedb.TorrentDetails, rqnum bool, assignedCat string, enrich bool) string {
@@ -347,9 +370,6 @@ func (s *Server) torznabItem(src filedb.TorrentDetails, rqnum bool, assignedCat 
 
 	magnet := asString(t["magnet"])
 	details := asString(normalizeDetailURL(t["url"]))
-	if magnet == "" {
-		magnet = details
-	}
 	tracker := asString(t["trackerName"])
 	if tracker == "" {
 		tracker = "jacred"

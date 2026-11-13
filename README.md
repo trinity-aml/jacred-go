@@ -104,7 +104,7 @@ Configuration file: `init.yaml` in working directory.
 ### Global Settings
 
 ```yaml
-listenip: "any"              # IP to bind ("any" = 0.0.0.0)
+listenip: "any"              # IP to bind; "any" or empty = every interface
 listenport: 9117             # Listening port
 apikey: ""                   # API key required for /api/v1.0/* (empty = no auth)
 devkey: ""                   # Key for dev endpoints (empty = local IP only)

@@ -137,7 +137,7 @@ func (s *Server) handleProwlarrSearch(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	query := firstQueryURL(q, "query", "q")
+	query := firstQueryURL(q, "query", "Query", "q")
 	title := q.Get("title")
 	titleOriginal := q.Get("title_original")
 	if strings.TrimSpace(query) == "" && strings.TrimSpace(title) == "" && strings.TrimSpace(titleOriginal) == "" {

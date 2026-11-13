@@ -188,20 +188,20 @@ func TestWindowAppliesOffsetAndLimit(t *testing.T) {
 	for i := range items {
 		items[i] = filedb.TorrentDetails{"title": strconv.Itoa(i)}
 	}
-	if got := applyTorznabWindow(items, map[string][]string{}); len(got) != 100 {
+	if got, _ := applyTorznabWindow(items, map[string][]string{}); len(got) != 100 {
 		t.Errorf("no limit given → %d rows, want the advertised default of 100", len(got))
 	}
-	if got := applyTorznabWindow(items, map[string][]string{"limit": {"5"}}); len(got) != 5 {
+	if got, _ := applyTorznabWindow(items, map[string][]string{"limit": {"5"}}); len(got) != 5 {
 		t.Errorf("limit=5 → %d rows", len(got))
 	}
-	if got := applyTorznabWindow(items, map[string][]string{"limit": {"9999"}}); len(got) != 250 {
+	if got, _ := applyTorznabWindow(items, map[string][]string{"limit": {"9999"}}); len(got) != 250 {
 		t.Errorf("limit above the advertised max → %d rows, want all 250", len(got))
 	}
-	got := applyTorznabWindow(items, map[string][]string{"offset": {"248"}, "limit": {"10"}})
+	got, _ := applyTorznabWindow(items, map[string][]string{"offset": {"248"}, "limit": {"10"}})
 	if len(got) != 2 || asString(got[0]["title"]) != "248" {
 		t.Errorf("offset past the tail → %v", got)
 	}
-	if got := applyTorznabWindow(items, map[string][]string{"offset": {"9999"}}); len(got) != 0 {
+	if got, _ := applyTorznabWindow(items, map[string][]string{"offset": {"9999"}}); len(got) != 0 {
 		t.Errorf("offset beyond the end → %d rows", len(got))
 	}
 }
@@ -254,11 +254,13 @@ func TestPubDateFallsBackToNow(t *testing.T) {
 }
 
 // Without an infohash the guid still has to be stable, or a client re-grabs the
-// same row every time it refreshes.
+// same row every time it refreshes. A magnet with no `xt` is the realistic
+// shape for that — a row with no magnet at all never reaches rendering, because
+// withDownloadableLink drops it.
 func TestGuidIsStableWithoutAnInfohash(t *testing.T) {
 	s := newJobTestServer(t)
 	rec := sampleRecord()
-	rec["magnet"] = ""
+	rec["magnet"] = "magnet:?dn=no-infohash-here"
 	first := s.torznabItem(rec, false, "", true)
 	second := s.torznabItem(rec, false, "", true)
 	if first != second {
@@ -267,9 +269,15 @@ func TestGuidIsStableWithoutAnInfohash(t *testing.T) {
 	if strings.Contains(first, `<guid isPermaLink="false"></guid>`) {
 		t.Errorf("empty guid:\n%s", first)
 	}
-	// With no magnet the detail URL is the only thing left to hand a client.
-	if !strings.Contains(first, "<link>https://rutor.is/torrent/123</link>") {
-		t.Errorf("no magnet and no link:\n%s", first)
+	if !strings.Contains(first, "<link>magnet:?dn=no-infohash-here</link>") {
+		t.Errorf("the magnet did not reach the link:\n%s", first)
+	}
+	// And the row that has nothing to download is filtered out rather than
+	// offered with a details page in <link>, which a client would fail on.
+	bare := sampleRecord()
+	bare["magnet"] = ""
+	if got := withDownloadableLink([]filedb.TorrentDetails{bare}); len(got) != 0 {
+		t.Errorf("a magnet-less row survived the filter: %v", got)
 	}
 }
 
@@ -432,5 +440,44 @@ func TestTheCacheKeyIncludesTheIndexer(t *testing.T) {
 	}
 	if !strings.Contains(one, "indexers/rutor/results") {
 		t.Errorf("the per-tracker feed does not name its own URL:\n%s", truncate(one, 300))
+	}
+}
+
+// A feed that simply ends looks identical to one truncated by `limit`, so the
+// offset and total have to be stated. Taken from PR #1, which had this where
+// the first version of this endpoint did not.
+func TestFeedReportsOffsetAndTotal(t *testing.T) {
+	body := torznabRSS("", "https://jacred.example", "https://jacred.example/torznab/api", 100, 250)
+	if err := xml.Unmarshal([]byte(body), new(struct{})); err != nil {
+		t.Fatalf("not well-formed: %v", err)
+	}
+	if !strings.Contains(body, `<torznab:response offset="100" total="250"/>`) {
+		t.Errorf("pagination metadata missing:\n%s", truncate(body, 400))
+	}
+	// The window reports the offset it actually used, so the two cannot drift.
+	items := make([]filedb.TorrentDetails, 10)
+	for i := range items {
+		items[i] = filedb.TorrentDetails{"magnet": "magnet:?xt=urn:btih:" + strings.Repeat("a", 40)}
+	}
+	if _, off := applyTorznabWindow(items, map[string][]string{"offset": {"4"}}); off != 4 {
+		t.Errorf("window reported offset %d, want 4", off)
+	}
+	if _, off := applyTorznabWindow(items, map[string][]string{"offset": {"99"}}); off != 99 {
+		t.Errorf("an offset past the tail reported %d, want 99", off)
+	}
+}
+
+// A row a client cannot download must not be offered, and it must not be
+// counted in `total` either — otherwise the client pages through phantoms.
+func TestRowsWithoutAMagnetAreDropped(t *testing.T) {
+	items := []filedb.TorrentDetails{
+		{"magnet": "magnet:?xt=urn:btih:" + strings.Repeat("a", 40), "title": "good"},
+		{"magnet": "", "url": "https://rutor.is/torrent/1", "title": "no magnet"},
+		{"url": "https://rutor.is/torrent/2", "title": "no magnet field at all"},
+		{"magnet": "https://rutor.is/torrent/3", "title": "a details page, not a magnet"},
+	}
+	got := withDownloadableLink(items)
+	if len(got) != 1 || asString(got[0]["title"]) != "good" {
+		t.Errorf("withDownloadableLink kept %d rows: %v", len(got), got)
 	}
 }

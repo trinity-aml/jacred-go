@@ -365,7 +365,6 @@ func (db *DB) LastUpdateDB() string {
 	return max.UTC().Format("02.01.2006 15:04")
 }
 func (db *DB) Search(query, title, titleOriginal string, year, isSerial int) ([]TorrentDetails, error) {
-	fastdb := db.FastDB()
 	torrents := make(map[string]TorrentDetails, 64)
 	add := func(t TorrentDetails) {
 		url := asString(t["url"])
@@ -383,17 +382,7 @@ func (db *DB) Search(query, title, titleOriginal string, year, isSerial int) ([]
 	if title != "" || titleOriginal != "" {
 		n := core.SearchName(title)
 		o := core.SearchName(titleOriginal)
-		keys := map[string]struct{}{}
-		if n != "" {
-			for _, k := range fastdb[n] {
-				keys[k] = struct{}{}
-			}
-		}
-		if o != "" {
-			for _, k := range fastdb[o] {
-				keys[k] = struct{}{}
-			}
-		}
+		keys := db.matchingShardKeys([]string{n, o}, false, 0)
 		for key := range keys {
 			bucket, err := db.OpenRead(key)
 			if err != nil {
@@ -417,19 +406,9 @@ func (db *DB) Search(query, title, titleOriginal string, year, isSerial int) ([]
 		}
 	} else if strings.TrimSpace(query) != "" && len(strings.TrimSpace(query)) > 1 {
 		s := core.SearchName(query)
-		keys := map[string]struct{}{}
-		if exact, ok := fastdb[s]; ok && len(exact) > 0 {
-			for _, k := range exact {
-				keys[k] = struct{}{}
-			}
-		} else {
-			for fk, fv := range fastdb {
-				if strings.Contains(fk, s) {
-					for _, k := range fv {
-						keys[k] = struct{}{}
-					}
-				}
-			}
+		keys := db.matchingShardKeys([]string{s}, false, 0)
+		if len(keys) == 0 {
+			keys = db.matchingShardKeys([]string{s}, true, 0)
 		}
 		for key := range keys {
 			bucket, err := db.OpenRead(key)
