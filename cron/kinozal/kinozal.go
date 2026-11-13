@@ -17,6 +17,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"jacred/app"
 	"jacred/core"
@@ -130,6 +131,19 @@ type Parser struct {
 	lastLoginAttempt time.Time
 	loginBlockUntil  time.Time
 	loginBlockReason string
+
+	// quotaUntil is when to try get_srv_details.php again after the account's
+	// daily view limit answered. Once it is spent every further lookup in the
+	// run is answered the same way, so continuing to send them is ~800 pointless
+	// requests at the tracker (measured 2026-11-13: fetched=1250 failed=842).
+	//
+	// A window rather than a per-run flag, because the cap is daily: it expires
+	// on its own, it survives into the next run without any reset plumbing, and
+	// it costs one probe per window to notice the day has rolled over. Same
+	// shape as bitru's quota handling, which stops downloading and leaves the
+	// rest for the next pass.
+	quotaMu    sync.Mutex
+	quotaUntil time.Time
 }
 
 // domainKey is the session-store key for the configured host. It is derived on
@@ -198,7 +212,15 @@ func (p *Parser) Parse(ctx context.Context, page int) (ParseResult, error) {
 		res.Failed += f
 		log.Printf("kinozal: cat=%s fetched=%d added=%d skipped=%d failed=%d", cat, len(items), a, s, f)
 	}
-	log.Printf("kinozal: done fetched=%d added=%d skipped=%d failed=%d", res.Fetched, res.Added, res.Skipped, res.Failed)
+	// A run that lost its magnets to the account's daily cap is not a quiet
+	// day and not a parser fault either, so it says so rather than reporting a
+	// bare `ok` with a large `failed` — which on /trackers is indistinguishable
+	// from rows that are genuinely broken. Same treatment subsplease gives its
+	// throttling: a named status, not an error, because the listings did parse.
+	if p.viewLimitInForce() {
+		res.Status = "rate_limited"
+	}
+	log.Printf("kinozal: done fetched=%d added=%d skipped=%d failed=%d status=%s", res.Fetched, res.Added, res.Skipped, res.Failed, res.Status)
 	return res, nil
 }
 
@@ -652,25 +674,68 @@ func (p *Parser) saveTorrents(ctx context.Context, torrents []filedb.TorrentDeta
 	return added, updated, skipped, failed, nil
 }
 
+// viewLimitRe matches kinozal's daily view cap, whatever rank the account
+// holds: "Увы, вы Зритель. Вам доступно к просмотру всего 100 раздач в сутки",
+// "Опытный Зритель" with 150, and so on. It keys on the cap itself rather than
+// on the rank name, which changes as the account moves up.
+var viewLimitRe = regexp.MustCompile(`раздач в сутки`)
+
+// errViewLimit says the account has no views left today. Distinct from "no
+// magnet" because the two need different responses: one row is broken, the
+// other is an account cap nothing in this code can lift.
+var errViewLimit = errors.New("kinozal: the account's daily view limit is spent")
+
+// viewLimitCooldown is how long to stop asking after the daily cap answered.
+// Short enough that a run starting after midnight notices within the hour,
+// long enough that a multi-hour sweep spends a handful of probes rather than
+// hundreds.
+const viewLimitCooldown = 30 * time.Minute
+
+func (p *Parser) viewLimitInForce() bool {
+	p.quotaMu.Lock()
+	defer p.quotaMu.Unlock()
+	return time.Now().Before(p.quotaUntil)
+}
+
+// noteViewLimit opens the window and reports whether this is the first sighting
+// of it, so the explanation is logged once rather than once per row.
+func (p *Parser) noteViewLimit() bool {
+	p.quotaMu.Lock()
+	defer p.quotaMu.Unlock()
+	first := !time.Now().Before(p.quotaUntil)
+	p.quotaUntil = time.Now().Add(viewLimitCooldown)
+	return first
+}
+
 func (p *Parser) resolveMagnet(ctx context.Context, detailURL string) (string, error) {
 	idm := idURLRe.FindStringSubmatch(detailURL)
 	if len(idm) < 2 {
 		return "", nil
 	}
 	id := idm[1]
+	if p.viewLimitInForce() {
+		return "", errViewLimit
+	}
 	cookie := p.getCookie()
-	form := url.Values{}
-	form.Set("id", id)
-	form.Set("action", "2")
 	host := strings.TrimRight(requestHost(p.Config.Kinozal), "/")
 	reqURL := host + "/get_srv_details.php?id=" + id + "&action=2"
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
+	// GET, not POST. The id and action are already in the query string, so the
+	// form body this used to send was pure duplication — and a POST is the one
+	// shape that goes wrong on the browser path: flaresolverr's request.post
+	// in a shared Chromium session can answer with the previous browse tab
+	// instead of this response. Upstream's own comment says the same
+	// (KinozalSyncService.cs: "request.post is flaky in the shared Chromium
+	// session"), and kinozal's stale-tab behaviour is documented here already.
+	//
+	// It does **not** change the daily view limit below. Measured 2026-11-13
+	// against the live site with one session, two ids and both methods in
+	// crossed order: GET and POST returned the identical quota message every
+	// time. The method is not the variable, whatever issue #5 hoped.
 	res, err := p.Fetcher.Do(reqURL, p.Config.Kinozal, core.FetchOptions{
-		Method:       http.MethodPost,
-		Body:         []byte(form.Encode()),
-		ContentType:  "application/x-www-form-urlencoded",
+		Method:       http.MethodGet,
 		ExtraCookie:  cookie,
 		UserAgent:    kinozalUA(p.Config.Kinozal),
 		ExtraHeaders: kinozalHeaders(host),
@@ -679,18 +744,34 @@ func (p *Parser) resolveMagnet(ctx context.Context, detailURL string) (string, e
 		log.Printf("kinozal: resolveMagnet id=%s error: %v", id, err)
 		return "", err
 	}
-	// Server may return UTF-8 or CP1251 — try raw first
-	text := string(res.Body)
-	if !strings.Contains(text, "Инфо хеш") {
-		text = core.DecodeCP1251(res.Body)
-	}
+	// Sniff the encoding on the bytes, not on a success marker. This used to
+	// CP1251-decode anything that did not contain "Инфо хеш" — which is every
+	// failure body by definition — so a UTF-8 error message came out as
+	// mojibake in the log. get_srv_details.php serves UTF-8 where browse pages
+	// stay CP1251, so the failure path was the one that always got it wrong.
+	text := decodeKinozalBody(res.Body)
 	if m := hashRe.FindStringSubmatch(text); len(m) > 1 {
 		h := strings.TrimSpace(m[1])
 		if h != "" {
 			return "magnet:?xt=urn:btih:" + h, nil
 		}
 	}
-	// Log first failures for debugging
+	// The daily view limit is an account cap and looks the same on every row,
+	// so it is named once per run rather than per row. Reported as an error
+	// the caller can recognise, because "no magnet" and "the account has run
+	// out of views for today" need completely different responses — one is a
+	// broken row, the other is nothing the code can fix.
+	if viewLimitRe.MatchString(text) {
+		if p.noteViewLimit() {
+			log.Printf("kinozal: the account's daily view limit is spent — %q. No further "+
+				"magnet lookups for %s. Listings keep parsing and stored magnets keep being "+
+				"reused; only new rows are left without one, and they resolve on a later run. "+
+				"This is the account's rank, not a parser fault, and no request shape avoids "+
+				"it — GET and POST both get this answer (measured, issue #5).",
+				strings.TrimSpace(text), viewLimitCooldown)
+		}
+		return "", errViewLimit
+	}
 	if len(text) < 500 {
 		log.Printf("kinozal: resolveMagnet id=%s FAILED status=%d cookie=[%s] body=%q", id, res.StatusCode, core.CookieNames(cookie), text)
 	} else {
@@ -948,15 +1029,28 @@ func (p *Parser) loginViaBrowser(ctx context.Context, loginURL, postData, cookie
 	return out, nil
 }
 
-// decodeKinozalBody picks the right charset. Origin pages are CP1251, but a CF
-// interstitial is UTF-8 and a body that came back through flaresolverr was
-// already decoded by the browser.
+// decodeKinozalBody picks the right charset, and does it by looking at the
+// bytes rather than at what the decoded text happens to contain.
+//
+// Three body shapes arrive here and the byte test settles all of them: an
+// origin page is CP1251 and is not valid UTF-8; a CF interstitial is UTF-8; a
+// body that came back through flaresolverr was already decoded by the browser,
+// so it is UTF-8 too. Cyrillic CP1251 is high bytes with no valid UTF-8
+// sequences, which makes utf8.Valid a reliable discriminator rather than a
+// guess.
+//
+// It used to CP1251-decode first and keep that only if the result looked like a
+// kinozal *browse* page ("Кинозал" or the brand title). That worked for
+// listings and failed for everything else: get_srv_details.php serves UTF-8 and
+// carries neither marker, and resolveMagnet had a second copy of the idea
+// keyed on "Инфо хеш" — absent from every failure body by definition — so an
+// error message came out as mojibake in the log, which is how a plain daily
+// view limit read as a decoding bug (see issue #5).
 func decodeKinozalBody(body []byte) string {
-	text := core.DecodeCP1251(body)
-	if !strings.Contains(text, "Кинозал") && !kinozalTitleRe.MatchString(text) {
+	if utf8.Valid(body) {
 		return string(body)
 	}
-	return text
+	return core.DecodeCP1251(body)
 }
 
 // requireLogin resolves a session and names the reason when it cannot, so every

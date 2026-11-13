@@ -180,3 +180,151 @@ func TestNoSilentZeroInTheFetchPath(t *testing.T) {
 		}
 	}
 }
+
+// Issue #5 claimed the original avoids kinozal's daily view limit by using GET
+// where this port used POST. The original does use GET — its own comment gives
+// the reason, and it is flaresolverr's request.post being flaky in a shared
+// Chromium session, not the quota. Measured against the live site on
+// 2026-11-13 with one session, two ids and both methods in crossed order: GET
+// and POST returned the identical limit message every time.
+//
+// So the request is a GET now — the id and action were always in the query
+// string, so the form body was duplication, and a POST is the shape that can
+// come back as the previous browse tab — but nothing here pretends that lifts
+// the cap.
+func TestResolveMagnetUsesGet(t *testing.T) {
+	src, err := os.ReadFile("kinozal.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fn := funcBody(string(src), "func (p *Parser) resolveMagnet(")
+	if fn == "" {
+		t.Fatal("resolveMagnet not found in kinozal.go")
+	}
+	if strings.Contains(fn, "http.MethodPost") {
+		t.Error("resolveMagnet POSTs again: the params are already in the query string, " +
+			"and a POST through the shared browser session can answer with the previous tab")
+	}
+	if !strings.Contains(fn, "http.MethodGet") {
+		t.Error("resolveMagnet no longer names its method explicitly")
+	}
+}
+
+// The daily cap is an account fact that looks identical on every row, so it is
+// named once and then stops the lookups: 842 doomed requests in one measured
+// run is 842 requests at the tracker for nothing.
+func TestViewLimitIsRecognisedAndStopsAsking(t *testing.T) {
+	for _, body := range []string{
+		"Увы, вы Зритель. Вам доступно к просмотру всего 100 раздач в сутки.",
+		"Увы, вы Опытный Зритель. Вам доступно к просмотру всего 150 раздач в сутки",
+	} {
+		if !viewLimitRe.MatchString(body) {
+			t.Errorf("not recognised as the view limit: %q", body)
+		}
+	}
+	// It must key on the cap, not on a rank name that changes as the account
+	// moves up, and it must not fire on an ordinary details page.
+	for _, body := range []string{
+		"Инфо хеш: 0123456789abcdef0123456789abcdef01234567",
+		"Раздача удалена",
+		"",
+	} {
+		if viewLimitRe.MatchString(body) {
+			t.Errorf("false positive on %q", body)
+		}
+	}
+
+	p := &Parser{}
+	if p.viewLimitInForce() {
+		t.Fatal("the limit is in force before anything happened")
+	}
+	if !p.noteViewLimit() {
+		t.Error("the first sighting should report itself, so the explanation is logged")
+	}
+	if p.noteViewLimit() {
+		t.Error("a second sighting logged the explanation again")
+	}
+	if !p.viewLimitInForce() {
+		t.Error("the window did not open, so the next row would ask again")
+	}
+	// The window has to expire on its own: the cap is daily, and nothing resets
+	// this per run.
+	p.quotaUntil = time.Now().Add(-time.Second)
+	if p.viewLimitInForce() {
+		t.Error("the window did not expire")
+	}
+	if !p.noteViewLimit() {
+		t.Error("after expiry the next sighting should log again")
+	}
+}
+
+// A CP1251 browse page, a UTF-8 interstitial and a UTF-8 details body all have
+// to decode correctly. The old sniff kept a CP1251 decode only when the result
+// looked like a browse page, so every other body — including every failure
+// message — came out mangled.
+func TestBodyCharsetIsSniffedOnTheBytes(t *testing.T) {
+	utf8Body := "Увы, вы Зритель. Вам доступно к просмотру всего 100 раздач в сутки."
+	if got := decodeKinozalBody([]byte(utf8Body)); got != utf8Body {
+		t.Errorf("a UTF-8 body was mangled:\n got %q\nwant %q", got, utf8Body)
+	}
+	cp1251 := cp1251Bytes(t, "Кинозал.GURU — Инфо хеш")
+	if got := decodeKinozalBody(cp1251); !strings.Contains(got, "Кинозал") {
+		t.Errorf("a CP1251 body was not decoded: %q", got)
+	}
+	// And a details body in CP1251, which carries neither browse marker — the
+	// case the old sniff got wrong in the other direction.
+	cp1251Details := cp1251Bytes(t, "Инфо хеш: ABCDEF")
+	if got := decodeKinozalBody(cp1251Details); !strings.Contains(got, "Инфо хеш") {
+		t.Errorf("a CP1251 details body was not decoded: %q", got)
+	}
+}
+
+func cp1251Bytes(t *testing.T, s string) []byte {
+	t.Helper()
+	out := make([]byte, 0, len(s))
+	for _, r := range s {
+		switch {
+		case r < 128:
+			out = append(out, byte(r))
+		case r >= 'А' && r <= 'я':
+			out = append(out, byte(r-'А'+0xC0))
+		case r == '—':
+			out = append(out, 0x97)
+		default:
+			out = append(out, '?')
+		}
+	}
+	return out
+}
+
+// funcBody returns the source of the function starting at marker, up to the
+// next top-level func. Scanning the one function matters here: the file as a
+// whole still mentions http.MethodPost for the login, which is correct.
+func funcBody(src, marker string) string {
+	start := strings.Index(src, marker)
+	if start < 0 {
+		return ""
+	}
+	rest := src[start+len(marker):]
+	if end := strings.Index(rest, "\nfunc "); end >= 0 {
+		return rest[:end]
+	}
+	return rest
+}
+
+// A run that lost its magnets to the daily cap must not report a bare "ok":
+// on /trackers that is indistinguishable from rows that are genuinely broken.
+func TestParseReportsTheViewLimitAsAStatus(t *testing.T) {
+	src, err := os.ReadFile("kinozal.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fn := funcBody(string(src), "func (p *Parser) Parse(")
+	if fn == "" {
+		t.Fatal("Parse not found")
+	}
+	if !strings.Contains(fn, "viewLimitInForce()") || !strings.Contains(fn, `"rate_limited"`) {
+		t.Error("Parse no longer names the view limit in its status, so a capped run " +
+			"reports ok with a large failed and nothing says why")
+	}
+}
