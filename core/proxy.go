@@ -62,14 +62,31 @@ func (p FetchProfile) proxyURLWithAuth() (string, error) {
 	return u.String(), nil
 }
 
+// pickProxy resolves which proxy, if any, carries a request for rawURL.
+//
+// The two mechanisms are deliberately separate, and conflating them is what
+// sent two trackers through Tor in production (2026-11-13):
+//
+//   - A `pattern` scopes its entry to the URLs it matches. That scope holds
+//     for every tracker, opted in or not, and it is checked first because it
+//     is the more specific statement.
+//   - `useproxy: true` on a tracker opts it into the *default* proxy — an
+//     entry carrying no pattern. It must never reach a scoped entry.
+//
+// This used to take the first entry with a non-empty list the moment
+// useProxy was set, ignoring `pattern` entirely. DefaultConfig ships
+// `{pattern: \.onion, list: [socks5://127.0.0.1:9050]}`, so `useproxy: true`
+// silently meant "send this tracker through Tor" — on a config whose only
+// proxy statement was about .onion addresses. Measured consequence: the
+// cf_clearance minted by the browser on the box's own IP was replayed from a
+// rotating Tor exit, so Cloudflare challenged every replay and every login
+// POST, while the same code from the same LAN logged in first try when it
+// went out direct.
+//
+// Upstream keeps them apart for the same reason: `ResolveProxies`
+// (Infrastructure/Networking/HttpClient.cs) matches globalproxy by pattern
+// only, and `useproxy` selects a different setting entirely.
 func pickProxy(rawURL string, useProxy bool, cfg app.Config) (proxyURL string, useAuth bool, user, pass string) {
-	if useProxy {
-		for _, gp := range cfg.GlobalProxy {
-			if len(gp.List) > 0 {
-				return pickRandom(gp.List), gp.UseAuth, gp.Username, gp.Password
-			}
-		}
-	}
 	for _, gp := range cfg.GlobalProxy {
 		if gp.Pattern == "" || len(gp.List) == 0 {
 			continue
@@ -79,6 +96,14 @@ func pickProxy(rawURL string, useProxy bool, cfg app.Config) (proxyURL string, u
 			continue
 		}
 		if re.MatchString(rawURL) {
+			return pickRandom(gp.List), gp.UseAuth, gp.Username, gp.Password
+		}
+	}
+	if useProxy {
+		for _, gp := range cfg.GlobalProxy {
+			if gp.Pattern != "" || len(gp.List) == 0 {
+				continue
+			}
 			return pickRandom(gp.List), gp.UseAuth, gp.Username, gp.Password
 		}
 	}

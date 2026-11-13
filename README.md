@@ -289,7 +289,7 @@ Kinozal:
   fetchmode: ""                 # "flaresolverr" skips the first CF-detection roundtrip (a hint only)
   insecureSkipVerify: false     # Accept invalid/expired TLS certificates
   log: false                    # Log this tracker's requests
-  useproxy: false               # Route requests through globalproxy
+  useproxy: false               # Use the unpatterned globalproxy entry (see Proxy below)
 ```
 
 **Default hosts:**
@@ -332,8 +332,22 @@ globalproxy:
     useAuth: false
     username: ""
     password: ""
-    BypassOnLocal: true          # Skip proxy for 127.x / 192.168.x / 10.x
+    BypassOnLocal: true          # Parsed and written back, but nothing reads it
 ```
+
+`pattern` and the per-tracker `useproxy` are two different mechanisms. A
+`pattern` scopes its entry to the URLs that match it and applies to every
+tracker, opted in or not. An entry with **no** `pattern` is the default proxy,
+and that is the one — the only one — that `useproxy: true` selects. So the
+`\.onion` entry above never carries a tracker's ordinary traffic, however that
+tracker sets `useproxy`.
+
+> **Do not put a CF-gated tracker behind a proxy.** `cf_clearance` is bound to
+> the IP that solved it, and the browser that solves it does not use the proxy —
+> so every cookie replay and every login POST would arrive from an address the
+> clearance was never issued to, and Cloudflare challenges all of it. Measured
+> on kinozal and rutracker: unreachable login through a SOCKS proxy, successful
+> login on the first attempt direct, same binary and credentials.
 
 ---
 
