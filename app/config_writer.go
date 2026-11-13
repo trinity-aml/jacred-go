@@ -83,6 +83,12 @@ func MarshalYAML(cfg Config) string {
 	writeIndented(&b, 2, "dropCacheTake", cfg.Evercache.DropCacheTake)
 	b.WriteString("\n")
 
+	// Torznab XML endpoints
+	b.WriteString("torznab:\n")
+	writeIndented(&b, 2, "enable", cfg.Torznab.Enable)
+	writeIndented(&b, 2, "enrichTitles", cfg.Torznab.EnrichTitles)
+	b.WriteString("\n")
+
 	// FlareSolverr-go
 	b.WriteString("flaresolverr_go:\n")
 	if cfg.FlareSolverrGo.Headless != nil {

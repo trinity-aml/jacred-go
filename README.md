@@ -871,6 +871,98 @@ curl "http://127.0.0.1:9117/api/v2.0/indexers/jacred/results?q=Dune&year=2021"
 
 Response: `{ "Results": [...], "jacred": true }`
 
+### `GET /torznab/api`
+
+Torznab XML, for Sonarr, Radarr and Prowlarr. The same handler serves three
+paths, so use whichever your client expects:
+
+```
+/torznab/api                                        # plain Torznab
+/api/v2.0/indexers/<tracker>/results/torznab/api    # Jackett spelling
+/api/v1/indexer/<id>/newznab                        # Prowlarr Generic Torznab
+```
+
+| Parameter | Description |
+|-----------|-------------|
+| `t` | `caps`, `search`, `tvsearch`/`tv`, `movie`/`moviesearch`, `indexers` |
+| `q` | Search query (`query` also accepted) |
+| `cat` | Newznab categories, comma-separated (`2000` movies, `5000` TV, `5070` anime) |
+| `limit` / `offset` | Page the results; default 100, max 1000 |
+| `apikey` | Passed through to the search; `apikey=rus` filters to Russian audio |
+
+`<tracker>` filters by tracker — `all`, `jacred` or empty mean every tracker.
+A request with no `q`, `title` or `title_original` answers an empty feed rather
+than running a wildcard query, which is what a client's "Test" button sends.
+
+`<link>` and the enclosure are the **magnet**: every record here is a magnet and
+this server has no `.torrent` to serve. `guid` is the infohash where there is
+one, so a client does not re-grab a row it already has.
+
+With `torznab.enrichTitles: true` (the default) the XML title carries the
+record's voices as `Title | [voice1 voice2].rus`. Sonarr and Radarr match on the
+title, and for a Russian release the dub is most of what distinguishes two
+otherwise identical rows. Set `torznab.enable: false` to turn the XML endpoints
+off; the Jackett JSON endpoint above is separate and always available.
+
+```bash
+curl "http://127.0.0.1:9117/torznab/api?t=caps"
+curl --get --data-urlencode "q=The Gilded Age" --data "t=tvsearch" \
+  "http://127.0.0.1:9117/api/v2.0/indexers/all/results/torznab/api"
+```
+
+### `GET /api/v1/indexer`, `/api/v1/indexer/{id}`, `/api/v1/search`
+
+Prowlarr's own REST API, for clients that treat jacred as a backend rather than
+a feed. One aggregated indexer with `id=1`; any other id is `404`. All three
+follow `torznab.enable`.
+
+```bash
+curl "http://127.0.0.1:9117/api/v1/indexer"
+curl --get --data-urlencode "query=The Matrix" --data "type=movie" --data "indexerIds=1" \
+  "http://127.0.0.1:9117/api/v1/search"
+```
+
+`/api/v1/search` returns Prowlarr release resources: `guid`, `age`, `size`,
+`indexerId`, `indexer`, `title`, `publishDate`, `downloadUrl`, `magnetUrl`,
+`infoUrl`, `categories`, `protocol`, `infoHash`, `seeders`, `leechers`, plus the
+same `ffprobe`/`languages`/`info` extensions the Jackett JSON endpoint carries.
+`indexerIds=-1` is Usenet and returns an empty array. For a plain Torznab
+indexer use `/api/v1/indexer/1/newznab` instead.
+
+### `GET /cron/maintenance/parseallstatus`
+
+How much of each ParseAll sweep is still owed, read off the cycle checkpoints
+and task maps on disk — so unlike `/health/background-jobs` it survives a
+restart and answers even when nothing is running. `?tracker=rutor` narrows it.
+
+```json
+{"ok":true,"trackers":[{
+  "tracker":"rutor","cycleId":"20261113T142432-523c",
+  "startedAt":"2026-11-13T14:24:32Z","mapCount":3990,
+  "pages":3990,"done":1,"pending":3989,"percent":0
+}]}
+```
+
+`pages` is counted from the task map and `mapCount` is what the checkpoint
+recorded; a `note` appears if they disagree, which means either the map changed
+under the cycle or the count found something that is not a page.
+
+### `GET /stats/meta`
+
+How old the numbers are. Every stats surface is served from a file a timer
+rebuilds, and none of them says when it was written — so a stale figure and a
+wrong one look identical. Each row names what reads it. Nothing is derived from
+the database, so this is safe to poll.
+
+```json
+{"now":"...","lastupdatedb":"13.11.2026 16:18","statsRefreshMinutes":90,
+ "files":[{"name":"stats.json","exists":true,"ageSeconds":364,"bytes":2,
+           "serves":"/stats/torrents, /stats and the stats page"}]}
+```
+
+An absent file is a fact rather than an error: a box that has never met a
+Cloudflare challenge has no `cf_auto.json`.
+
 ### `GET /api/v1.0/conf`
 
 Validate API key.
@@ -1790,12 +1882,72 @@ a separate job that this binary does not do.
 
 ```
 GET /health          → {"status": "OK"}
+GET /health/background-jobs → cron ops running right now, with progress
+GET /stats/meta      → how old the stats files are
 GET /version         → {"version": "...", "gitSha": "...", "gitBranch": "...", "buildDate": "..."}
 GET /lastupdatedb    → last database write timestamp
 GET /                → index.html (if web: true)
 GET /stats           → stats.html (if web: true)
 GET /settings        → settings.html (if web: true)
 ```
+
+### `GET /health/background-jobs`
+
+What a cron op is doing **right now**. `/trackers` reports the last *finished*
+run; a sweep in flight reports nothing, and a parser answering
+`{"status":"work"}` only says that something holds its run flag.
+
+```json
+{"jobs":[{
+  "id": "rutor:parsealltask", "tracker": "rutor", "job": "parsealltask",
+  "startedAtUtc": "2026-11-13T13:14:22Z", "elapsedSeconds": 40,
+  "pagesCompleted": 17, "pagesTotal": 3990, "percent": 0,
+  "idleSeconds": 2, "stallsAtUtc": "2026-11-13T13:59:53Z",
+  "summary": "17/3990 pages · 0% · elapsed 40s"
+}]}
+```
+
+`pagesCompleted`/`pagesTotal` are listing pages of the current ParseAll cycle,
+not torrents. `stallsAtUtc` is when the watchdog would cancel the job if no page
+were attempted before then; it moves forward with every page. `deadlineUtc`
+appears instead for ops bounded by a wall clock.
+
+The list lives in process memory, so it is empty after a restart until something
+starts again. What is still owed on disk is a different question and survives a
+restart — that is the cycle checkpoint in `Data/temp/<tracker>_parseAllCycle.json`.
+
+**Watchdog.** A `parsealltask` or `parselatest` that attempts no page for 45
+minutes is cancelled; `updatetasksparse` is bounded at 30 minutes of wall clock.
+A failing page still counts as activity — the cycle's failure budget settles it
+after three attempts — so a tracker refusing every request still walks its map
+to the end. `parse` is deliberately unguarded: a legitimate one can run for
+minutes or for hours depending on whether the Cloudflare cookie replay works,
+and it offers no progress signal to judge it by. A cancelled run is recorded on
+`/trackers` as `canceled` with the reason named.
+
+### Offline integrity check
+
+`/dev/findcorrupt` and `/dev/restorebucket` are HTTP, so they are unavailable in
+the case they are most needed — the database damaged badly enough that the
+process will not start. The same checks run from the command line with no
+listener:
+
+```bash
+jacred maintain                      # report only; changes nothing
+jacred maintain --mode=restore       # restore every unreadable bucket
+jacred maintain --mode=restore --key=<fdbKey> --date=09-10-2026
+```
+
+Run it from the directory holding `init.yaml` and `Data/`. `--mode=report` is
+safe while the server runs; stop the server before restoring, since a running
+parser can rewrite the bucket underneath you. Exit code 1 means something is
+still damaged.
+
+The report tells a snapshot that **exists** from one that is **readable** —
+those are different facts and only the second restores anything. A bucket and
+its snapshot share an inode until the bucket is next written, so a tool that
+writes one in place damages both at once; jacred never does that, but `cp` onto
+a live bucket would.
 
 ---
 

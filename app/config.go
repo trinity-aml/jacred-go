@@ -153,6 +153,16 @@ func parseYAMLIntoConfig(text string, cfg *Config) {
 			}
 			continue
 		}
+		if section == "torznab" && indent == 2 && strings.Contains(trimmed, ":") {
+			k, v := splitKV(trimmed)
+			switch k {
+			case "enable":
+				cfg.Torznab.Enable = parseBoolAt("torznab", k, v)
+			case "enrichTitles":
+				cfg.Torznab.EnrichTitles = parseBoolAt("torznab", k, v)
+			}
+			continue
+		}
 		if section == "tracksinterval" && indent == 2 && strings.Contains(trimmed, ":") {
 			inTracksInterval = true
 			k, v := splitKV(trimmed)

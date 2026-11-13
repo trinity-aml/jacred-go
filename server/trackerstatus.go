@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"os"
@@ -187,22 +188,43 @@ func (w *captureWriter) Write(b []byte) (int, error) {
 	return w.ResponseWriter.Write(b)
 }
 
-// recordCronRuns remembers the outcome of every /cron/<tracker>/<op> call.
+// recordCronRuns remembers the outcome of every /cron/<tracker>/<op> call, and
+// brackets it in the background-job tracker.
 //
 // Until this existed, the only record of a parser run was the process log: to
 // learn that kinozal had been returning zero for a week, or that animelayer was
 // failing every row, someone had to ssh in and grep. Several silent breakages
 // survived that long for exactly this reason.
+//
+// It owns the job bracket too (core.StartJob / Finish) rather than leaving that
+// to a second middleware, because the scope is identical — the same path parse,
+// the same GET check, the same before-and-after — and the recorded run needs
+// the job's verdict. A watchdog cancellation otherwise reaches /trackers as a
+// bare `context canceled`, on the one page whose whole purpose is naming why a
+// parser stopped.
 func (s *Server) recordCronRuns(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		tracker, op := cronPathParts(r.URL.Path)
-		if tracker == "" || r.Method != http.MethodGet {
+		// Only real trackers. /cron/maintenance/... has the same shape and is
+		// not a parser, so recording it would put a row in the store that no
+		// page ever reads and register a job nobody asked about — and a typo'd
+		// URL would do the same.
+		if tracker == "" || !isKnownTracker(tracker) || r.Method != http.MethodGet {
 			next.ServeHTTP(w, r)
 			return
 		}
 		started := time.Now()
 		cw := &captureWriter{ResponseWriter: w}
-		next.ServeHTTP(cw, r)
+
+		// Descended from Background, never from r.Context(): a disconnecting
+		// client must not cancel the run. cronCtx (server/jobs.go) explains
+		// the rule; the watchdog is the only thing that may cancel this.
+		runCtx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		job := core.StartJob(tracker, op, cancel, s.jobLimitsFor(op))
+
+		next.ServeHTTP(cw, withCronRunCtx(r, runCtx))
+		job.Finish()
 
 		run := TrackerRun{
 			Tracker: tracker,
@@ -237,6 +259,12 @@ func (s *Server) recordCronRuns(next http.Handler) http.Handler {
 			run.Skipped = jsonInt(body, "skipped")
 			run.Failed = jsonInt(body, "failed")
 		}
+		// The watchdog's reason beats whatever the parser managed to say on
+		// its way out, which is some form of "context canceled".
+		if reason := job.CancelReason(); reason != "" {
+			run.Status = "canceled"
+			run.Error = tracker + ": " + op + " stopped by the watchdog — " + reason
+		}
 		s.Runs.record(run)
 	})
 }
@@ -269,6 +297,18 @@ type TrackerState struct {
 // trackerNames is the set the cron routes expose, in the order the settings
 // page lists them. bitruapi deliberately has no config section of its own — it
 // reads cfg.Bitru — so it takes Bitru's host here too.
+// isKnownTracker reports whether name is one of the parsers. Derived from the
+// same trackerNames the /trackers page is built from, so there is no second
+// roster to keep in step.
+func isKnownTracker(name string) bool {
+	for _, t := range trackerNames {
+		if t == name {
+			return true
+		}
+	}
+	return false
+}
+
 var trackerNames = []string{
 	"anibelka", "anidub", "anifilm", "aniliberty", "animelayer", "anistar",
 	"bitru", "bitruapi", "kinozal", "knaben", "korsars", "leproduction",

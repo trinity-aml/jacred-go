@@ -83,3 +83,53 @@ func TestStripSeasonEpisodeRejectsAnEmptyRemainder(t *testing.T) {
 		}
 	}
 }
+
+func TestStripTrailingYear(t *testing.T) {
+	cases := []struct {
+		query, want string
+		year        int
+	}{
+		{"The Matrix 1999", "The Matrix", 1999},
+		{"Матрица (1999)", "Матрица", 1999},
+		{"Матрица [1999]", "Матрица", 1999},
+		{"The Matrix   2003 ", "The Matrix", 2003},
+		{"ATP Cincinnati 2007", "ATP Cincinnati", 2007},
+	}
+	for _, c := range cases {
+		got, year := StripTrailingYear(c.query)
+		if got != c.want || year != c.year {
+			t.Errorf("StripTrailingYear(%q) = %q, %d; want %q, %d", c.query, got, year, c.want, c.year)
+		}
+	}
+}
+
+// The property that makes this safe to add: it must not touch a query that does
+// not end in a year. Swept over 6767 real names out of the production index —
+// 86 fired, every one of them genuinely ending in a year, and **zero** fired
+// without one. That sweep is the standard to re-run after touching the pattern;
+// these are the shapes it is worth keeping in the suite.
+func TestStripTrailingYearLeavesOrdinaryQueriesAlone(t *testing.T) {
+	for _, q := range []string{
+		"The Boys", "Пацаны", "", "   ",
+		// A year inside the title is not a trailing year.
+		"2001: A Space Odyssey", "1917", "Жизнь 2.0",
+		// Not a plausible release year.
+		"Omega 1899", "Omega 2100", "Rush 99",
+		// Trailing punctuation is not a year, and the cleanup must not run
+		// when nothing matched — this is how "48 Hrs." became "48 Hrs".
+		"48 Hrs.", "Не покидай...",
+		// Id lookups are never titles.
+		"tt0944947", "kp301", "1234567",
+		// Nothing but a year leaves no title to search for.
+		"1999", "(2026)",
+		// These are what make the early return load-bearing rather than
+		// decorative: with no year matched, the trim below would still eat a
+		// trailing comma or dash and quietly rewrite the query. Verified by
+		// removing that return and watching these fail.
+		"The Matrix,", "Mad Max -", "Волк, ", "Я, робот,",
+	} {
+		if got, year := StripTrailingYear(q); got != "" {
+			t.Errorf("%q was rewritten to %q (year %d)", q, got, year)
+		}
+	}
+}

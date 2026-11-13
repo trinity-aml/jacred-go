@@ -21,6 +21,20 @@ type Evercache struct {
 	DropCacheTake    int  `json:"dropCacheTake"`
 }
 
+// TorznabSettings governs the Torznab XML endpoints only (Sonarr, Radarr,
+// Prowlarr). The Jackett JSON endpoint at /api/v2.0/indexers/<x>/results is
+// unaffected by it and has no switch, because it predates this and clients
+// depend on it.
+type TorznabSettings struct {
+	Enable bool `json:"enable"`
+	// EnrichTitles appends the record's voice tags to the XML title, as
+	// `Title | [voice1 voice2].rus`. Sonarr and Radarr match on the title,
+	// and a Russian release is identified by its dub more than anything
+	// else, so the tags are what make two otherwise identical rows
+	// distinguishable in their UI. Off leaves the stored title alone.
+	EnrichTitles bool `json:"enrichTitles"`
+}
+
 type TracksIntervalConfig struct {
 	Task0 int `json:"task0"`
 	Task1 int `json:"task1"`
@@ -84,6 +98,7 @@ type Config struct {
 	MemLimitMB          int                  `json:"memlimit"`
 	GCPercent           int                  `json:"gcpercent"`
 	Evercache           Evercache            `json:"evercache"`
+	Torznab             TorznabSettings      `json:"torznab"`
 	TimeStatsUpdate     int                  `json:"timeStatsUpdate"`
 	TimeSync            int                  `json:"timeSync"`
 	TimeSyncSpidr       int                  `json:"timeSyncSpidr"`
@@ -143,6 +158,7 @@ func DefaultConfig() Config {
 		MaxReadFile:         200,
 		GCPercent:           50,
 		Evercache:           Evercache{Enable: true, ValidHour: 1, MaxOpenWriteTask: 500, DropCacheTake: 100},
+		Torznab:             TorznabSettings{Enable: true, EnrichTitles: true},
 		TimeStatsUpdate:     90,
 		TimeSync:            60,
 		TimeSyncSpidr:       60,

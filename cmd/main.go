@@ -58,6 +58,13 @@ func cleanOldLogs(logDir string, keepDays int) {
 }
 
 func main() {
+	// Subcommands come before anything else is set up: `maintain` reads the
+	// database files directly and must work when the server cannot start,
+	// which is the case it exists for.
+	if len(os.Args) > 1 && os.Args[1] == "maintain" {
+		os.Exit(runMaintain(os.Args[2:]))
+	}
+
 	cfg, err := app.LoadConfig("init.yaml")
 	if err != nil {
 		log.Fatal(err)

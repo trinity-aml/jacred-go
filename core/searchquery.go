@@ -120,3 +120,52 @@ func atoiSafe(s string) int {
 	}
 	return n
 }
+
+// A trailing release year, bare or parenthesised: "The Matrix 1999",
+// "Матрица (1999)". Anchored at the end so a year inside the title — "2001: A
+// Space Odyssey", "1917" — is not a match, and bounded to plausible release
+// years rather than any four digits.
+var trailingYearRe = regexp.MustCompile(`(?:^|\s)[(\[]?((?:19|20)\d{2})[)\]]?\s*$`)
+
+// StripTrailingYear removes a trailing release year from a free-text query and
+// reports it.
+//
+// Clients append the year to disambiguate — Radarr and AIOStreams send
+// "The Matrix 1999" — while a stored record's name is the bare title and the
+// year lives in its own `relased` field. `SearchName` keeps digits, so the
+// query becomes "thematrix1999" and matches nothing.
+//
+// Like StripSeasonEpisode this returns an empty string when there is nothing to
+// strip, so a caller can tell "nothing to do" from "here is another thing to
+// try", and it returns the year rather than discarding it: both search paths
+// can filter on it, and dropping the number would widen a request for the 1999
+// film into a request for every remake.
+//
+// It is only ever a **fallback**, run when the original query found nothing.
+// That is what makes it safe on a title that ends in a year of its own: a
+// search for "Blade Runner 2049" finds its record and the year is never
+// touched. Stripping unconditionally would turn that query into one for the
+// 1982 film.
+func StripTrailingYear(query string) (stripped string, year int) {
+	original := strings.TrimSpace(query)
+	if original == "" || idQueryRe.MatchString(original) {
+		return "", 0
+	}
+	m := trailingYearRe.FindStringSubmatch(original)
+	if m == nil {
+		// No year, so no cleanup either. This is load-bearing, not
+		// decorative: the trim below would eat a trailing comma or dash from
+		// a query that has no year in it at all, turning "Я, робот," into
+		// "Я, робот". That is the same mistake that once rewrote "48 Hrs." —
+		// cleanup must only tidy what a removal actually left behind.
+		return "", 0
+	}
+	out := strings.TrimSpace(trailingYearRe.ReplaceAllString(original, ""))
+	out = multiSpaceRe.ReplaceAllString(out, " ")
+	out = strings.Trim(out, " -–—,")
+	// A query that was nothing but a year leaves no title to search for.
+	if out == "" || strings.EqualFold(out, original) {
+		return "", 0
+	}
+	return out, atoiSafe(m[1])
+}

@@ -106,6 +106,22 @@ evercache:
   maxOpenWriteTask: 500
   dropCacheTake: 100
 
+# ── Torznab XML (Sonarr / Radarr / Prowlarr) ─────────────────────────────────
+#   enable       — serve Torznab XML at /torznab/api,
+#                  /api/v2.0/indexers/<tracker>/results/torznab/api and
+#                  /api/v1/indexer/<id>/newznab. The Jackett JSON endpoint at
+#                  /api/v2.0/indexers/<tracker>/results is separate and always on.
+#   enrichTitles — append the record's voices to the XML title as
+#                  "Title | [voice1 voice2].rus". Sonarr and Radarr match on the
+#                  title, and for a Russian release the dub is most of what
+#                  tells two otherwise identical rows apart.
+#   The <tracker> segment of the path filters by tracker; "all" (or "jacred")
+#   means every tracker.
+
+torznab:
+  enable: true
+  enrichTitles: true
+
 # ── CloudFlare bypass (flaresolverr-go) ──────────────────────────────────────
 # Built-in CF challenge solver — no external Docker service needed.
 # An embedded browser solves CF challenges; cookies are cached per domain in

@@ -542,3 +542,44 @@ func TestEveryTrackerSectionIsWrittenBack(t *testing.T) {
 			back.Rudub.Host, back.SubsPlease.Host, back.Rutor.Host)
 	}
 }
+
+// The Torznab XML endpoints are switchable, so the two keys have to survive a
+// save from /settings. A section the writer forgets is deleted from the file on
+// the first save — the same failure mode as a tracker missing from
+// writeTracker, which this suite already guards.
+func TestTorznabKeysRoundTrip(t *testing.T) {
+	src := `
+torznab:
+  enable: false
+  enrichTitles: false
+listenport: 9117
+`
+	var cfg Config
+	parseYAMLIntoConfig(src, &cfg)
+	if cfg.Torznab.Enable || cfg.Torznab.EnrichTitles {
+		t.Fatalf("torznab not read: %+v", cfg.Torznab)
+	}
+
+	on := DefaultConfig()
+	if !on.Torznab.Enable || !on.Torznab.EnrichTitles {
+		t.Fatalf("DefaultConfig should ship both on: %+v", on.Torznab)
+	}
+	out := MarshalYAML(on)
+	if !strings.Contains(out, "torznab:") || !strings.Contains(out, "enrichTitles: true") {
+		t.Fatalf("torznab section lost on write-back; got:\n%s", out)
+	}
+	var back Config
+	parseYAMLIntoConfig(out, &back)
+	if !back.Torznab.Enable || !back.Torznab.EnrichTitles {
+		t.Errorf("after round-trip torznab = %+v", back.Torznab)
+	}
+
+	// Off has to round-trip too, or the switch is one-way.
+	off := DefaultConfig()
+	off.Torznab.Enable = false
+	var backOff Config
+	parseYAMLIntoConfig(MarshalYAML(off), &backOff)
+	if backOff.Torznab.Enable {
+		t.Error("torznab.enable: false did not survive a save")
+	}
+}

@@ -177,6 +177,15 @@ func CountPendingInCycle(slots []CycleSlot, c *ParseAllCycle) int {
 // date-stamped progress into the first cycle. Without it, switching to cycles
 // would re-fetch every page already done that day.
 func BeginParseAllCycle(path, fingerprint string, slots []CycleSlot, updatedToday func(int) bool, rotateIfComplete bool) (*ParseAllCycle, int) {
+	state, pending := beginParseAllCycle(path, fingerprint, slots, updatedToday, rotateIfComplete)
+	// This is the only place that computes how large a run is, so it is where
+	// the job tracker learns it — rather than twelve parsers each reporting
+	// the same number. See jobs.go.
+	noteSweepTotal(TrackerFromCyclePath(path), pending)
+	return state, pending
+}
+
+func beginParseAllCycle(path, fingerprint string, slots []CycleSlot, updatedToday func(int) bool, rotateIfComplete bool) (*ParseAllCycle, int) {
 	state := LoadParseAllCycle(path)
 	if state == nil {
 		state = NewParseAllCycle(fingerprint, len(slots))
@@ -210,6 +219,14 @@ func BeginParseAllCycle(path, fingerprint string, slots []CycleSlot, updatedToda
 // only once it has burned the budget, so a transient error is retried while a
 // permanently broken page cannot hold the cycle open indefinitely.
 func NoteParseAllAttempt(tracker string, s CycleSlot, c *ParseAllCycle, ok bool) bool {
+	settled := noteParseAllAttempt(tracker, s, c, ok)
+	// Every attempt is activity; only a settled page is progress. jobs.go
+	// explains why the watchdog needs both.
+	noteSweepAttempt(tracker, settled)
+	return settled
+}
+
+func noteParseAllAttempt(tracker string, s CycleSlot, c *ParseAllCycle, ok bool) bool {
 	if c == nil {
 		return ok
 	}
