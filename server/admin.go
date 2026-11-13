@@ -1813,6 +1813,11 @@ func (s *Server) handleStatsRefresh(w http.ResponseWriter, r *http.Request) {
 
 // RunStatsLoop periodically generates Data/temp/stats.json.
 func (s *Server) RunStatsLoop(ctx context.Context) {
+	// A negative interval disables automatic full-catalogue scans, including
+	// startup. Cached stats and explicit /stats/refresh remain available.
+	if s.GetConfig().TimeStatsUpdate < 0 {
+		return
+	}
 	interval := time.Duration(s.GetConfig().TimeStatsUpdate) * time.Minute
 	if interval <= 0 {
 		interval = 60 * time.Minute

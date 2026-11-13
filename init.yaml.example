@@ -68,15 +68,17 @@ web: true
 
 # ── Stats ─────────────────────────────────────────────────────────────────────
 
-# Rebuild Data/temp/stats.json every N seconds
+# Rebuild Data/temp/stats.json every N minutes.
+# -1 disables automatic scans, including startup; /stats/refresh stays available.
 timeStatsUpdate: 90
 
 # ── Memory ────────────────────────────────────────────────────────────────────
 # Controls Go runtime memory usage. Useful on VPS with limited RAM.
 #
-# memlimit: hard cap on the Go heap, in MB.
+# memlimit: soft Go runtime memory target, in MB; excludes the browser.
 #   When the heap approaches this limit the GC runs very aggressively to stay
-#   under it — this prevents OOM-kill at the cost of more CPU for GC.
+#   under it, at the cost of more CPU for GC. It does not prevent OOM-kill
+#   when the live set or child-process memory exceeds the container limit.
 #   Leave at 0 (disabled) if you have plenty of RAM.
 #   Recommended for 2 GB VPS: 1500  (leaves ~500 MB for the OS)
 #   Recommended for 1 GB VPS:  700
@@ -163,6 +165,9 @@ torznab:
 # pinned to v146 and the free build ages as CF detection evolves.
 
 flaresolverr_go:
+  # 1 serializes browser work on a small NAS; 0 keeps the existing limit of 2.
+  # Applied at startup; restart after changing it.
+  max_concurrent_solves: 0
   headless: false
   browser_backend: cloakbrowser
   browser_path: ""

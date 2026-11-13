@@ -189,7 +189,7 @@ func main() {
 	go background.RunSyncCron(ctx, cfg, db)
 	go background.RunSyncSpidr(ctx, cfg, db)
 	go background.RunEvercacheCron(ctx, db)
-	addr := ":" + strconv.Itoa(cfg.ListenPort)
+	addr := listenAddress(cfg.ListenIP, cfg.ListenPort)
 
 	httpServer := &http.Server{
 		Addr:         addr,

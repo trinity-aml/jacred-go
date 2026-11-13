@@ -1,0 +1,7 @@
+.git
+Dist
+Data
+init.yaml
+**/*_test.go
+web/node_modules
+go.work*

@@ -136,6 +136,7 @@ const (
 
 // InitFlareService initializes the shared Xvfb display and flaresolverr-go config. Call once at startup.
 func InitFlareService(cfg app.FlareSolverrGoConfig) {
+	serialFlareSolves.Store(cfg.MaxConcurrentSolves == 1)
 	flareSvcCfg = cfg
 	// Sweep leftover browser profiles from prior crashes (SIGKILL, panic).
 	cleanupStaleProfiles()
@@ -1445,8 +1446,8 @@ func (f *Fetcher) solveFlare(rawURL, domain, cookie string, forceRender, haveCle
 		return nil, nil, fmt.Errorf("flaresolverr: service is shutting down")
 	}
 
-	flareSolveSem <- struct{}{}
-	defer func() { <-flareSolveSem }()
+	releaseSlot := acquireFlareSlot()
+	defer releaseSlot()
 
 	flareSolveWG.Add(1)
 	flareInflight.Add(1)
@@ -1622,8 +1623,8 @@ func (f *Fetcher) PostViaBrowser(ctx context.Context, rawURL, postData, cookie s
 	dm := getDomainLock(domain)
 	dm.Lock()
 	defer dm.Unlock()
-	flareSolveSem <- struct{}{}
-	defer func() { <-flareSolveSem }()
+	releaseSlot := acquireFlareSlot()
+	defer releaseSlot()
 	flareSolveWG.Add(1)
 	flareInflight.Add(1)
 	defer flareSolveWG.Done()
@@ -1694,8 +1695,8 @@ func (f *Fetcher) SolveForLogin(ctx context.Context, rawURL string) (cookies, us
 	if flareShutdown.Load() {
 		return "", "", "", "", fmt.Errorf("flaresolverr: service is shutting down")
 	}
-	flareSolveSem <- struct{}{}
-	defer func() { <-flareSolveSem }()
+	releaseSlot := acquireFlareSlot()
+	defer releaseSlot()
 	flareSolveWG.Add(1)
 	flareInflight.Add(1)
 	defer flareSolveWG.Done()
@@ -1794,8 +1795,8 @@ func (f *Fetcher) LoginViaFlare(ctx context.Context, rawURL, postData string) (c
 		return "", "", "", fmt.Errorf("flaresolverr: service is shutting down")
 	}
 
-	flareSolveSem <- struct{}{}
-	defer func() { <-flareSolveSem }()
+	releaseSlot := acquireFlareSlot()
+	defer releaseSlot()
 	flareSolveWG.Add(1)
 	flareInflight.Add(1)
 	defer flareSolveWG.Done()

@@ -59,11 +59,12 @@ type TrackerSettings struct {
 }
 
 type FlareSolverrGoConfig struct {
-	BrowserBackend string `json:"browser_backend,omitempty"` // "auto" (default) | "chromedriver" | "geckodriver"
-	BrowserPath    string `json:"browser_path,omitempty"`    // path to Chrome/Chromium or Firefox/Camoufox binary
-	DriverPath     string `json:"driver_path,omitempty"`     // path to chromedriver or geckodriver binary
-	Headless       *bool  `json:"headless,omitempty"`        // nil = default (true)
-	ChromeVersion  string `json:"chrome_version,omitempty"`  // pin Chrome for Testing to this version (e.g. "146")
+	MaxConcurrentSolves int    `json:"max_concurrent_solves,omitempty"` // 1 serializes browser work; 0 keeps the existing limit of 2
+	BrowserBackend      string `json:"browser_backend,omitempty"`       // "auto" (default) | "chromedriver" | "geckodriver"
+	BrowserPath         string `json:"browser_path,omitempty"`          // path to Chrome/Chromium or Firefox/Camoufox binary
+	DriverPath          string `json:"driver_path,omitempty"`           // path to chromedriver or geckodriver binary
+	Headless            *bool  `json:"headless,omitempty"`              // nil = default (true)
+	ChromeVersion       string `json:"chrome_version,omitempty"`        // pin Chrome for Testing to this version (e.g. "146")
 }
 
 type Config struct {

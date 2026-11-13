@@ -189,6 +189,8 @@ func parseYAMLIntoConfig(text string, cfg *Config) {
 				cfg.FlareSolverrGo.Headless = &val
 			case "chrome_version":
 				cfg.FlareSolverrGo.ChromeVersion = unquote(v)
+			case "max_concurrent_solves":
+				cfg.FlareSolverrGo.MaxConcurrentSolves = parseIntAt("flaresolverr_go", k, v)
 			}
 			continue
 		}

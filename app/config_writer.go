@@ -91,6 +91,7 @@ func MarshalYAML(cfg Config) string {
 
 	// FlareSolverr-go
 	b.WriteString("flaresolverr_go:\n")
+	writeIndented(&b, 2, "max_concurrent_solves", cfg.FlareSolverrGo.MaxConcurrentSolves)
 	if cfg.FlareSolverrGo.Headless != nil {
 		writeIndented(&b, 2, "headless", *cfg.FlareSolverrGo.Headless)
 	} else {
