@@ -110,7 +110,7 @@ func (n *NativeAnalyzer) Analyze(ctx context.Context, magnet string) (*FFProbeMo
 	if err != nil {
 		return nil, fmt.Errorf("add torrent: %w", err)
 	}
-	defer t.Drop()
+	defer dropProbeTorrent(spec.InfoHash.HexString(), t.Drop)
 
 	infoCtx, cancelInfo := context.WithTimeout(ctx, n.infoWait)
 	select {
@@ -428,4 +428,61 @@ func redactTracker(raw string) string {
 	default:
 		return u.Scheme + "://" + u.Host
 	}
+}
+
+// dropProbeTorrent calls Drop and survives the library asserting on its own
+// internal invariant.
+//
+// `(*Torrent).close` ends with `assertAllPiecesRelativeAvailabilityZero`, which
+// **panics** — killing the process — if any piece still has a non-zero relative
+// availability after every peer has been closed. Measured on the production box:
+// `panic: piece 0 has relative availability 1` killed jacred **3 times in 14
+// days**, with the stack running
+// `assertAllPiecesRelativeAvailabilityZero` (torrent.go:1153) ← `(*Torrent).close`
+// ← `(*Torrent).Drop` ← this function's caller.
+//
+// Relative availability is maintained by the peer connections: a HAVE or
+// bitfield increments it, a peer closing decrements it, and both are no-ops
+// while the info is still missing, after which it is recomputed from the peer
+// set. The invariant is the library's, the accounting is the library's, and the
+// violation is a race inside it between a peer's piece bookkeeping and the drop
+// — there is nothing a caller can pass or avoid to prevent it. anacrolix/torrent
+// v1.61.0 is the newest release, and this repo cannot move off it (see the
+// `go get -u` note in CLAUDE.md: missinggo v2.11 moves to roaring/v2 and
+// torrent's own peerconn.go stops compiling), so there is no upstream fix to
+// take.
+//
+// **Recovering here is safe, and specifically why matters:**
+//
+//   - `Drop` takes the client lock with `defer t.cl.unlock()`, so the lock is
+//     released as the panic unwinds. Nothing deadlocks.
+//   - The storage close is *spawned as a goroutine before* the assertion, so
+//     memStorage's Close still runs: the 128 MB of piece buffers are freed and
+//     the torrent leaves the storage map either way.
+//   - `t.closed.Set()` and the short-infohash index cleanup both happen at the
+//     top of `close`, before the assertion — so the torrent is marked closed and
+//     a later probe of the same magnet builds a fresh one rather than finding
+//     this corpse.
+//
+// What is left behind is the entry in `Client.torrents` (`g.MustDelete` comes
+// *after* the assertion) and an unclosed `pieceStateChanges` pubsub: a stale
+// struct plus one piece header per piece, tens of kilobytes, three times a
+// fortnight. That is the whole cost, and it buys not losing the process.
+//
+// The probe result is already in hand by the time this runs — Drop is deferred
+// teardown — so nothing the caller wanted is lost.
+//
+// **What this does not cover:** `close` can also be reached from the client's
+// own goroutine (`Client.Close`, internal drops). A panic there is not on this
+// call stack and no recover of ours can catch it. Every occurrence observed so
+// far came through this path.
+func dropProbeTorrent(infoHash string, drop func()) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("tracks: recovered a panic while dropping the probe torrent %s: %v — "+
+				"this is an assertion inside anacrolix/torrent, the probe itself had already finished, "+
+				"and only the client's own bookkeeping is affected", infoHash, r)
+		}
+	}()
+	drop()
 }

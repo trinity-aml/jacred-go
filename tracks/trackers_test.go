@@ -2,6 +2,7 @@ package tracks
 
 import (
 	"net/url"
+	"os"
 	"strings"
 	"testing"
 )
@@ -119,5 +120,61 @@ func TestADroppedTrackerIsLoggedWithoutItsPath(t *testing.T) {
 	}
 	if v := redactTracker("http://"); strings.Contains(v, "//") && !strings.Contains(v, "no host") {
 		t.Errorf("redactTracker(%q) = %q, should say it has no host", "http://", v)
+	}
+}
+
+// The second production panic, as a test.
+//
+// `panic: piece 0 has relative availability 1` killed jacred 3 times in 14
+// days from anacrolix/torrent's assertAllPiecesRelativeAvailabilityZero,
+// reached through (*Torrent).close <- (*Torrent).Drop <- our Analyze. The
+// assertion is the library's own invariant about its own peer bookkeeping, so
+// the only thing a caller can do is not die with it.
+func TestDroppingAProbeTorrentSurvivesTheLibraryAssertion(t *testing.T) {
+	// The real message, verbatim from the production journal.
+	dropProbeTorrent("c268b36eb250d931d6a7b7e34a2c6ee95e8356da", func() {
+		panic("piece 0 has relative availability 1")
+	})
+	// Reaching here at all is the assertion: before this wrapper, that panic
+	// unwound out of Analyze and took the process with it.
+
+	// A runtime panic (not a string) must be survived too — the library also
+	// panics with a bare int in decPieceAvailability.
+	dropProbeTorrent("deadbeef", func() { panic(1) })
+	dropProbeTorrent("deadbeef", func() { var p *int; _ = *p })
+}
+
+// A normal drop must still happen, exactly once, and must not be swallowed
+// into a no-op by the recover wrapper.
+func TestANormalDropStillRuns(t *testing.T) {
+	calls := 0
+	dropProbeTorrent("abc", func() { calls++ })
+	if calls != 1 {
+		t.Errorf("drop ran %d times, want exactly 1", calls)
+	}
+}
+
+// The recover must not hide a panic raised anywhere else in Analyze's
+// teardown: it wraps the Drop call only. Guarded by reading the source,
+// because the alternative — a recover sitting in Analyze itself — would
+// silently swallow real bugs in the probe path.
+func TestTheRecoverWrapsOnlyTheDrop(t *testing.T) {
+	src, err := os.ReadFile("native.go")
+	if err != nil {
+		t.Fatalf("read native.go: %v", err)
+	}
+	body := string(src)
+	if n := strings.Count(body, "recover()"); n != 1 {
+		t.Errorf("native.go has %d recover() calls, want exactly 1 (in dropProbeTorrent)", n)
+	}
+	fn := body[strings.Index(body, "func dropProbeTorrent("):]
+	if !strings.Contains(fn[:strings.Index(fn, "\n}")], "recover()") {
+		t.Error("the single recover() is not inside dropProbeTorrent")
+	}
+	if !strings.Contains(body, "defer dropProbeTorrent(") {
+		t.Error("Analyze no longer defers dropProbeTorrent — a raw t.Drop() would kill the process again")
+	}
+	if strings.Contains(body, "defer t.Drop()") {
+		t.Error("a raw `defer t.Drop()` is back; it must go through dropProbeTorrent")
 	}
 }
