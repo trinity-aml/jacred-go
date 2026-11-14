@@ -6,9 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -94,6 +96,15 @@ func (n *NativeAnalyzer) Analyze(ctx context.Context, magnet string) (*FFProbeMo
 	spec, err := torrent.TorrentSpecFromMagnetUri(strings.TrimSpace(magnet))
 	if err != nil {
 		return nil, fmt.Errorf("parse magnet: %w", err)
+	}
+	// A malformed tr= in somebody else's magnet must not be able to kill this
+	// process, and until this filter existed it could.
+	if kept, dropped := sanitizeTrackers(spec.Trackers); len(dropped) > 0 {
+		spec.Trackers = kept
+		// Scheme and host only, never the full URL: an announce path can carry
+		// the account's passkey, and this log is kept. Same rule as cookies.
+		log.Printf("tracks: dropped %d unusable announce url(s) from the magnet (%s) — they would crash the torrent client",
+			len(dropped), strings.Join(dropped, ", "))
 	}
 	t, _, err := n.cl.AddTorrentSpec(spec)
 	if err != nil {
@@ -326,3 +337,95 @@ func (discardHandler) Enabled(context.Context, slog.Level) bool  { return false 
 func (discardHandler) Handle(context.Context, slog.Record) error { return nil }
 func (h discardHandler) WithAttrs([]slog.Attr) slog.Handler      { return h }
 func (h discardHandler) WithGroup(string) slog.Handler           { return h }
+
+// sanitizeTrackers removes announce URLs that anacrolix/torrent cannot accept,
+// and returns a redacted description of each one it dropped.
+//
+// This is not defensive polish. `AddTorrentSpec` hands every tracker to
+// `Client.startTrackerAnnouncer`, which asserts
+// `panicif.NotEq(u.String(), string(urlStr))` — the parsed URL must serialise
+// back to exactly the string it came from — and a failed assertion is a
+// **panic that takes the whole process down**. Measured on the production box:
+// `panic: http: != http://` killed jacred **12 times in 14 days**, six of them
+// in one day, with the stack running
+// `initTrackerClient` ← `startScrapingTrackerWithInfohash` ← our Analyze.
+// The offending announce was the literal string `http://`: `url.Parse` accepts
+// it, and `String()` gives back `http:`, because an empty Host drops the `//`.
+//
+// Two conditions, and both are load-bearing:
+//
+//   - **It must name a host.** This is what catches the production value:
+//     `http://`, `udp://` and `not a url` all parse to an empty Host.
+//   - **It must round-trip** (`u.String() == raw`), which is the library's own
+//     assertion reproduced here rather than approximated by a scheme
+//     whitelist. Its *unique* contribution is announces that name a real host
+//     and still fail to serialise back — measured:
+//     `http://tracker.example/annoünce`, `…/a b` and `…/a|b` all have a
+//     non-empty Host and all get escaped by `String()`, so only this check
+//     rejects them. Unescaped and non-ASCII characters in an announce path are
+//     not hypothetical in magnets from these trackers.
+//
+// Both halves were verified by removing each in turn and watching the test
+// fail on exactly the inputs the other one does not cover. Checks that sound
+// equivalent are not: `http:` round-trips cleanly and names nothing, while
+// `…/a b` names a host and does not round-trip.
+//
+// Checking `url.Parse`'s error instead would catch none of them: it returns
+// nil for every string above, including `not a url`. That is the trap this
+// function exists to document.
+//
+// Dropping a tracker is safe for a probe: peers are also found over DHT, and
+// three parsers here (anibelka, mazepa, rudub) already publish magnets with no
+// announce at all because each `.torrent` embeds the account's passkey.
+func sanitizeTrackers(tiers [][]string) (kept [][]string, dropped []string) {
+	for _, tier := range tiers {
+		var keptTier []string
+		for _, raw := range tier {
+			if trackerIsUsable(raw) {
+				keptTier = append(keptTier, raw)
+				continue
+			}
+			dropped = append(dropped, redactTracker(raw))
+		}
+		// An empty tier is not worth carrying forward.
+		if len(keptTier) > 0 {
+			kept = append(kept, keptTier)
+		}
+	}
+	return kept, dropped
+}
+
+// trackerIsUsable reports whether anacrolix/torrent will accept this announce
+// URL without asserting. See sanitizeTrackers for why these two checks.
+func trackerIsUsable(raw string) bool {
+	if strings.TrimSpace(raw) == "" {
+		return false
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u == nil {
+		return false
+	}
+	if u.Host == "" {
+		return false
+	}
+	return u.String() == raw
+}
+
+// redactTracker describes an announce URL by scheme and host only. The path and
+// query are withheld deliberately: an announce can carry the account's passkey,
+// and Data/log is retained. For the degenerate values this filter actually
+// catches the scheme alone identifies them.
+func redactTracker(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u == nil {
+		return "<unparseable>"
+	}
+	switch {
+	case u.Scheme == "" && u.Host == "":
+		return "<no scheme or host>"
+	case u.Host == "":
+		return u.Scheme + ":// (no host)"
+	default:
+		return u.Scheme + "://" + u.Host
+	}
+}
