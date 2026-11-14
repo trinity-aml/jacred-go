@@ -152,23 +152,7 @@ func (p *Parser) UpdateTasksParse(ctx context.Context) (map[string][]Task, error
 			log.Printf("bitru: updatetasksparse cat=%s fetch failed: %v", cat, err)
 			continue
 		}
-		// Match pagination links scoped to the CURRENT category only — Go's
-		// previous regex used tmp=[^"]+ which would also catch links to other
-		// categories present on the page (sidebar, etc.) and inflate maxPages.
-		// Take the actual numerical maximum over all matches rather than the
-		// first one (HTML order is not guaranteed to put the highest page link
-		// first; some templates list "1 2 3 ... last" and others "last ... 3 2 1").
-		catEsc := regexp.QuoteMeta(cat)
-		catRe := regexp.MustCompile(`(?i)<a href="browse\.php\?tmp=` + catEsc + `&page=[^"]+">([0-9]+)</a></div>`)
-		pagerLinks := catRe.FindAllStringSubmatch(htmlBody, -1)
-		maxPages := 1
-		for _, m := range pagerLinks {
-			if len(m) > 1 {
-				if n, _ := strconv.Atoi(strings.TrimSpace(m[1])); n > maxPages {
-					maxPages = n
-				}
-			}
-		}
+		maxPages, pagerLinks := pagerMaxPage(htmlBody, cat)
 		log.Printf("bitru: updatetasksparse cat=%s detected maxPages=%d", cat, maxPages)
 		// A rebuild must not shrink the map on a read it cannot vouch for.
 		//
@@ -186,7 +170,7 @@ func (p *Parser) UpdateTasksParse(ctx context.Context) (map[string][]Task, error
 		// came back without a pager. Reproduced on a scratch instance the next
 		// morning: `cat=serial detected maxPages=716` beside
 		// `cat=movie detected maxPages=1`.
-		if why := rebuildRefusal(len(p.tasks[cat]), len(pagerLinks) > 0, detailsURLRe.MatchString(htmlBody)); why != "" {
+		if why := rebuildRefusal(len(p.tasks[cat]), pagerLinks > 0, detailsURLRe.MatchString(htmlBody)); why != "" {
 			log.Printf("bitru: updatetasksparse cat=%s keeping %d page tasks — %s", cat, len(p.tasks[cat]), why)
 			continue
 		}
@@ -215,6 +199,61 @@ func (p *Parser) UpdateTasksParse(ctx context.Context) (map[string][]Task, error
 		return nil, err
 	}
 	return cloneTasks(p.tasks), nil
+}
+
+// pagerMaxPage reads a category's highest page number out of a listing, and
+// reports how many pagination links it actually matched — the caller needs the
+// second number because "the pager said one page" and "no pager was found"
+// are otherwise the same answer.
+//
+// Match pagination links scoped to the CURRENT category only — Go's
+// previous regex used tmp=[^"]+ which would also catch links to other
+// categories present on the page (sidebar, etc.) and inflate maxPages.
+// Take the actual numerical maximum over all matches rather than the
+// first one (HTML order is not guaranteed to put the highest page link
+// first; some templates list "1 2 3 ... last" and others "last ... 3 2 1").
+//
+// `&(?:amp;)?` is load-bearing, and its absence is what destroyed the
+// map. bitru is browser-only whenever its clearance cannot be replayed
+// — which is most of the time — and a browser body is the *serialised
+// DOM*, where an href's ampersand comes back as the entity. Measured
+// 2026-11-14 on the same page in the same minute: the rendered body
+// carries `browse.php?tmp=movie&amp;page=` 17 times and
+// `…&page=` zero times, with page links up to 2584, and the old regex
+// matched **0** of them — so maxPages fell back to its seed of 1.
+// That is the whole mechanism behind
+// `movie pruned 2581 stale page tasks (was 2582, now 1)`: the pager was
+// there and unreadable, not absent.
+//
+// It also explains why only one category died at a time. On the
+// production box at 07:36:32 both ran in the same second — `movie`
+// read the solve's rendered body and reported 1, `serial` came over the
+// raw-HTTP replay and reported 716. Same template, same second,
+// opposite answers, decided purely by transport.
+//
+// korsars, mazepa and leproduction already spell their pagers this way;
+// this one was the outlier.
+//
+// The trailing `</a></div>` is gone too. It anchored the match to the
+// *last* pager link, which made the "take the maximum over all matches"
+// loop below pointless and the whole read hostage to whatever the
+// template puts after that link. Dropping it is safe because the
+// capture demands digits immediately after `">`: the "next" link
+// (`» `) carries attributes between the href and the `>`, and the
+// ellipsis link's text is not numeric.
+func pagerMaxPage(htmlBody, cat string) (maxPages, links int) {
+	catEsc := regexp.QuoteMeta(cat)
+	catRe := regexp.MustCompile(`(?i)<a href="browse\.php\?tmp=` + catEsc + `&(?:amp;)?page=[^"]+">([0-9]+)</a>`)
+	matches := catRe.FindAllStringSubmatch(htmlBody, -1)
+	maxPages = 1
+	for _, m := range matches {
+		if len(m) > 1 {
+			if n, _ := strconv.Atoi(strings.TrimSpace(m[1])); n > maxPages {
+				maxPages = n
+			}
+		}
+	}
+	return maxPages, len(matches)
 }
 
 // rebuildRefusal reports why a freshly read page may not be used to rebuild a
