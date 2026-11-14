@@ -7,6 +7,7 @@ require (
 	github.com/anacrolix/torrent v1.61.0
 	github.com/bogdanfinn/fhttp v0.6.8
 	github.com/bogdanfinn/tls-client v1.15.1
+	github.com/bogdanfinn/utls v1.7.7-barnius
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/trinity-aml/flaresolverr-go v0.0.0-20261113175810-90453a9d9f5b
 	github.com/ulikunitz/xz v0.5.15
@@ -39,7 +40,6 @@ require (
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/bits-and-blooms/bitset v1.2.2 // indirect
 	github.com/bogdanfinn/quic-go-utls v1.0.9-utls // indirect
-	github.com/bogdanfinn/utls v1.7.7-barnius // indirect
 	github.com/bogdanfinn/websocket v1.5.5-barnius // indirect
 	github.com/bradfitz/iter v0.0.0-20191230175014-e8f45d346db8 // indirect
 	github.com/cespare/xxhash v1.1.0 // indirect
