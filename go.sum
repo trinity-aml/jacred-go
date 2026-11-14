@@ -397,6 +397,8 @@ github.com/tinylib/msgp v1.1.0/go.mod h1:+d+yLhGm8mzTaHzB+wgMYrodPfmZrzkirds8fDW
 github.com/tinylib/msgp v1.1.2/go.mod h1:+d+yLhGm8mzTaHzB+wgMYrodPfmZrzkirds8fDWklFE=
 github.com/trinity-aml/flaresolverr-go v0.0.0-20261114152710-7797bdeceeb8 h1:gUYdPoZssdONe4sf4DodhIU2D7UJvA0aovbSvgsBWDQ=
 github.com/trinity-aml/flaresolverr-go v0.0.0-20261114152710-7797bdeceeb8/go.mod h1:D7TQ0pGPDiF0HoDwSWNyDm1BeDPH0jPX/UAWNoi3plg=
+github.com/trinity-aml/flaresolverr-go v0.0.0-20261114190207-63e1edf128b3 h1:g1auaqTwAvv2dQQieMVa/AU7g/BFVvMe0xqmmZdGvEo=
+github.com/trinity-aml/flaresolverr-go v0.0.0-20261114190207-63e1edf128b3/go.mod h1:D7TQ0pGPDiF0HoDwSWNyDm1BeDPH0jPX/UAWNoi3plg=
 github.com/ulikunitz/xz v0.5.15 h1:9DNdB5s+SgV3bQ2ApL10xRc35ck0DuIX/isZvIk+ubY=
 github.com/ulikunitz/xz v0.5.15/go.mod h1:nbz6k7qbPmH4IRqmfOplQw/tblSgqTqBwxkY0oWt/14=
 github.com/willf/bitset v1.1.9/go.mod h1:RjeCKbqT1RxIR/KWY6phxZiaY1IyutSBfGjNPySAYV4=
