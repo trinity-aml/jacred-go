@@ -1565,17 +1565,6 @@ func (f *Fetcher) solveFlare(rawURL, domain, cookie string, forceRender, haveCle
 		ua = defaultUserAgent
 	}
 
-	// Empty cookie set means the browser navigated but never received CF
-	// clearance (challenge not actually solved, or solver returned before
-	// cookies were persisted). Caching this as a valid session creates a
-	// permanent stall: every subsequent GetFlareCookies returns ("", ua)
-	// and parsers loop on re-login. Treat it as a transient failure so
-	// the next caller re-attempts the solve.
-	if cookieStr == "" {
-		markFlareFailure(domain)
-		return nil, nil, fmt.Errorf("flaresolverr: %s solved but returned 0 cookies", domain)
-	}
-
 	sess := &flareSession{
 		cookies:   cookieStr,
 		userAgent: ua,
@@ -1583,10 +1572,46 @@ func (f *Fetcher) solveFlare(rawURL, domain, cookie string, forceRender, haveCle
 		obtained:  time.Now(),
 	}
 
-	f.flareMu.Lock()
-	f.flareCache[domain] = sess
-	f.flareMu.Unlock()
-	saveFlareSession(domain, sess)
+	// An empty cookie set is not a browser failure, and treating it as one
+	// cost kinozal a whole day.
+	//
+	// CF issues no cookies at all when it decides a visitor needs no
+	// clearance, which is the documented `clearance=false` state: the solve
+	// succeeded, the page rendered, and the browser is simply the only way to
+	// fetch this domain. The old code called markFlareFailure here, which
+	// opens the 3-minute flareFailCooldown — so every page fetch for the
+	// domain then answered 503 in ~0ms, the cooldown re-armed on each one, and
+	// the run reported a Cloudflare problem that did not exist.
+	//
+	// Measured on the production box 2026-11-14 16:35:09, nine seconds after
+	// the solve started:
+	//
+	//	flaresolverr: solved kinozal.guru cookies=0 [] clearance=false
+	//	flaresolverr: solve failed for kinozal.guru: solved but returned 0 cookies
+	//	kinozal: authorization probe failed: browse.php c=45 page=0 answered HTTP 503
+	//	kinozal: login response status=302 cf-mitigated=""
+	//	kinozal: login OK — got uid+pass cookies
+	//	ParseAllTask 500: browse.php still unreachable after a fresh login
+	//
+	// The login worked on the same second it was reported unreachable. The
+	// only thing standing between the parser and the page was a cooldown this
+	// branch had opened against a browser that had just done its job in nine
+	// seconds.
+	//
+	// The stall the old comment worried about is already prevented elsewhere:
+	// getFlareSession treats a cookie-less session as absent, so it can never
+	// wedge a caller into sending an empty Cookie header. Not caching it here
+	// keeps the same guarantee without lying about the browser's health —
+	// and the rendered body below is still handed back, which is the whole
+	// point on a browser-only domain.
+	if cookieStr == "" {
+		log.Printf("flaresolverr: %s issued no cookies — browser-only for this page, not caching a session", domain)
+	} else {
+		f.flareMu.Lock()
+		f.flareCache[domain] = sess
+		f.flareMu.Unlock()
+		saveFlareSession(domain, sess)
+	}
 
 	// When the browser actually navigated to rawURL, hand the rendered body
 	// back so the caller can skip an HTTP roundtrip that would likely hit a
