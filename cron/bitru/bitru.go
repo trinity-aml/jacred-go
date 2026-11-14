@@ -160,8 +160,9 @@ func (p *Parser) UpdateTasksParse(ctx context.Context) (map[string][]Task, error
 		// first; some templates list "1 2 3 ... last" and others "last ... 3 2 1").
 		catEsc := regexp.QuoteMeta(cat)
 		catRe := regexp.MustCompile(`(?i)<a href="browse\.php\?tmp=` + catEsc + `&page=[^"]+">([0-9]+)</a></div>`)
+		pagerLinks := catRe.FindAllStringSubmatch(htmlBody, -1)
 		maxPages := 1
-		for _, m := range catRe.FindAllStringSubmatch(htmlBody, -1) {
+		for _, m := range pagerLinks {
 			if len(m) > 1 {
 				if n, _ := strconv.Atoi(strings.TrimSpace(m[1])); n > maxPages {
 					maxPages = n
@@ -169,6 +170,26 @@ func (p *Parser) UpdateTasksParse(ctx context.Context) (map[string][]Task, error
 			}
 		}
 		log.Printf("bitru: updatetasksparse cat=%s detected maxPages=%d", cat, maxPages)
+		// A rebuild must not shrink the map on a read it cannot vouch for.
+		//
+		// maxPages is *seeded* at 1, so "the pager said one page" and "the
+		// pager was never there" are the same number — which is the hazard
+		// core.PruneTaskPagesIfRead exists for, and this file used to be
+		// listed as not needing it because it rebuilds instead of pruning.
+		// Rebuilding from a bad read is worse, not better: it writes the bad
+		// number in rather than trimming toward it.
+		//
+		// Measured on the production box 2026-11-13/14, with bitru's browser
+		// solve failing: `movie pruned 2581 stale page tasks (was 2582, now
+		// 1)` and `serial pruned 714 (was 715, now 1)` — 3295 page slots, the
+		// whole sweep plan for both categories, destroyed by two fetches that
+		// came back without a pager. Reproduced on a scratch instance the next
+		// morning: `cat=serial detected maxPages=716` beside
+		// `cat=movie detected maxPages=1`.
+		if why := rebuildRefusal(len(p.tasks[cat]), len(pagerLinks) > 0, detailsURLRe.MatchString(htmlBody)); why != "" {
+			log.Printf("bitru: updatetasksparse cat=%s keeping %d page tasks — %s", cat, len(p.tasks[cat]), why)
+			continue
+		}
 		// Rebuild the page list strictly from the freshly detected maxPages,
 		// preserving only UpdateTime for pages that still exist. This drops
 		// stale tasks (e.g. 2619-page leftovers from when the regex matched
@@ -194,6 +215,37 @@ func (p *Parser) UpdateTasksParse(ctx context.Context) (map[string][]Task, error
 		return nil, err
 	}
 	return cloneTasks(p.tasks), nil
+}
+
+// rebuildRefusal reports why a freshly read page may not be used to rebuild a
+// category's page list, or "" when it may.
+//
+// Two pieces of evidence, neither of them the pager — reading the pager to
+// decide whether to trust the pager is circular:
+//
+//   - isListing: the body carries at least one `details.php?id=` link, the
+//     same marker parsePage already trusts for a row. A Cloudflare
+//     interstitial, a 403 page and a login wall all have none, and all three
+//     arrive as HTTP 200 with a body, so the fetch succeeding proves nothing.
+//   - pagerWasRead: at least one pagination link matched. Without this a
+//     listing whose pager markup changed would still collapse the map to one
+//     page, which is the same catastrophe by another route.
+//
+// A genuine single-page category has no pagination links, so it is allowed
+// through only while the map is already at most one page. The cost of that is
+// stated plainly: a category that really does shrink from hundreds of pages to
+// one keeps its stale slots, and the sweep pays a fetch per ghost page. That
+// is this codebase's standing trade — a map that stays too long, never a sweep
+// that loses its plan — and the log line names it so it is visible rather than
+// silent.
+func rebuildRefusal(have int, pagerWasRead, isListing bool) string {
+	switch {
+	case !isListing:
+		return "the body is not a bitru listing (no details.php rows), so its page count is not evidence of anything"
+	case !pagerWasRead && have > 1:
+		return "the listing carried no pagination links at all, which cannot be told from a pager that stopped matching"
+	}
+	return ""
 }
 
 // beginCycleLocked opens (or rotates) the sweep cycle. Caller holds p.mu.
