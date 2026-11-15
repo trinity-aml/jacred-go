@@ -1193,6 +1193,19 @@ func isCloudflareChallenge(body []byte) bool {
 		strings.Contains(s, "Checking your browser before accessing")
 }
 
+// LooksLikeCFChallenge reports whether a response body is a Cloudflare
+// interstitial rather than the page that was asked for.
+//
+// It exists so a parser does not need a fourth private copy of the marker
+// list: rutracker and kinozal each grew their own, and this codebase's own
+// lesson is that a hand-maintained duplicate nothing checks will drift.
+// Language-independence is the point — `window._cf_chl_opt` is the only marker
+// here that survives Cloudflare serving the interstitial in the browser's
+// locale, which on 2026-11-15 is what hid a bitru outage for 22 hours.
+func LooksLikeCFChallenge(body []byte) bool {
+	return isCloudflareChallenge(body)
+}
+
 // fetchWithCookies fetches via standard HTTP with the browser's UA and solved cookies.
 // Pass the UA that was used by the browser during solve so CF sees a consistent
 // (cookie, UA) pair. Mismatch invalidates cf_clearance and triggers a re-challenge.

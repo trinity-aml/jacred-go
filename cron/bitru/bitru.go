@@ -769,9 +769,28 @@ func (p *Parser) fetchBrowse(ctx context.Context, cat string, page int) (string,
 			log.Printf("bitru: rate limited status=429 bodyLen=%d url=%s — keeping the session", len(body), urlv)
 			return "", fmt.Errorf("bitru rate limited (429)")
 		}
-		// CF block (403 or challenge-body 200) or unknown — cookies likely
-		// stale; invalidate and retry once.
+		// A Cloudflare interstitial is not ours to act on, and acting on it
+		// here is expensive. Fetcher already owns that decision and has more
+		// to decide it with: it knows how old the clearance is, so a challenge
+		// on one minted seconds ago means the cookie is fine and the page has
+		// to come from the browser (markReplayHostile), while a challenge on
+		// an old one means it really is stale and gets dropped. Invalidating
+		// from here overrides that with the one answer that is always
+		// expensive — a cold solve, ~9 s in the browser plus the launch, per
+		// page.
+		//
+		// Measured on the production box 2026-11-14 22:00 → 2026-11-15 20:00:
+		// bitru answered 403 with a challenge body on every page for 22 hours
+		// (the library could not see a Russian-language interstitial, fixed
+		// upstream), and this branch turned that into **~180 cold solves an
+		// hour** — 2 641 of them — every one reporting clearance=true and
+		// every page still 403. One retry is still worth taking, because the
+		// challenge is stochastic; a second browser render costs ~3 s.
 		if attempt == 0 {
+			if core.LooksLikeCFChallenge([]byte(body)) {
+				log.Printf("bitru: cloudflare interstitial status=%d bodyLen=%d url=%s — keeping the session, retrying through the browser", status, len(body), urlv)
+				continue
+			}
 			log.Printf("bitru: invalid response status=%d hasMarker=%v bodyLen=%d url=%s — invalidating session, retry", status, strings.Contains(body, `id="logo"`), len(body), urlv)
 			p.Fetcher.InvalidateSession(urlv)
 			continue
