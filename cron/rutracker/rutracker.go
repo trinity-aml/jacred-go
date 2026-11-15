@@ -285,8 +285,16 @@ func (p *Parser) takeLogin(ctx context.Context) bool {
 		}
 		log.Printf("rutracker: login using cf_clearance from flaresolverr")
 	} else if !strings.Contains(postCookie, "cf_clearance") {
-		log.Printf("rutracker: login has no cf_clearance — the CF challenge on %s was not solved; "+
-			"paste a browser cf_clearance (plus a matching useragent) into init.yaml Rutracker", loginURL)
+		// Deliberately no longer says the challenge "was not solved", and no
+		// longer tells the operator to paste a clearance. Measured
+		// 2026-11-15 against the live site: /forum/login.php answers
+		// `Challenge not detected!` and sets **no cookies at all**, while
+		// /forum/index.php sets bb_guid. So an empty set here is rutracker's
+		// login page having none to give, not a challenge we lost — and the
+		// old wording sent the reader hunting for a clearance that would not
+		// have helped. It was printed 167 times in one day.
+		log.Printf("rutracker: no cf_clearance for the login POST — rutracker's login page issues no " +
+			"cookies, so the POST goes out bare and falls back to the browser form if cloudflare refuses it")
 	}
 
 	form := url.Values{
@@ -339,8 +347,27 @@ func (p *Parser) takeLogin(ctx context.Context) bool {
 		// browser sidesteps it by construction: that is the client that earned
 		// the clearance.
 		log.Printf("rutracker: login POST was challenged by cloudflare — retrying through the browser")
-		if cookieStr, ok := p.loginViaBrowser(ctx, loginURL, form.Encode(), postCookie); ok {
+		cookieStr, outcome := p.loginViaBrowser(ctx, loginURL, form.Encode(), postCookie)
+		switch outcome {
+		case browserLoginOK:
 			return p.acceptLoginCookies(cookieStr, postCookie)
+		case browserLoginCaptcha:
+			// loginViaBrowser already recorded the 2 h block and explained it.
+			return false
+		case browserLoginNoSession:
+			// The form reached rutracker and came back without a session.
+			// Cloudflare did not refuse this one — the browser is the client
+			// that holds the clearance — so arming the CF ladder here is
+			// wrong twice over. It reports a challenge that did not happen,
+			// and its fast first steps (30 s, 2 min) turn a single refusal
+			// into hundreds of login attempts a day: measured on production
+			// 2026-11-15, 167 "no cf_clearance" + 40 × 403 + 39 blocks in one
+			// day against **one** successful login, which is how rutracker's
+			// own anti-bruteforce gets armed and kept armed.
+			log.Printf("rutracker: the login form was refused by rutracker itself, not by cloudflare — "+
+				"not retrying for %s", loginCooldown)
+			p.noteLoginFailure(loginCooldown, "rutracker refused the login form")
+			return false
 		}
 		// Back off in steps rather than a flat 15 minutes. A challenged login
 		// POST is **intermittent** here — measured as 302 on one attempt and
@@ -402,11 +429,28 @@ func (p *Parser) acceptLoginCookies(cookieStr, postCookie string) bool {
 
 // loginViaBrowser submits the credentials form in the browser, for when CF
 // refuses the POST from Go.
-func (p *Parser) loginViaBrowser(ctx context.Context, loginURL, postData, cookie string) (string, bool) {
+// browserLoginResult says how the browser-form route ended, because the three
+// failures need three different responses and used to share one. A bare bool
+// made "the browser submitted the form and rutracker set no session" read as
+// "cloudflare challenged the login form" — the caller logged exactly that, and
+// armed the CF backoff ladder on it.
+type browserLoginResult int
+
+const (
+	browserLoginOK browserLoginResult = iota
+	// Cloudflare refused the browser too: transient, the CF ladder is right.
+	browserLoginChallenged
+	// The form reached rutracker and came back with no session cookie.
+	browserLoginNoSession
+	// The CAPTCHA branch, which records its own 2 h block before returning.
+	browserLoginCaptcha
+)
+
+func (p *Parser) loginViaBrowser(ctx context.Context, loginURL, postData, cookie string) (string, browserLoginResult) {
 	cookieStr, body, err := p.Fetcher.PostViaBrowser(ctx, loginURL, postData, cookie)
 	if err != nil {
 		log.Printf("rutracker: browser login failed: %v", err)
-		return "", false
+		return "", browserLoginChallenged
 	}
 	if loginCaptchaRe.MatchString(body) {
 		log.Printf("rutracker: login form is showing a CAPTCHA — rutracker's anti-bruteforce kicked in "+
@@ -414,9 +458,23 @@ func (p *Parser) loginViaBrowser(ctx context.Context, loginURL, postData, cookie
 			"refreshes the block. Wait it out, or log in once in a browser and paste that bb_session "+
 			"into init.yaml Rutracker.cookie. Not retrying for %s", loginCaptchaCooldown)
 		p.noteLoginFailure(loginCaptchaCooldown, "login form is showing a CAPTCHA")
-		return "", false
+		return "", browserLoginCaptcha
 	}
-	return cookieStr, strings.Contains(cookieStr, "bb_session")
+	if strings.Contains(cookieStr, "bb_session") {
+		return cookieStr, browserLoginOK
+	}
+	if looksLikeCFChallenge(decodeRutrackerBody([]byte(body))) {
+		log.Printf("rutracker: the browser form was challenged by cloudflare as well")
+		return cookieStr, browserLoginChallenged
+	}
+	// This was the silent return. Production logged
+	// `form submitted to rutracker.org, cookies=0 []` and then, with nothing
+	// in between, `login BLOCKED by cloudflare challenge` — a failure wearing
+	// the wrong name, which is the shape this codebase keeps paying for.
+	log.Printf("rutracker: the browser submitted the login form and rutracker set no session — "+
+		"cookies: [%s], body %d bytes, no cloudflare markers in it",
+		core.CookieNames(cookieStr), len(body))
+	return cookieStr, browserLoginNoSession
 }
 
 // ensureLogin names why it failed. It used to return a bare bool while logging
