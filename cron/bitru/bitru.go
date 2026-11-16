@@ -3,6 +3,7 @@ package bitru
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html"
 	"log"
@@ -369,7 +370,14 @@ func (p *Parser) ParseAllTask(ctx context.Context, force bool) (string, error) {
 			items, err := p.parsePage(ctx, cat, task.Page)
 			if err != nil {
 				log.Printf("bitru: parsealltask cat=%s page=%d error: %v", cat, task.Page, err)
-				p.settle(cycle, cat, task.Page, false)
+				// See the same branch in cron/rutracker: a refusal this process
+				// made itself never reached the network, so it is no evidence
+				// that the page is broken and must not spend the cycle's
+				// failure budget. bitru produced zero records across the whole
+				// night of 2026-11-15/16 on exactly this path.
+				if !errors.Is(err, core.ErrFlareCooldown) {
+					p.settle(cycle, cat, task.Page, false)
+				}
 				errs++
 				continue
 			}
@@ -754,7 +762,7 @@ func (p *Parser) fetchBrowse(ctx context.Context, cat string, page int) (string,
 		// invalidating them and retrying would hit the same cooldown.
 		if status == 503 {
 			log.Printf("bitru: flaresolverr unavailable status=503 url=%s", urlv)
-			return "", fmt.Errorf("bitru flaresolverr unavailable")
+			return "", fmt.Errorf("bitru flaresolverr unavailable: %w", core.ErrFlareCooldown)
 		}
 		// 429 is bitru's own rate limit, not Cloudflare and not our cookies.
 		// This parser already treats it as a quota on api.php?download=

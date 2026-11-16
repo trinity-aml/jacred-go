@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -370,6 +371,22 @@ func flareCooldownRemaining(domain string) (time.Duration, bool) {
 	}
 	return flareFailCooldown - elapsed, true
 }
+
+// ErrFlareCooldown marks a refusal this process made itself: the domain is in
+// the post-failure browser cooldown, so the request never touched the network.
+//
+// It exists because a sweep must not spend its failure budget on it.
+// `NoteParseAllAttempt` settles a page after ParseAllFailBudget failures, so
+// counting a refusal of our own marks pages as visited that were never
+// fetched — and the cycle then rotates having skipped them. The save path
+// already makes exactly this distinction (`a save error is our own`); this
+// extends it to the fetch path.
+//
+// Measured on the production box over the night of 2026-11-15/16: rutracker
+// lost 3 295 of 4 257 page attempts, and **3 169 of them (96.2%) were refused
+// in ~0 ms with no network at all** — 124 real solve failures amplified 25
+// times over.
+var ErrFlareCooldown = errors.New("flaresolverr: domain in post-failure cooldown")
 
 // FlareCooldown reports how long a URL's domain stays in the post-failure
 // cooldown. Parsers use it to skip retries that cannot possibly reach the
@@ -1454,7 +1471,7 @@ func (f *Fetcher) solveFlare(rawURL, domain, cookie string, forceRender, haveCle
 	// from parsers within the cooldown window get a fast error instead of
 	// spawning Chrome that will almost certainly time out again.
 	if remaining, blocked := flareCooldownRemaining(domain); blocked {
-		return nil, nil, fmt.Errorf("flaresolverr: %s in cooldown for %s after recent failure", domain, remaining.Round(time.Second))
+		return nil, nil, fmt.Errorf("flaresolverr: %s in cooldown for %s after recent failure: %w", domain, remaining.Round(time.Second), ErrFlareCooldown)
 	}
 
 	dm := getDomainLock(domain)
@@ -1473,7 +1490,7 @@ func (f *Fetcher) solveFlare(rawURL, domain, cookie string, forceRender, haveCle
 	// Re-check cooldown under the lock: waiters behind us may have seen the
 	// first solver fail, and we'd immediately spawn another Chrome otherwise.
 	if remaining, blocked := flareCooldownRemaining(domain); blocked {
-		return nil, nil, fmt.Errorf("flaresolverr: %s in cooldown for %s after recent failure", domain, remaining.Round(time.Second))
+		return nil, nil, fmt.Errorf("flaresolverr: %s in cooldown for %s after recent failure: %w", domain, remaining.Round(time.Second), ErrFlareCooldown)
 	}
 
 	// Re-check shutdown: flag may have been raised while we waited for the lock.

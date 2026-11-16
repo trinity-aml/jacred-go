@@ -739,7 +739,17 @@ func (p *Parser) ParseAllTask(ctx context.Context, force bool) (string, error) {
 			}
 			if err != nil {
 				log.Printf("rutracker: parsealltask cat=%s page=%d error: %v", cat, task.Page, err)
-				p.settle(cycle, cat, task.Page, false)
+				// A refusal this process made itself is not evidence that the
+				// page is broken, so it must not spend the cycle's failure
+				// budget — three of them would settle the page and the cycle
+				// would rotate having never fetched it. The save path below
+				// already draws this line; the browser cooldown belongs on the
+				// same side of it. Measured over one night on production:
+				// 3 169 of rutracker's 3 295 lost pages were refused in ~0 ms
+				// with no network, against 124 real failures.
+				if !errors.Is(err, core.ErrFlareCooldown) {
+					p.settle(cycle, cat, task.Page, false)
+				}
 				errs++
 				continue
 			}
@@ -1044,7 +1054,7 @@ func (p *Parser) fetch(ctx context.Context, rawURL string) (string, error) {
 			// instead of burning the budget on guaranteed failures.
 			if remaining, blocked := core.FlareCooldown(rawURL); blocked {
 				log.Printf("rutracker: flaresolverr in cooldown for %s — abandoning retries for %s", remaining.Round(time.Second), rawURL)
-				return "", fmt.Errorf("rutracker: flaresolverr cooldown %s", remaining.Round(time.Second))
+				return "", fmt.Errorf("rutracker: flaresolverr cooldown %s: %w", remaining.Round(time.Second), core.ErrFlareCooldown)
 			}
 			select {
 			case <-ctx.Done():
