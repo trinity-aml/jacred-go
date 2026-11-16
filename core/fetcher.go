@@ -28,10 +28,13 @@ import (
 
 // Shared flaresolverr-go service singleton (one Chrome for all parsers).
 var (
-	flareSvcOnce sync.Once
-	flareSvc     *flaresolverr.Service
-	flareSvcCfg  app.FlareSolverrGoConfig
-	xvfbCmd      *exec.Cmd
+	// A mutex rather than a sync.Once: the service has to be *replaceable*.
+	// See recycleFlareService for the measurement that forced this.
+	flareSvcMu       sync.Mutex
+	flareSvc         *flaresolverr.Service
+	flareLastRecycle time.Time
+	flareSvcCfg      app.FlareSolverrGoConfig
+	xvfbCmd          *exec.Cmd
 
 	// Pinned Chrome for Testing paths, populated by InitFlareService when
 	// cfg.ChromeVersion is set. Empty means "use whatever the library finds".
@@ -608,7 +611,9 @@ func stopXvfb() {
 }
 
 func getFlareService() *flaresolverr.Service {
-	flareSvcOnce.Do(func() {
+	flareSvcMu.Lock()
+	defer flareSvcMu.Unlock()
+	if flareSvc == nil {
 		flareCfg := flaresolverr.Config{
 			Headless: true,
 			// Let the library fetch a matching chromedriver on first use and
@@ -645,8 +650,94 @@ func getFlareService() *flaresolverr.Service {
 		}
 		flareSvc = flaresolverr.NewService(flareCfg)
 		log.Printf("fetcher: flaresolverr-go service initialized")
-	})
+	}
 	return flareSvc
+}
+
+// noteColdSolveFailure replaces the browser service after a *cold* solve fails.
+//
+// Only a cold solve, because that is the thing measured to be spent: a Service
+// clears one and no more (see recycleFlareService). A failed *render* is a
+// different animal — the clearance is already held, the page simply did not
+// come back — and recycling on those would churn the service for a condition a
+// new browser cannot fix.
+//
+// This is what the operator has been doing by hand. Production 2026-11-15/16:
+// rutracker logged in successfully twice in 22 hours, both times within seconds
+// of a service start, and bitru produced nothing for a night while every cold
+// solve failed. A restart was the only cure because `loginBlockedUntil` lives in
+// memory *and* the spent Service went with it; this takes the second half of
+// that away from the restart.
+func noteColdSolveFailure(domain string, haveClearance bool) {
+	if haveClearance {
+		return
+	}
+	recycleFlareService("cold solve failed for " + domain)
+}
+
+// flareRecycleInterval bounds how often the browser service may be replaced.
+// Closing it tears down every browser, including one another domain is
+// mid-render on, and a failed solve is an everyday event — without a floor a
+// bad hour would thrash the service instead of parsing.
+const flareRecycleInterval = 5 * time.Minute
+
+// recycleFlareService replaces the shared flaresolverr-go service.
+//
+// Measured on the dev box 2026-11-16, and this is the whole reason the
+// singleton is no longer a sync.Once: **one Service clears exactly one cold
+// Cloudflare challenge.** In one OS process —
+//
+//	service A: first  13 s  solved [cf_clearance last_browse]
+//	service A: second 19 s  challenge still present
+//	A.Close(); NewService(cfg)
+//	service B: first  13 s  solved [last_browse cf_clearance]
+//
+// — repeated before and after the `--user-agent` change in the library, so the
+// effect does not depend on it. Destroying the *session* instead (a new browser
+// with a new profile) does **not** restore it; that was measured twice too.
+//
+// Why the mechanism is not named here: Service.Close() only calls
+// sessions.destroyAll(), and the store holds nothing but the config, the
+// factory and that map. What an emptied store lacks that a new one has is still
+// unknown. The remedy is measured; the cause is not.
+//
+// This is deliberately narrower than CloseFlareService: Xvfb and the idle
+// reaper stay up, because neither appeared in the measurement and stopping them
+// mid-run would cost far more than it buys.
+func recycleFlareService(reason string) bool {
+	if flareShutdown.Load() {
+		return false
+	}
+
+	flareSvcMu.Lock()
+	if !flareLastRecycle.IsZero() && time.Since(flareLastRecycle) < flareRecycleInterval {
+		flareSvcMu.Unlock()
+		return false
+	}
+	old := flareSvc
+	flareSvc = nil
+	flareLastRecycle = time.Now()
+	flareSvcMu.Unlock()
+
+	if old == nil {
+		return false
+	}
+
+	// Outside the lock: Close() terminates browsers and can take seconds, and
+	// getFlareService must not be blocked behind it.
+	_ = old.Close()
+
+	// The session ids that bookkeeping refers to died with the service, so the
+	// reaper would otherwise chase them on the replacement.
+	flareLastUsedMu.Lock()
+	flareLastUsed = map[string]time.Time{}
+	flareLastUsedMu.Unlock()
+
+	// The cookie cache is deliberately kept: a clearance already minted is
+	// still replayable, and dropping it would turn a recycle into a cold start
+	// for every domain.
+	log.Printf("flaresolverr: replaced the browser service — %s", reason)
+	return true
 }
 
 // Fetcher provides unified HTTP fetching with configurable mode per tracker.
@@ -1563,10 +1654,12 @@ func (f *Fetcher) solveFlare(rawURL, domain, cookie string, forceRender, haveCle
 
 	if resp.Status != "ok" {
 		markFlareFailure(domain)
+		noteColdSolveFailure(domain, haveClearance)
 		return nil, nil, fmt.Errorf("flaresolverr status=%s message=%s", resp.Status, resp.Message)
 	}
 	if resp.Solution == nil {
 		markFlareFailure(domain)
+		noteColdSolveFailure(domain, haveClearance)
 		return nil, nil, fmt.Errorf("flaresolverr: no solution returned")
 	}
 	clearFlareFailure(domain)
