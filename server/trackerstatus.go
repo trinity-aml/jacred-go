@@ -292,6 +292,113 @@ type TrackerState struct {
 	Auth      string       `json:"auth"`
 	AuthSince *time.Time   `json:"authSince,omitempty"`
 	Runs      []TrackerRun `json:"runs"`
+
+	// Running is the sweep in flight for this tracker, if any. Taken from the
+	// same job tracker /health/background-jobs reads, because a run happening
+	// *now* is the strongest evidence there is and the page had none of it: on
+	// 2026-11-16 rutracker was 572/10862 pages into a parsealltask, moving
+	// (idle 0s), while the row read "нет входа" off a record from an hour
+	// earlier. The original's web has a whole page for these; this puts them
+	// where the verdict is formed.
+	Running *TrackerJob `json:"running,omitempty"`
+
+	// Health is the verdict both the page and the sidebar badge render. It is
+	// computed here, once, because it used to be computed twice — in
+	// trackers.html and again in assets/app.js — and the two had already
+	// drifted: the badge counted `failed > 0` as needing a human while the page
+	// did not. That is the same hand-maintained duplicate this codebase has
+	// been bitten by before.
+	Health TrackerHealth `json:"health"`
+}
+
+// TrackerJob is the live progress of a sweep, in the same field names
+// /health/background-jobs uses so the two cannot drift.
+type TrackerJob struct {
+	Op             string `json:"job"`
+	PagesCompleted int    `json:"pagesCompleted"`
+	PagesTotal     int    `json:"pagesTotal"`
+	Percent        *int   `json:"percent,omitempty"`
+	ElapsedSeconds int    `json:"elapsedSeconds"`
+	IdleSeconds    int    `json:"idleSeconds"`
+	Summary        string `json:"summary"`
+}
+
+// jobMovingWindow is how long a sweep may go without settling a page before its
+// progress stops counting as evidence that the tracker is alive.
+//
+// Generous on purpose, and for the reason the watchdog's own margin is
+// generous: a *failing* page still counts as activity, and rutracker through
+// the browser takes minutes per page. Shorter than the watchdog's 45-minute
+// stall limit, because this only decides what a row says.
+const jobMovingWindow = 10 * time.Minute
+
+// TrackerHealth is the decision, not its presentation: the page maps Key to a
+// label and a colour, and the badge counts Attention.
+type TrackerHealth struct {
+	Key       string `json:"key"`
+	Attention bool   `json:"attention"`
+	// Why explains a verdict a reader would otherwise have to reconstruct from
+	// timestamps — today only the superseded case uses it.
+	Why string `json:"why,omitempty"`
+}
+
+// trackerHealth reads the freshest *meaningful* evidence about a tracker.
+//
+// The case that forced this: on 2026-11-16 the page reported rutracker as "нет
+// входа" while the log showed it parsing. All three of its recorded runs said
+// work_login — at 14:10, 14:45 and 14:50 — and the session store said the
+// login had succeeded at **14:55:24**. Every one of those verdicts was older
+// than the authorisation that disproved it, and the page had the data to see
+// that and did not use it.
+//
+// So an authorisation failure older than AuthSince is superseded: the tracker
+// has logged in since. It is deliberately not reported as "работает" either —
+// no run has been observed since the login, and claiming success nobody
+// measured is how the old `fetched=0 failed=0` silent zeroes read as healthy.
+// It is reported as its own state, and it does not call for a human.
+func trackerHealth(st TrackerState) TrackerHealth {
+	if st.Disabled {
+		return TrackerHealth{Key: "disabled"}
+	}
+	if len(st.Runs) == 0 {
+		return TrackerHealth{Key: "unknown"}
+	}
+
+	run := st.Runs[0] // forTracker sorts newest first
+	authFailed := run.Status == core.StatusWorkLogin
+
+	// A sweep that is running and still settling pages outranks any recorded
+	// verdict older than it. Nothing else the page knows is this direct: the
+	// tracker is working while you read the row.
+	if j := st.Running; j != nil && time.Duration(j.IdleSeconds)*time.Second < jobMovingWindow {
+		return TrackerHealth{Key: "running", Why: j.Summary}
+	}
+
+	if authFailed && st.AuthSince != nil && st.AuthSince.After(run.At) {
+		// Prefer a later run that actually succeeded, if the store has one.
+		for _, r := range st.Runs {
+			if r.At.After(*st.AuthSince) && r.Ok() {
+				return TrackerHealth{Key: "ok"}
+			}
+		}
+		return TrackerHealth{
+			Key: "authed-since",
+			Why: "вход выполнен после последнего прогона (" +
+				st.AuthSince.Local().Format("15:04:05") + ")",
+		}
+	}
+
+	switch {
+	case authFailed:
+		return TrackerHealth{Key: "auth", Attention: true}
+	case run.Status == "cf-challenge":
+		return TrackerHealth{Key: "cf", Attention: true}
+	case run.HTTP >= 400 || run.Error != "" || run.Status == "error":
+		return TrackerHealth{Key: "error", Attention: true}
+	case run.Failed > 0:
+		return TrackerHealth{Key: "partial", Attention: true}
+	}
+	return TrackerHealth{Key: "ok"}
 }
 
 // trackerNames is the set the cron routes expose, in the order the settings
@@ -387,6 +494,24 @@ func (s *Server) handleStatsParsers(w http.ResponseWriter, r *http.Request) {
 	}
 
 	out := make([]TrackerState, 0, len(trackerNames))
+	// One snapshot for the whole response: RunningJobs takes a lock, and the
+	// page would otherwise ask once per tracker.
+	running := map[string]TrackerJob{}
+	for _, j := range core.RunningJobs() {
+		if j.Cancelled != "" {
+			continue
+		}
+		running[j.Tracker] = TrackerJob{
+			Op:             j.Op,
+			PagesCompleted: j.PagesDone,
+			PagesTotal:     j.PagesTotal,
+			Percent:        j.Percent,
+			ElapsedSeconds: int(j.Elapsed.Seconds()),
+			IdleSeconds:    int(j.Idle.Seconds()),
+			Summary:        j.Summary,
+		}
+	}
+
 	for _, name := range trackerNames {
 		ts := trackerSettings(cfg, name)
 		st := TrackerState{
@@ -428,6 +553,10 @@ func (s *Server) handleStatsParsers(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
+		if j, ok := running[st.Name]; ok {
+			st.Running = &j
+		}
+		st.Health = trackerHealth(st)
 		out = append(out, st)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"count": len(out), "trackers": out})

@@ -189,29 +189,67 @@
         return m + ' м ' + String(Math.round(sec - m * 60)).padStart(2, '0') + ' с';
       }
 
-      // A run is only "ok" when the endpoint said so. The three statuses that
-      // mean "a human has to do something" are separated from a plain error,
-      // because the fix differs: work_login needs credentials, cf-challenge
-      // needs the browser, an error needs the log.
+      // The verdict comes from the server (`t.health`), which is the only place
+      // that decides it. It used to be computed here *and* again in
+      // assets/app.js for the sidebar badge, and the two had already drifted —
+      // the badge counted `failed > 0` as needing a human while this did not.
+      // Keep presentation here; never re-derive the decision.
+      var HEALTH_STYLE = {
+        disabled:       { label: 'выключен',      fg: '#9ca3af', bg: 'rgba(107,114,128,0.14)', dot: '#6b7280' },
+        unknown:        { label: 'нет данных',    fg: '#9ca3af', bg: 'rgba(107,114,128,0.14)', dot: '#6b7280' },
+        auth:           { label: 'нет входа',     fg: '#fbbf24', bg: 'rgba(245,158,11,0.14)', dot: '#f59e0b' },
+        cf:             { label: 'CF challenge',  fg: '#fbbf24', bg: 'rgba(245,158,11,0.14)', dot: '#f59e0b' },
+        error:          { label: 'ошибка',        fg: '#f87171', bg: 'rgba(239,68,68,0.14)',  dot: '#ef4444' },
+        partial:        { label: 'частично',      fg: '#fbbf24', bg: 'rgba(245,158,11,0.14)', dot: '#f59e0b' },
+        // The last run failed to authorise, but the tracker has logged in
+        // since. Deliberately not shown as "работает": no run has been seen
+        // after that login, and asserting a success nobody measured is how the
+        // old silent zeroes read as healthy.
+        'authed-since': { label: 'вошёл позже',   fg: '#93c5fd', bg: 'rgba(59,130,246,0.14)', dot: '#60a5fa' },
+        // A sweep is running and still settling pages. The strongest evidence
+        // the page has, and it had none of it before: rutracker sat at
+        // 572/10862 pages, moving, while the row read "нет входа".
+        running:        { label: 'идёт обход',    fg: '#93c5fd', bg: 'rgba(59,130,246,0.14)', dot: '#60a5fa' },
+        ok:             { label: 'работает',      fg: '#34d399', bg: 'rgba(16,185,129,0.14)', dot: '#10b981' }
+      };
+
       function health(t) {
-        if (t.disabled) return { key: 'disabled', label: 'выключен', fg: '#9ca3af', bg: 'rgba(107,114,128,0.14)', dot: '#6b7280' };
-        var r = (t.runs || [])[0];
-        if (!r) return { key: 'unknown', label: 'нет данных', fg: '#9ca3af', bg: 'rgba(107,114,128,0.14)', dot: '#6b7280' };
-        if (r.status === 'work_login') return { key: 'auth', label: 'нет входа', fg: '#fbbf24', bg: 'rgba(245,158,11,0.14)', dot: '#f59e0b' };
-        if (r.status === 'cf-challenge') return { key: 'cf', label: 'CF challenge', fg: '#fbbf24', bg: 'rgba(245,158,11,0.14)', dot: '#f59e0b' };
-        if (r.http >= 400 || r.error || r.status === 'error') return { key: 'error', label: 'ошибка', fg: '#f87171', bg: 'rgba(239,68,68,0.14)', dot: '#ef4444' };
-        if (r.failed > 0) return { key: 'partial', label: 'частично', fg: '#fbbf24', bg: 'rgba(245,158,11,0.14)', dot: '#f59e0b' };
-        return { key: 'ok', label: 'работает', fg: '#34d399', bg: 'rgba(16,185,129,0.14)', dot: '#10b981' };
+        var h = t.health || { key: 'unknown' };
+        var style = HEALTH_STYLE[h.key] || HEALTH_STYLE.unknown;
+        return { key: h.key, attention: !!h.attention, why: h.why || '',
+                 label: style.label, fg: style.fg, bg: style.bg, dot: style.dot };
       }
 
       function lastRunCell(t) {
         var r = (t.runs || [])[0];
         if (t.disabled) return '<span class="text-sm text-gray-500 dark:text-gray-400">выключен в disable_trackers</span>';
+        // A sweep in flight is what the operator wants first: the recorded run
+        // is by definition the *previous* one, and reading it as the current
+        // state is exactly what made this page misleading.
+        if (t.running) {
+          var j = t.running;
+          var pct = (j.percent === 0 || j.percent) ? j.percent : null;
+          var bar = pct === null ? '' :
+            '<div class="mt-1 h-1 w-full rounded bg-gray-200 dark:bg-gray-800 overflow-hidden" style="max-width:220px">' +
+              '<div class="h-full rounded" style="width:' + Math.max(1, Math.min(100, pct)) + '%;background:#60a5fa"></div></div>';
+          return '<div class="min-w-0">' +
+            '<div class="text-sm" style="color:#93c5fd">' + esc(j.summary || j.job) + '</div>' + bar +
+            '<div class="tk-num text-gray-500 dark:text-gray-400">' + esc(j.job) +
+              (j.idleSeconds ? ' · без новой страницы ' + j.idleSeconds + ' с' : ' · идёт') +
+              (r ? ' · прошлый: ' + esc(r.op) + ' ' + ago(r.at) : '') + '</div>' +
+            '</div>';
+        }
         if (!r) return '<span class="text-sm text-gray-500 dark:text-gray-400">ещё не запускался</span>';
         if (r.error) {
+          // When the server says the failure has been superseded, say so right
+          // next to it. Without this the row reads as the current state, which
+          // is exactly how "нет входа" got reported over a tracker that had
+          // logged in five minutes later and was parsing.
+          var why = health(t).why;
           return '<div class="min-w-0">' +
-            '<div class="text-sm" style="color:#fbbf24">' + esc(r.error) + '</div>' +
-            '<div class="tk-num text-gray-500 dark:text-gray-400">' + ago(r.at) + ' · HTTP ' + r.http + '</div>' +
+            '<div class="text-sm" style="color:' + (why ? '#9ca3af' : '#fbbf24') + '">' + esc(r.error) + '</div>' +
+            (why ? '<div class="text-sm" style="color:#93c5fd">' + esc(why) + '</div>' : '') +
+            '<div class="tk-num text-gray-500 dark:text-gray-400">' + esc(r.op) + ' · ' + ago(r.at) + ' · HTTP ' + r.http + '</div>' +
             '</div>';
         }
         var parts = '<span class="tk-num text-gray-700 dark:text-gray-300">' + r.fetched + '</span>';
@@ -239,7 +277,7 @@
       function rowHTML(t) {
         var h = health(t);
         var cls = 'tk-grid tk-row';
-        if (h.key === 'auth' || h.key === 'error' || h.key === 'cf') cls += ' tk-row--attention';
+        if (h.attention) cls += ' tk-row--attention';
         if (t.disabled) cls += ' tk-row--muted';
         var busy = state.busy[t.name];
         return '<div class="' + cls + '" data-name="' + esc(t.name) + '">' +
@@ -268,7 +306,7 @@
           var k = health(t).key;
           if (t.disabled) n.disabled++;
           else if (k === 'ok') n.ok++;
-          else if (k === 'auth' || k === 'error' || k === 'cf' || k === 'partial') n.attention++;
+          else if (health(t).attention) n.attention++;
           if (t.route === 'flare') n.flare++;
         });
         function tile(label, value, color, border) {

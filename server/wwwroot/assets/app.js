@@ -177,13 +177,14 @@
     // human. Without it a dead tracker stays invisible until someone opens the
     // trackers page or the log.
     fillOne('/stats/parsers', function (d) {
+      // The verdict is the server's (`t.health.attention`). This used to
+      // re-derive it from the raw run, and it had already drifted from the
+      // trackers page — it counted `failed > 0` while the page did not — and
+      // neither knew that an authorisation failure older than the last
+      // successful login is superseded. One decision, two renderers.
       var n = 0;
       (d.trackers || []).forEach(function (t) {
-        if (t.disabled) return;
-        var r = (t.runs || [])[0];
-        if (!r) return;
-        if (r.status === 'work_login' || r.status === 'cf-challenge' ||
-            r.status === 'error' || r.error || r.http >= 400 || r.failed > 0) n++;
+        if (t.health && t.health.attention) n++;
       });
       var badge = document.querySelector('#appHeader [data-attention]');
       if (!badge) return;
