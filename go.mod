@@ -9,7 +9,7 @@ require (
 	github.com/bogdanfinn/tls-client v1.15.1
 	github.com/bogdanfinn/utls v1.7.7-barnius
 	github.com/fsnotify/fsnotify v1.10.1
-	github.com/trinity-aml/flaresolverr-go v0.0.0-20261116091008-cdcaf1674dda
+	github.com/trinity-aml/flaresolverr-go v0.0.0-20261116144910-208b3a490c9f
 	github.com/ulikunitz/xz v0.5.15
 )
 
