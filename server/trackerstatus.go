@@ -367,10 +367,20 @@ func trackerHealth(st TrackerState) TrackerHealth {
 	run := st.Runs[0] // forTracker sorts newest first
 	authFailed := run.Status == core.StatusWorkLogin
 
-	// A sweep that is running and still settling pages outranks any recorded
-	// verdict older than it. Nothing else the page knows is this direct: the
-	// tracker is working while you read the row.
-	if j := st.Running; j != nil && time.Duration(j.IdleSeconds)*time.Second < jobMovingWindow {
+	// A sweep that is running *and has settled at least one page* outranks any
+	// recorded verdict older than it. Nothing else the page knows is this
+	// direct: the tracker is working while you read the row.
+	//
+	// PagesCompleted > 0 is load-bearing, and the first deploy of this rule
+	// proved it. A restart fires the whole crontab at once, and eight seconds
+	// later nineteen of twenty trackers reported `running · elapsed 8s` with no
+	// pages done — IdleSeconds is 0 at that moment only because nothing has
+	// settled yet, so the window test passed trivially and every row went
+	// quiet, including any that was genuinely in trouble. A job that has never
+	// settled a page is not evidence of anything; ops that walk no cycle at all
+	// (`parse`) never report pages and so never suppress a verdict.
+	if j := st.Running; j != nil && j.PagesCompleted > 0 &&
+		time.Duration(j.IdleSeconds)*time.Second < jobMovingWindow {
 		return TrackerHealth{Key: "running", Why: j.Summary}
 	}
 

@@ -181,3 +181,27 @@ func TestTheLiveSweepIsRenderedFromTheServersField(t *testing.T) {
 		t.Error("the page polls the jobs endpoint itself; the snapshot comes with /stats/parsers so the row and the verdict cannot disagree")
 	}
 }
+
+// TestASweepWithNoProgressYetDoesNotSuppressAVerdict is the regression guard for
+// a flaw the first deploy exposed. A restart fires the whole crontab at once,
+// and eight seconds later production reported `running · elapsed 8s` with zero
+// pages done for nineteen of twenty trackers — IdleSeconds is 0 then only
+// because nothing has settled yet, so the window test passed trivially and
+// every row went quiet. A job that has never settled a page proves nothing.
+func TestASweepWithNoProgressYetDoesNotSuppressAVerdict(t *testing.T) {
+	st := TrackerState{
+		Runs: []TrackerRun{
+			{Op: "parse", At: at("14:50:00"), HTTP: 500, Status: core.StatusWorkLogin, Error: "not authorized"},
+		},
+		Running: &TrackerJob{Op: "parsealltask", PagesCompleted: 0, PagesTotal: 1129, IdleSeconds: 0},
+	}
+	if got := trackerHealth(st); !got.Attention || got.Key != "auth" {
+		t.Errorf("a sweep that has settled no pages suppressed the verdict: %+v", got)
+	}
+
+	// One settled page is enough — that is measured progress.
+	st.Running.PagesCompleted = 1
+	if got := trackerHealth(st); got.Attention || got.Key != "running" {
+		t.Errorf("a sweep that has settled a page is not being trusted: %+v", got)
+	}
+}
