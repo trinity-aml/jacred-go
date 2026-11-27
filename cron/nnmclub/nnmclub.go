@@ -3,6 +3,7 @@ package nnmclub
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html"
 	"io"
@@ -546,7 +547,17 @@ func (p *Parser) ParseAllTask(ctx context.Context, force bool) (string, error) {
 			items, err := p.parsePage(ctx, cat, task.Page)
 			if err != nil {
 				log.Printf("nnmclub: parsealltask cat=%s page=%d error: %v", cat, task.Page, err)
-				p.settle(cycle, cat, task.Page, false)
+				// A refused session is not this page's fault, so it must not
+				// spend the cycle's failure budget: after
+				// core.ParseAllFailBudget attempts the page settles as swept
+				// having never been read. This parser keeps the guest body
+				// rather than failing on it, so parsePage does not currently
+				// reach here with the sentinel — the exemption is the same
+				// rule the other parsers apply, held uniformly so it stays
+				// right if that ever changes.
+				if !errors.Is(err, core.ErrNotAuthorized) {
+					p.settle(cycle, cat, task.Page, false)
+				}
 				errs++
 				continue
 			}

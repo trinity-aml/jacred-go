@@ -188,3 +188,77 @@ func isZeroLiteral(e ast.Expr) bool {
 	}
 	return false
 }
+
+// An authorization failure must not spend a page's cycle budget.
+//
+// settle(cycle, …, false) records a failed attempt, and after
+// core.ParseAllFailBudget of them the page settles as swept without ever
+// having been read — which is correct for a page that genuinely cannot be
+// fetched and wrong for one the tracker refused, because the refusal is not
+// the page's fault and every other page in the map will meet it too. The same
+// line is already drawn for core.ErrFlareCooldown, whose own comment records
+// 3 169 of rutracker's 3 295 lost pages in one night.
+//
+// Only parsers that actually produce the sentinel are in scope: a tracker with
+// no login cannot reach this branch. The check is proximity-based over
+// comment-stripped source rather than an AST walk, which is enough because
+// every one of these sites is the first statement of an `if err != nil` block
+// — but it means a refactor that moves the exemption far from the settle call
+// would have to re-satisfy it deliberately.
+func TestAnAuthorizationFailureDoesNotSpendTheCycleBudget(t *testing.T) {
+	files, err := filepath.Glob("../cron/*/*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	settleRe := regexp.MustCompile(`p\.settle\(cycle[^)]*,\s*false\)`)
+	checked := 0
+	for _, path := range files {
+		if strings.HasSuffix(path, "_test.go") {
+			continue
+		}
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		src := stripLineComments(string(raw))
+		// A parser that never reports an authorization failure cannot reach
+		// this branch, so requiring the exemption of it would be noise.
+		if !strings.Contains(src, "core.ErrNotAuthorized") {
+			continue
+		}
+		lines := strings.Split(src, "\n")
+		for i, line := range lines {
+			if !settleRe.MatchString(line) {
+				continue
+			}
+			checked++
+			from := i - 12
+			if from < 0 {
+				from = 0
+			}
+			window := strings.Join(lines[from:i], "\n")
+			if !strings.Contains(window, "errors.Is(err, core.ErrNotAuthorized)") {
+				t.Errorf("%s:%d: settle(..., false) with no core.ErrNotAuthorized exemption above it — "+
+					"a refused session will settle pages it never read", path, i+1)
+			}
+		}
+	}
+	if checked == 0 {
+		t.Fatal("found no settle(cycle, ..., false) calls in a parser that reports authorization failures — this guard is no longer looking at anything")
+	}
+}
+
+// stripLineComments removes // comments so that an explanation quoting the
+// code a guard forbids can neither satisfy nor trip it. Both mistakes are on
+// record in this tree.
+func stripLineComments(src string) string {
+	var out strings.Builder
+	for _, line := range strings.Split(src, "\n") {
+		if i := strings.Index(line, "//"); i >= 0 {
+			line = line[:i]
+		}
+		out.WriteString(line)
+		out.WriteByte('\n')
+	}
+	return out.String()
+}
