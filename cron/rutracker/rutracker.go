@@ -933,6 +933,17 @@ func (p *Parser) parsePage(ctx context.Context, cat string, page int) ([]filedb.
 		if err := p.ensureLogin(ctx); err != nil {
 			return nil, err
 		}
+		// Drop the cached flare session before retrying, or the retry replays
+		// the *old* auth cookie and sees the login form again. Measured live
+		// 2026-11-27: the solve logged `handing rutracker.org session to the
+		// browser [bb_session bb_data]` with the dead values, came back
+		// `cookies=4 [cf_clearance bb_data bb_guid bb_session]`, and
+		// fetchWithCookies sends the session's set first — so the fresh
+		// bb_session the login had just minted never left this process and
+		// the retry failed over a session that was in fact fine. Once per
+		// re-login, not per page: bitru's per-page invalidation is the shape
+		// that caused a cold-solve storm.
+		p.Fetcher.InvalidateSession(requestHost(p.Config.Rutracker))
 		htmlBody, err = p.fetchPage(ctx, cat, page)
 		if err != nil {
 			return nil, err
