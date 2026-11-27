@@ -95,13 +95,23 @@ type Parser struct {
 	// both swept at once — parsealltask is scheduled every few minutes while a
 	// full sweep runs for hours — so two runs drove the same session, the same
 	// login path and the same rate limit at the tracker.
-	busy             bool
-	latestMu         sync.Mutex
-	tasks            map[string][]Task
-	cookieMu         sync.Mutex
-	dynCookie        string
-	lastLoginAttempt time.Time
-	domain           string
+	busy      bool
+	latestMu  sync.Mutex
+	tasks     map[string][]Task
+	cookieMu  sync.Mutex
+	dynCookie string
+	// lastLoginFail holds off a login the server refused. It records
+	// failures only: a successful login is immediately followed by the page
+	// that needed it, so a window counted from a success would block the
+	// recovery it exists to protect.
+	lastLoginFail time.Time
+	// lastGuestRecovery bounds how often a guest page triggers a
+	// re-authentication, whatever the login's outcome. lastLoginFail cannot
+	// bound that on its own: a login that *succeeds* while the page still
+	// comes back as a guest page would mean one login POST per page, and a
+	// sweep here is 218 of them.
+	lastGuestRecovery time.Time
+	domain            string
 }
 
 type ParseResult struct {
@@ -143,7 +153,12 @@ func (p *Parser) Parse(ctx context.Context, page int) (ParseResult, error) {
 	if strings.TrimSpace(p.Config.TorrentBy.Host) == "" {
 		return ParseResult{Status: "config missing"}, nil
 	}
-	p.ensureLogin(ctx)
+	// Deliberately not fatal, unlike mazepa's: the catalog is public, so a
+	// run without a session still returns records, and aborting would turn a
+	// working tracker into zero.
+	if err := p.ensureLogin(ctx); err != nil {
+		log.Printf("torrentby: %v — continuing as a guest, the catalog is public", err)
+	}
 
 	res := ParseResult{Status: "ok", PerCategory: map[string]int{}}
 	for _, cat := range categories {
@@ -171,7 +186,12 @@ func (p *Parser) Parse(ctx context.Context, page int) (ParseResult, error) {
 }
 
 func (p *Parser) UpdateTasksParse(ctx context.Context) (map[string][]Task, error) {
-	p.ensureLogin(ctx)
+	// Deliberately not fatal, unlike mazepa's: the catalog is public, so a
+	// run without a session still returns records, and aborting would turn a
+	// working tracker into zero.
+	if err := p.ensureLogin(ctx); err != nil {
+		log.Printf("torrentby: %v — continuing as a guest, the catalog is public", err)
+	}
 
 	// Discover max page per category by following "..." pagination links.
 	// Done WITHOUT holding p.mu to avoid deadlock (fetches call cookie()).
@@ -289,7 +309,12 @@ func (p *Parser) settle(cycle *core.ParseAllCycle, cat string, page int, ok bool
 }
 
 func (p *Parser) ParseAllTask(ctx context.Context, force bool) (string, error) {
-	p.ensureLogin(ctx)
+	// Deliberately not fatal, unlike mazepa's: the catalog is public, so a
+	// run without a session still returns records, and aborting would turn a
+	// working tracker into zero.
+	if err := p.ensureLogin(ctx); err != nil {
+		log.Printf("torrentby: %v — continuing as a guest, the catalog is public", err)
+	}
 	p.mu.Lock()
 	if p.busy {
 		p.mu.Unlock()
@@ -383,7 +408,12 @@ func (p *Parser) ParseLatest(ctx context.Context, pages int) (string, error) {
 		return "work", nil
 	}
 	defer p.latestMu.Unlock()
-	p.ensureLogin(ctx)
+	// Deliberately not fatal, unlike mazepa's: the catalog is public, so a
+	// run without a session still returns records, and aborting would turn a
+	// working tracker into zero.
+	if err := p.ensureLogin(ctx); err != nil {
+		log.Printf("torrentby: %v — continuing as a guest, the catalog is public", err)
+	}
 	if pages <= 0 {
 		pages = 5
 	}
@@ -486,11 +516,51 @@ func (p *Parser) parsePage(ctx context.Context, cat string, page int) ([]filedb.
 	}
 	normalized := replaceBadNames(html.UnescapeString(string(body)))
 	if p.loggedOut(normalized) {
-		log.Printf("torrentby: cat=%s page=%d returned login form (cookie expired, invalidating)", cat, page)
-		p.invalidateCookie()
-		return nil, nil
+		normalized = p.recoverFromGuestPage(ctx, rawURL, cat, page, normalized)
 	}
 	return parsePageHTML(strings.TrimRight(p.Config.TorrentBy.Host, "/"), cat, normalized, time.Now().UTC()), nil
+}
+
+// recoverFromGuestPage re-authenticates and fetches the page again, returning
+// the authorized body if it gets one and the guest body unchanged if it does
+// not.
+//
+// The guest body is kept on purpose, and that is the difference from every
+// other gated parser here: torrentby publishes its whole catalog, magnets
+// included, to logged-out visitors. Measured live 2026-11-27 on
+// /films/?page=1 — 127 723 bytes, 100 of 100 rows parsed with real magnets,
+// `/logout` absent so loggedOut() fires. The old code returned `nil, nil` for
+// exactly that page, and `parsealltask` then read the empty result as "this
+// page holds nothing" and settled it as swept (`torrentby.go` settle(…, true)),
+// so a dead session silently dropped 100 records per page *and* consumed the
+// sweep plan. That is the same shape that cost mazepa 445 pages on this box.
+//
+// The attempt is rate-limited by beginGuestRecovery rather than by the
+// login-failure cooldown, because the storm case here is a login that
+// *succeeds* while the page still comes back as a guest page — nothing fails,
+// so a failure cooldown never arms.
+func (p *Parser) recoverFromGuestPage(ctx context.Context, rawURL, cat string, page int, guestBody string) string {
+	if !p.beginGuestRecovery() {
+		return guestBody
+	}
+	log.Printf("torrentby: cat=%s page=%d served to a guest — re-authenticating", cat, page)
+	p.invalidateCookie()
+	if err := p.ensureLogin(ctx); err != nil {
+		log.Printf("torrentby: re-login failed (%v) — parsing the guest page, the catalog is public", err)
+		return guestBody
+	}
+	body, err := p.httpGet(ctx, rawURL, p.cookie())
+	if err != nil || len(body) == 0 {
+		log.Printf("torrentby: re-fetch of cat=%s page=%d failed (%v) — parsing the guest page", cat, page, err)
+		return guestBody
+	}
+	normalized := replaceBadNames(html.UnescapeString(string(body)))
+	if p.loggedOut(normalized) {
+		log.Printf("torrentby: cat=%s page=%d still served to a guest after a fresh login — parsing it anyway", cat, page)
+		return guestBody
+	}
+	log.Printf("torrentby: re-login recovered cat=%s page=%d", cat, page)
+	return normalized
 }
 
 func (p *Parser) fetchCategoryRoot(ctx context.Context, cat string) (string, error) {
@@ -725,14 +795,6 @@ func (p *Parser) cookie() string {
 }
 
 func (p *Parser) takeLogin(ctx context.Context) error {
-	p.cookieMu.Lock()
-	if time.Since(p.lastLoginAttempt) < 2*time.Minute {
-		p.cookieMu.Unlock()
-		return nil
-	}
-	p.lastLoginAttempt = time.Now()
-	p.cookieMu.Unlock()
-
 	host := strings.TrimRight(p.Config.TorrentBy.Host, "/")
 	if host == "" || strings.TrimSpace(p.Config.TorrentBy.Login.U) == "" {
 		return fmt.Errorf("torrentby: no host or login configured")
@@ -784,11 +846,62 @@ func (p *Parser) takeLogin(ctx context.Context) error {
 	return fmt.Errorf("torrentby: login failed: %w", core.ErrNotAuthorized)
 }
 
-func (p *Parser) ensureLogin(ctx context.Context) {
+// loginCooldown is the minimum gap after a login the server refused. The
+// cooldown branch returns an error rather than nil: "we tried two minutes ago
+// and were turned away" and "we are logged in" must not look the same to the
+// caller.
+const loginCooldown = 2 * time.Minute
+
+// guestRecoveryInterval bounds re-authentication driven by the page path.
+const guestRecoveryInterval = 2 * time.Minute
+
+// ensureLogin authenticates if there is no usable session, and is safe to call
+// from the middle of a run. It used to swallow the error entirely
+// (`_ = p.takeLogin(ctx)`), so a refused password, a renamed cookie and a
+// transport failure were all silent.
+//
+// A missing login is *not* an error here, unlike every other gated tracker in
+// this tree: torrentby publishes its whole catalog to logged-out visitors, so
+// guest mode is a supported mode — `loggedOut` itself skips the check when no
+// user is configured.
+func (p *Parser) ensureLogin(ctx context.Context) error {
 	if p.cookie() != "" {
-		return
+		return nil
 	}
-	_ = p.takeLogin(ctx)
+	if strings.TrimSpace(p.Config.TorrentBy.Login.U) == "" {
+		return nil
+	}
+	p.cookieMu.Lock()
+	if !p.lastLoginFail.IsZero() {
+		if wait := loginCooldown - time.Since(p.lastLoginFail); wait > 0 {
+			p.cookieMu.Unlock()
+			return fmt.Errorf("torrentby: login retry held off for %s after a refused attempt: %w",
+				wait.Round(time.Second), core.ErrNotAuthorized)
+		}
+	}
+	p.cookieMu.Unlock()
+
+	err := p.takeLogin(ctx)
+	p.cookieMu.Lock()
+	if err != nil {
+		p.lastLoginFail = time.Now()
+	} else {
+		p.lastLoginFail = time.Time{}
+	}
+	p.cookieMu.Unlock()
+	return err
+}
+
+// beginGuestRecovery reports whether the page path may spend a login attempt
+// now, and stamps the window if so.
+func (p *Parser) beginGuestRecovery() bool {
+	p.cookieMu.Lock()
+	defer p.cookieMu.Unlock()
+	if !p.lastGuestRecovery.IsZero() && time.Since(p.lastGuestRecovery) < guestRecoveryInterval {
+		return false
+	}
+	p.lastGuestRecovery = time.Now()
+	return true
 }
 
 // loggedOut returns true when torrentby rendered a page for a guest.
@@ -810,10 +923,12 @@ func (p *Parser) loggedOut(body string) bool {
 	return !strings.Contains(body, "/logout") && strings.Contains(body, "/login/")
 }
 
+// invalidateCookie clears the in-memory and on-disk cookie so the next
+// ensureLogin re-authenticates. It deliberately does *not* clear
+// lastLoginFail: a cooldown the page path can reset is not a cooldown.
 func (p *Parser) invalidateCookie() {
 	p.cookieMu.Lock()
 	p.dynCookie = ""
-	p.lastLoginAttempt = time.Time{}
 	p.cookieMu.Unlock()
 	_ = core.DefaultSessionStore().DeleteAuth(p.domain)
 }
