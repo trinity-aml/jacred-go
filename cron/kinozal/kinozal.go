@@ -283,10 +283,29 @@ func (p *Parser) UpdateTasksParse(ctx context.Context) (map[string]map[string][]
 	return cloneTasks(p.tasks), nil
 }
 
+// sweptByParseAllTask reports whether a browse argument belongs to the full
+// sweep's plan.
+//
+// kinozal's map is nested: category, then the browse argument, then pages. The
+// per-year arguments (`&d=<year>&t=1`) are what UpdateTasksParse builds and
+// what ParseAllTask walks. The **empty** argument is ParseLatest's own bucket —
+// markLatestPageToday stamps the plain unfiltered listing there, 100 pages per
+// category — and ParseAllTask has always skipped it, because those pages
+// belong to the partial task.
+//
+// This is one predicate rather than a condition repeated per loop because the
+// cycle has to count exactly what the sweep visits. It did not: the cycle
+// builder took every argument, so 2500 of kinozal's 8901 slots (25 categories
+// x 100 latest pages) were counted and never visited, pending could not reach
+// zero, and the cycle opened on 2026-09-26 never rotated. Measured on
+// production 2026-11-27 — 74 runs in one day, every one of them
+// `pending=2500->2500/8901 … processed=0/6401`, i.e. a full sweep that had done
+// nothing for two months while reporting ok.
+func sweptByParseAllTask(arg string) bool { return arg != "" }
+
 // beginCycleLocked opens (or rotates) the sweep cycle. Caller holds p.mu.
-// kinozal's map is nested: category, then the browse argument, then pages.
 func (p *Parser) beginCycleLocked() (*core.ParseAllCycle, int, int) {
-	slots, keys := core.CycleSlotsFromNestedMap[Task](p.tasks, func(t Task) int { return t.Page })
+	slots, keys := core.CycleSlotsFromNestedMap[Task](p.tasks, func(t Task) int { return t.Page }, sweptByParseAllTask)
 	cycle, pending := core.BeginParseAllCycle(
 		core.ParseAllCyclePath(p.DataDir, trackerName),
 		core.MapFingerprint(keys),
@@ -360,7 +379,7 @@ func (p *Parser) ParseAllTask(ctx context.Context, force bool) (string, error) {
 	totalPages := 0
 	for _, byArg := range snapshot {
 		for arg, list := range byArg {
-			if arg == "" {
+			if !sweptByParseAllTask(arg) {
 				continue
 			}
 			totalPages += len(list)
@@ -369,7 +388,7 @@ func (p *Parser) ParseAllTask(ctx context.Context, force bool) (string, error) {
 	processed, fetched, added, updated, skipped, failed, errs := 0, 0, 0, 0, 0, 0, 0
 	for cat, byArg := range snapshot {
 		for arg, list := range byArg {
-			if arg == "" {
+			if !sweptByParseAllTask(arg) {
 				continue
 			}
 			for _, task := range list {
@@ -420,7 +439,7 @@ func (p *Parser) ParseAllTask(ctx context.Context, force bool) (string, error) {
 		}
 	}
 	p.mu.Lock()
-	cycleSlots, _ := core.CycleSlotsFromNestedMap[Task](p.tasks, func(t Task) int { return t.Page })
+	cycleSlots, _ := core.CycleSlotsFromNestedMap[Task](p.tasks, func(t Task) int { return t.Page }, sweptByParseAllTask)
 	pendingLeft := core.CountPendingInCycle(cycleSlots, cycle)
 	p.mu.Unlock()
 	log.Printf("kinozal: parsealltask cycle=%s pending=%d->%d/%d", cycle.CycleID, pendingAtStart, pendingLeft, cycleTotal)

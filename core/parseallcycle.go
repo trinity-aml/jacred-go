@@ -307,10 +307,18 @@ func CycleSlotsFromSlice[T any, PT interface {
 
 // CycleSlotsFromNestedMap is CycleSlotsFromMap for a parser whose map is keyed
 // by category and then by a second argument (kinozal).
+//
+// includeArg selects which of those arguments belong to the sweep, and it is
+// not decoration: a slot counted here that the sweep never visits can never
+// settle, so the cycle never completes, never rotates, and every page it had
+// already settled stays settled for good. kinozal carries one bucket per
+// category that ParseLatest writes and ParseAllTask skips; counting it held
+// the cycle open from 2026-09-26 to 2026-11-27, with every sweep in between
+// reporting processed=0. A nil predicate includes every argument.
 func CycleSlotsFromNestedMap[T any, PT interface {
 	*T
 	CycleSlot
-}](m map[string]map[string][]T, pageOf func(T) int) ([]CycleSlot, []string) {
+}](m map[string]map[string][]T, pageOf func(T) int, includeArg func(string) bool) ([]CycleSlot, []string) {
 	cats := make([]string, 0, len(m))
 	for k := range m {
 		cats = append(cats, k)
@@ -327,6 +335,9 @@ func CycleSlotsFromNestedMap[T any, PT interface {
 		}
 		sort.Strings(args)
 		for _, arg := range args {
+			if includeArg != nil && !includeArg(arg) {
+				continue
+			}
 			sub, subKeys := CycleSlotsFromSlice[T, PT](inner[arg], pageOf)
 			slots = append(slots, sub...)
 			for _, k := range subKeys {
