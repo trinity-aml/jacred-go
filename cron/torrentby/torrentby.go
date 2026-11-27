@@ -100,18 +100,8 @@ type Parser struct {
 	tasks     map[string][]Task
 	cookieMu  sync.Mutex
 	dynCookie string
-	// lastLoginFail holds off a login the server refused. It records
-	// failures only: a successful login is immediately followed by the page
-	// that needed it, so a window counted from a success would block the
-	// recovery it exists to protect.
-	lastLoginFail time.Time
-	// lastGuestRecovery bounds how often a guest page triggers a
-	// re-authentication, whatever the login's outcome. lastLoginFail cannot
-	// bound that on its own: a login that *succeeds* while the page still
-	// comes back as a guest page would mean one login POST per page, and a
-	// sweep here is 218 of them.
-	lastGuestRecovery time.Time
-	domain            string
+	gate      *core.LoginGate
+	domain    string
 }
 
 type ParseResult struct {
@@ -129,6 +119,7 @@ func New(cfg app.Config, db *filedb.DB, dataDir string) *Parser {
 		Timeout:   30 * time.Second,
 		Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}},
 	}, Fetcher: core.NewFetcher(cfg), loc: loc, tasks: map[string][]Task{}, domain: core.DomainFromHost(cfg.TorrentBy.Host)}
+	p.gate = core.NewLoginGate(trackerName)
 	_ = p.loadTasks()
 	if saved, _ := core.DefaultSessionStore().LoadAuth(p.domain); saved != "" {
 		p.dynCookie = saved
@@ -540,7 +531,7 @@ func (p *Parser) parsePage(ctx context.Context, cat string, page int) ([]filedb.
 // *succeeds* while the page still comes back as a guest page — nothing fails,
 // so a failure cooldown never arms.
 func (p *Parser) recoverFromGuestPage(ctx context.Context, rawURL, cat string, page int, guestBody string) string {
-	if !p.beginGuestRecovery() {
+	if !p.gate.BeginRecovery() {
 		return guestBody
 	}
 	log.Printf("torrentby: cat=%s page=%d served to a guest — re-authenticating", cat, page)
@@ -846,15 +837,6 @@ func (p *Parser) takeLogin(ctx context.Context) error {
 	return fmt.Errorf("torrentby: login failed: %w", core.ErrNotAuthorized)
 }
 
-// loginCooldown is the minimum gap after a login the server refused. The
-// cooldown branch returns an error rather than nil: "we tried two minutes ago
-// and were turned away" and "we are logged in" must not look the same to the
-// caller.
-const loginCooldown = 2 * time.Minute
-
-// guestRecoveryInterval bounds re-authentication driven by the page path.
-const guestRecoveryInterval = 2 * time.Minute
-
 // ensureLogin authenticates if there is no usable session, and is safe to call
 // from the middle of a run. It used to swallow the error entirely
 // (`_ = p.takeLogin(ctx)`), so a refused password, a renamed cookie and a
@@ -871,37 +853,10 @@ func (p *Parser) ensureLogin(ctx context.Context) error {
 	if strings.TrimSpace(p.Config.TorrentBy.Login.U) == "" {
 		return nil
 	}
-	p.cookieMu.Lock()
-	if !p.lastLoginFail.IsZero() {
-		if wait := loginCooldown - time.Since(p.lastLoginFail); wait > 0 {
-			p.cookieMu.Unlock()
-			return fmt.Errorf("torrentby: login retry held off for %s after a refused attempt: %w",
-				wait.Round(time.Second), core.ErrNotAuthorized)
-		}
+	if err := p.gate.HoldOff(); err != nil {
+		return err
 	}
-	p.cookieMu.Unlock()
-
-	err := p.takeLogin(ctx)
-	p.cookieMu.Lock()
-	if err != nil {
-		p.lastLoginFail = time.Now()
-	} else {
-		p.lastLoginFail = time.Time{}
-	}
-	p.cookieMu.Unlock()
-	return err
-}
-
-// beginGuestRecovery reports whether the page path may spend a login attempt
-// now, and stamps the window if so.
-func (p *Parser) beginGuestRecovery() bool {
-	p.cookieMu.Lock()
-	defer p.cookieMu.Unlock()
-	if !p.lastGuestRecovery.IsZero() && time.Since(p.lastGuestRecovery) < guestRecoveryInterval {
-		return false
-	}
-	p.lastGuestRecovery = time.Now()
-	return true
+	return p.gate.Note(p.takeLogin(ctx))
 }
 
 // loggedOut returns true when torrentby rendered a page for a guest.

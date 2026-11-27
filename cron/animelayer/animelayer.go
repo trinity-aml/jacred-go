@@ -426,7 +426,7 @@ func (p *Parser) validateCookie(ctx context.Context, cookie string) (bool, error
 // fetchListing gets one catalog page with an authorized cookie, re-logging in
 // and retrying once if animelayer answers with the anonymous page mid-run.
 func (p *Parser) fetchListing(ctx context.Context, rawURL string, page int) (string, string, error) {
-	var lastCookie string
+	var lastCookie, lastMarker string
 	for attempt := 0; attempt < 2; attempt++ {
 		cookie, err := p.ensureCookie(ctx)
 		if err != nil {
@@ -439,22 +439,32 @@ func (p *Parser) fetchListing(ctx context.Context, rawURL string, page int) (str
 			return "", "", err
 		}
 		if body == "" || !strings.Contains(body, `id="wrapper"`) {
-			log.Printf("animelayer: page %d empty or no wrapper, url=%s bodyLen=%d", page, rawURL, len(body))
-			return cookie, "", nil
+			// Not a silent zero: an empty body reads as "this page holds
+			// nothing" to the caller, which is indistinguishable from a quiet
+			// catalog.
+			return cookie, "", fmt.Errorf("animelayer: page %d returned %d bytes that are not a catalog page (%s)",
+				page, len(body), rawURL)
 		}
 		if !hasAnonymousMarkers(body) {
 			return cookie, body, nil
 		}
-		marker := anonymousMarker(body)
+		lastMarker = anonymousMarker(body)
 		if attempt == 0 && strings.TrimSpace(p.Config.Animelayer.Cookie) == "" {
-			log.Printf("animelayer: page %d was served anonymously (%s) — cookie expired, re-logging in", page, marker)
+			log.Printf("animelayer: page %d was served anonymously (%s) — cookie expired, re-logging in", page, lastMarker)
 			p.invalidateCookie()
 			continue
 		}
-		log.Printf("animelayer: page %d is still served anonymously (%s) — giving up", page, marker)
 		break
 	}
-	return lastCookie, "", nil
+	// The loop above already spent a fresh login, so a page still served
+	// anonymously is an authorization failure and must say so. Returning
+	// (cookie, "", nil) here was the silent zero, and for this tracker it is
+	// the expensive one: the catalog is public, so the rows are all there and
+	// only the .torrent attachment behind /torrent/<id>/download/ is gated —
+	// which is how a dead session once produced parsed=35 failed=35 with
+	// nothing naming authorization.
+	return lastCookie, "", fmt.Errorf("animelayer: page %d is still served anonymously (%s) after a fresh login: %w",
+		page, lastMarker, core.ErrNotAuthorized)
 }
 
 // hasAnonymousMarkers reports whether animelayer rendered the page for a

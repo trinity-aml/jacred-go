@@ -188,9 +188,7 @@ func TestTheLoginCooldownBranchReturnsAnError(t *testing.T) {
 	stub.mu.Lock()
 	stub.loginWorks = true
 	stub.mu.Unlock()
-	p.cookieMu.Lock()
-	p.lastLoginFail = time.Time{}
-	p.cookieMu.Unlock()
+	p.gate = core.NewLoginGate("torrentby")
 	if err := p.ensureLogin(context.Background()); err != nil {
 		t.Fatalf("login: %v", err)
 	}

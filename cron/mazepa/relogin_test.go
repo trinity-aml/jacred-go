@@ -9,7 +9,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"jacred/app"
 	"jacred/core"
@@ -197,9 +196,7 @@ func TestARefusedLoginIsHeldOffButASuccessfulOneIsNot(t *testing.T) {
 	stub.mu.Lock()
 	stub.loginWorks = true
 	stub.mu.Unlock()
-	p.mu.Lock()
-	p.lastLoginFail = time.Time{}
-	p.mu.Unlock()
+	p.gate = core.NewLoginGate("mazepa")
 
 	if err := p.ensureLogin(context.Background()); err != nil {
 		t.Fatalf("login: %v", err)

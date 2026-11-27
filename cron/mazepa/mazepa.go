@@ -138,12 +138,8 @@ type Parser struct {
 	tasks    map[string][]Task
 	cookie   string
 	cookieT  time.Time
-	// lastLoginFail holds off a login that was just refused. It records
-	// failures only: a *successful* login is immediately followed by the page
-	// that needed it, and a cooldown counted from a success would block the
-	// mid-run recovery it exists to protect.
-	lastLoginFail time.Time
-	domain        string
+	gate     *core.LoginGate
+	domain   string
 }
 
 type ParseResult struct {
@@ -159,6 +155,7 @@ func New(cfg app.Config, db *filedb.DB, dataDir string) *Parser {
 			return http.ErrUseLastResponse
 		},
 	}, Fetcher: core.NewFetcher(cfg), domain: core.DomainFromHost(cfg.Mazepa.Host)}
+	p.gate = core.NewLoginGate(trackerName)
 	_ = p.loadTasks()
 	if saved, savedT := core.DefaultSessionStore().LoadAuth(p.domain); saved != "" && time.Since(savedT) < 2*time.Hour {
 		p.cookie = saved
@@ -176,11 +173,6 @@ func (p *Parser) getCookie() string {
 	}
 	return ""
 }
-
-// loginCooldown is the minimum gap after a *refused* login before another is
-// attempted. Credentials that the server rejects are what earns an
-// anti-bruteforce block, and a sweep has over a thousand pages to retry on.
-const loginCooldown = 2 * time.Minute
 
 // takeLogin authenticates and stores the session cookie.
 //
@@ -244,37 +236,18 @@ func (p *Parser) ensureLogin(ctx context.Context) error {
 	if p.getCookie() != "" {
 		return nil
 	}
-	p.mu.Lock()
-	if !p.lastLoginFail.IsZero() {
-		if wait := loginCooldown - time.Since(p.lastLoginFail); wait > 0 {
-			p.mu.Unlock()
-			// An error, not nil. "We tried a moment ago and were refused" and
-			// "we are logged in" must not look the same to the caller, or the
-			// run continues unauthenticated and reports whatever a guest is
-			// served.
-			return fmt.Errorf("mazepa: login retry held off for %s after a refused attempt: %w",
-				wait.Round(time.Second), core.ErrNotAuthorized)
-		}
+	if err := p.gate.HoldOff(); err != nil {
+		return err
 	}
-	p.mu.Unlock()
-
-	err := p.takeLogin(ctx)
-	p.mu.Lock()
-	if err != nil {
-		p.lastLoginFail = time.Now()
-	} else {
-		p.lastLoginFail = time.Time{}
-	}
-	p.mu.Unlock()
-	return err
+	return p.gate.Note(p.takeLogin(ctx))
 }
 
 // invalidateCookie clears the in-memory and on-disk cookie so the next
 // ensureLogin re-authenticates.
 //
-// It deliberately does *not* clear lastLoginFail: this is called from the page
-// path, and a cooldown the page path can reset is not a cooldown. Only a
-// login that actually succeeds clears it.
+// It deliberately does *not* clear the gate's failure window: this is called
+// from the page path, and a cooldown the page path can reset is not a
+// cooldown. Only a login that actually succeeds clears it.
 func (p *Parser) invalidateCookie() {
 	p.mu.Lock()
 	p.cookie = ""
@@ -343,7 +316,9 @@ func (p *Parser) parseForumPage(ctx context.Context, pageURL string, types []str
 		return nil, "", err
 	}
 	if body == "" {
-		return nil, "", nil
+		// Not a silent zero: an empty body is a failed fetch, and the caller
+		// would otherwise settle the page as swept.
+		return nil, "", fmt.Errorf("mazepa: %s returned an empty body", pageURL)
 	}
 
 	// mazepa serves the forum to logged-out visitors too — a guest request to

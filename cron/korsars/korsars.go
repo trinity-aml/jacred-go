@@ -3,6 +3,7 @@ package korsars
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html"
 	"log"
@@ -108,6 +109,7 @@ type Parser struct {
 	busy     bool
 	latestMu sync.Mutex
 	tasks    map[string][]Task
+	gate     *core.LoginGate
 	cookieMu sync.Mutex
 	cookie   string
 	cookieT  time.Time
@@ -134,6 +136,7 @@ func New(cfg app.Config, db *filedb.DB, dataDir string) *Parser {
 		tasks:   map[string][]Task{},
 		domain:  core.DomainFromHost(cfg.Korsars.Host),
 	}
+	p.gate = core.NewLoginGate(trackerName)
 	_ = p.loadTasks()
 	if saved, savedT := core.DefaultSessionStore().LoadAuth(p.domain); saved != "" && time.Since(savedT) < 24*time.Hour {
 		p.cookie = saved
@@ -173,11 +176,14 @@ func (p *Parser) getCookie() string {
 // takeLogin POSTs login_username/login_password to /login.php. Korsars uses
 // phpBB-style sessions; the response sets a single bb_data cookie carrying
 // uid+sid+uk in URL-encoded PHP serialize. No CSRF token — just the form.
-func (p *Parser) takeLogin(ctx context.Context) bool {
+// It returns an error rather than a bool because the causes need different
+// responses, and bool collapsed them: "not configured" is permanent, a refused
+// password must not be retried in a loop, and a transport failure is worth
+// another try. All four entrypoints answered the same flat "login failed".
+func (p *Parser) takeLogin(ctx context.Context) error {
 	host := strings.TrimRight(p.Config.Korsars.Host, "/")
-	if host == "" || p.Config.Korsars.Login.U == "" {
-		log.Println("korsars: login skipped — no host or login configured")
-		return false
+	if host == "" || strings.TrimSpace(p.Config.Korsars.Login.U) == "" {
+		return fmt.Errorf("korsars: login is not configured: %w", core.ErrNotAuthorized)
 	}
 	log.Printf("korsars: attempting login to %s as %s", host, p.Config.Korsars.Login.U)
 	loginClient := &http.Client{
@@ -194,16 +200,14 @@ func (p *Parser) takeLogin(ctx context.Context) bool {
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, host+"/login.php", strings.NewReader(form.Encode()))
 	if err != nil {
-		log.Printf("korsars: login request error: %v", err)
-		return false
+		return fmt.Errorf("korsars: building the login request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
 	req.Header.Set("Referer", host+"/")
 	resp, err := loginClient.Do(req)
 	if err != nil {
-		log.Printf("korsars: login HTTP error: %v", err)
-		return false
+		return fmt.Errorf("korsars: login POST failed: %w", err)
 	}
 	defer resp.Body.Close()
 	log.Printf("korsars: login response status=%d", resp.StatusCode)
@@ -215,7 +219,7 @@ func (p *Parser) takeLogin(ctx context.Context) bool {
 	cookieStr := strings.Join(parts, "; ")
 	if !strings.Contains(cookieStr, "bb_data") {
 		log.Printf("korsars: login FAILED — no bb_data; cookies set: [%s]", core.CookieNames(cookieStr))
-		return false
+		return fmt.Errorf("korsars: login refused (status %d, no bb_data cookie): %w", resp.StatusCode, core.ErrNotAuthorized)
 	}
 	p.cookieMu.Lock()
 	p.cookie = cookieStr
@@ -223,14 +227,21 @@ func (p *Parser) takeLogin(ctx context.Context) bool {
 	p.cookieMu.Unlock()
 	_ = core.DefaultSessionStore().SaveAuth(p.domain, cookieStr)
 	log.Printf("korsars: login OK, got bb_data")
-	return true
+	return nil
 }
 
-func (p *Parser) ensureLogin(ctx context.Context) bool {
+// ensureLogin authenticates if there is no usable session, and is safe to call
+// from the middle of a run. It used to exist only at the four entrypoints, so
+// a session that died during a sweep could not be recovered until the next
+// run — and a sweep here runs for far longer than the session lives.
+func (p *Parser) ensureLogin(ctx context.Context) error {
 	if p.getCookie() != "" {
-		return true
+		return nil
 	}
-	return p.takeLogin(ctx)
+	if err := p.gate.HoldOff(); err != nil {
+		return err
+	}
+	return p.gate.Note(p.takeLogin(ctx))
 }
 
 func (p *Parser) Parse(ctx context.Context, page int) (ParseResult, error) {
@@ -246,8 +257,8 @@ func (p *Parser) Parse(ctx context.Context, page int) (ParseResult, error) {
 	if isDisabled(p.Config.DisableTrackers, trackerName) {
 		return ParseResult{Status: "disabled"}, nil
 	}
-	if !p.ensureLogin(ctx) {
-		return ParseResult{Status: core.StatusWorkLogin}, fmt.Errorf("korsars: login failed: %w", core.ErrNotAuthorized)
+	if err := p.ensureLogin(ctx); err != nil {
+		return ParseResult{Status: core.StatusWorkLogin}, err
 	}
 	res := ParseResult{Status: "ok", PerCategory: map[string]int{}}
 	seenURLs := map[string]struct{}{}
@@ -279,8 +290,8 @@ func (p *Parser) Parse(ctx context.Context, page int) (ParseResult, error) {
 }
 
 func (p *Parser) UpdateTasksParse(ctx context.Context) (map[string][]Task, error) {
-	if !p.ensureLogin(ctx) {
-		return nil, fmt.Errorf("korsars: login failed: %w", core.ErrNotAuthorized)
+	if err := p.ensureLogin(ctx); err != nil {
+		return nil, err
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -365,8 +376,8 @@ func (p *Parser) settle(cycle *core.ParseAllCycle, key string, page int, ok bool
 }
 
 func (p *Parser) ParseAllTask(ctx context.Context, force bool) (string, error) {
-	if !p.ensureLogin(ctx) {
-		return "", fmt.Errorf("korsars: login failed: %w", core.ErrNotAuthorized)
+	if err := p.ensureLogin(ctx); err != nil {
+		return "", err
 	}
 	p.mu.Lock()
 	if p.busy {
@@ -415,6 +426,14 @@ func (p *Parser) ParseAllTask(ctx context.Context, force bool) (string, error) {
 			}
 			items, err := p.parsePage(ctx, cat, task.Page)
 			if err != nil {
+				// An unauthenticated page is not this page's fault, so it must
+				// not spend the cycle's failure budget — after
+				// ParseAllFailBudget attempts the page settles as swept having
+				// never been read. And every page left will fail the same way.
+				if errors.Is(err, core.ErrNotAuthorized) {
+					log.Printf("korsars: parsealltask stopped at cat=%s page=%d after %d pages: %v", cat, task.Page, processed, err)
+					return "", err
+				}
 				log.Printf("korsars: parsealltask cat=%s page=%d error: %v", cat, task.Page, err)
 				p.settle(cycle, cat, task.Page, false)
 				errs++
@@ -455,8 +474,8 @@ func (p *Parser) ParseLatest(ctx context.Context, pages int) (string, error) {
 		return "work", nil
 	}
 	defer p.latestMu.Unlock()
-	if !p.ensureLogin(ctx) {
-		return "", fmt.Errorf("korsars: login failed: %w", core.ErrNotAuthorized)
+	if err := p.ensureLogin(ctx); err != nil {
+		return "", err
 	}
 	if pages <= 0 {
 		pages = 5
@@ -489,6 +508,10 @@ func (p *Parser) ParseLatest(ctx context.Context, pages int) (string, error) {
 			}
 			items, err := p.parsePage(ctx, cat, task.Page)
 			if err != nil {
+				if errors.Is(err, core.ErrNotAuthorized) {
+					log.Printf("korsars: parselatest stopped at cat=%s page=%d: %v", cat, task.Page, err)
+					return "", err
+				}
 				log.Printf("korsars: parselatest cat=%s page=%d error: %v", cat, task.Page, err)
 				errs++
 				continue
@@ -542,14 +565,40 @@ func (p *Parser) parsePage(ctx context.Context, cat string, page int) ([]filedb.
 		return nil, err
 	}
 	if strings.TrimSpace(htmlBody) == "" {
-		return nil, nil
+		// Not (nil, nil): an empty body is a failed fetch, and the caller
+		// would otherwise settle the page as swept.
+		return nil, fmt.Errorf("korsars: cat=%s page=%d returned an empty body", cat, page)
 	}
-	// Detect session expiry: if listings come back as the login form, drop
-	// our cookie so the next ensureLogin re-authenticates.
+	// Session expiry. korsars 302s a guest to /login.php?redirect=…, which the
+	// Fetcher follows, so the body arrives as HTTP 200 carrying the login form
+	// — measured live 2026-11-27 on viewforum.php?f=144: 20 489 bytes,
+	// `name="login_username"` three times, zero `id="tt-` rows, against 47-50
+	// records on an authorized page.
+	//
+	// This used to return (nil, nil) — a silent zero. Every caller reads an
+	// empty page as "this page holds nothing", so parsealltask settled the
+	// page as swept and the cycle rotated having never read it. Unlike
+	// nnmclub's or torrentby's, the body is worth nothing: it holds no rows at
+	// all, so the only useful move is to get the session back.
 	if strings.Contains(htmlBody, `name="login_username"`) && !strings.Contains(htmlBody, `id="tt-`) {
-		log.Printf("korsars: cat=%s page=%d returned login form — invalidating session", cat, page)
+		log.Printf("korsars: cat=%s page=%d served the login form — re-authenticating", cat, page)
 		p.invalidateCookie()
-		return nil, nil
+		if err := p.ensureLogin(ctx); err != nil {
+			return nil, err
+		}
+		htmlBody, err = p.fetchPage(ctx, cat, page)
+		if err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(htmlBody) == "" ||
+			(strings.Contains(htmlBody, `name="login_username"`) && !strings.Contains(htmlBody, `id="tt-`)) {
+			// Every page left in the map will be refused the same way, so the
+			// caller stops the sweep rather than walking it. Wrapping the
+			// sentinel is what makes cronErrorStatus answer work_login.
+			return nil, fmt.Errorf("korsars: cat=%s page=%d still served the login form after a fresh login: %w",
+				cat, page, core.ErrNotAuthorized)
+		}
+		log.Printf("korsars: re-login recovered cat=%s page=%d", cat, page)
 	}
 	host := strings.TrimRight(p.Config.Korsars.Host, "/")
 	rows := strings.Split(htmlBody, `id="tt-`)

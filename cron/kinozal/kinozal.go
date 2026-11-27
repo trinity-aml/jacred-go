@@ -385,6 +385,13 @@ func (p *Parser) ParseAllTask(ctx context.Context, force bool) (string, error) {
 				}
 				items, err := p.parsePage(ctx, cat, task.Page, arg)
 				if err != nil {
+					// Not this page's fault, and every page left in the map
+					// will fail the same way: after ParseAllFailBudget
+					// attempts a page settles as swept having never been read.
+					if errors.Is(err, core.ErrNotAuthorized) {
+						log.Printf("kinozal: parsealltask stopped at cat=%s arg=%s page=%d after %d pages: %v", cat, arg, task.Page, processed, err)
+						return "", err
+					}
 					log.Printf("kinozal: parsealltask cat=%s arg=%s page=%d error: %v", cat, arg, task.Page, err)
 					p.settle(cycle, cat, arg, task.Page, false)
 					errs++
@@ -516,20 +523,38 @@ func (p *Parser) parsePage(ctx context.Context, cat string, page int, arg string
 	if err != nil {
 		return nil, err
 	}
+	// A body that is not a kinozal listing is most often the login page: a
+	// guest is 302'd to login.php?m=5 and the Fetcher follows, so the brand
+	// title is missing. The re-login below used to sit *after* this return,
+	// which made it unreachable for exactly the case it was written for — a
+	// session dying mid-run — so the sweep then failed every remaining
+	// category and spent each page's cycle budget on it.
 	if htmlBody == "" || !kinozalTitleRe.MatchString(htmlBody) {
-		// Not (nil, nil): authorize() has already proved the session, so a 200
-		// that is not a kinozal page is an anomaly and has to be named. Silence
-		// here is what made a rebrand ("Кинозал.ТВ" -> "Кинозал.GURU") read as
-		// 25 quiet categories for weeks.
-		return nil, fmt.Errorf("kinozal: c=%s page=%d returned %d bytes that are not a kinozal listing",
-			cat, page, len(htmlBody))
+		log.Printf("kinozal: c=%s page=%d is not a kinozal listing (%d bytes) — re-authenticating", cat, page, len(htmlBody))
+		if err := p.relogin(ctx); err != nil {
+			return nil, err
+		}
+		htmlBody, err = p.fetchBrowse(ctx, cat, page, arg)
+		if err != nil {
+			return nil, err
+		}
+		if htmlBody == "" || !kinozalTitleRe.MatchString(htmlBody) {
+			// Not (nil, nil): silence here is what made a rebrand
+			// ("Кинозал.ТВ" -> "Кинозал.GURU") read as 25 quiet categories
+			// for weeks. Wrapping the sentinel stops the sweep instead of
+			// letting it walk the map losing a page at a time.
+			return nil, fmt.Errorf("kinozal: c=%s page=%d returned %d bytes that are not a kinozal listing after a fresh login: %w",
+				cat, page, len(htmlBody), core.ErrNotAuthorized)
+		}
+		log.Printf("kinozal: re-login recovered c=%s page=%d", cat, page)
 	}
 	if p.getCookie() == "" || !strings.Contains(htmlBody, ">Выход</a>") {
-		// This page was served to a guest and cannot be salvaged; re-login so the
-		// next one is not. Discarding the error here used to hide a broken login
-		// behind a run that reported fetched=0 for every category.
-		if err := p.takeLogin(ctx); err != nil && !errors.Is(err, errLoginCooldown) {
-			log.Printf("kinozal: re-login failed mid-run: %v", err)
+		// A listing without the logout marker: loggedIn() treats a real
+		// listing as proof of authorization (kinozal bounces guests, so a
+		// listing means we are in), so the rows below are parsed either way —
+		// but refresh the session so the next page is not borderline.
+		if err := p.relogin(ctx); err != nil {
+			log.Printf("kinozal: mid-run re-login skipped: %v", err)
 		}
 	}
 	rows := rowSplitRe.Split(replaceBadNames(htmlBody), -1)
@@ -853,6 +878,16 @@ func (p *Parser) authorize(ctx context.Context) error {
 	if ok, _ := loggedIn(body); !ok {
 		return fmt.Errorf("kinozal: browse.php is served to a guest even after a fresh login: %w",
 			core.ErrNotAuthorized)
+	}
+	return nil
+}
+
+// relogin re-authenticates from the middle of a run. The login cooldown is not
+// an error here: "we tried a moment ago" means the session cannot be refreshed
+// right now, which the caller handles by proving the page instead.
+func (p *Parser) relogin(ctx context.Context) error {
+	if err := p.takeLogin(ctx); err != nil && !errors.Is(err, errLoginCooldown) {
+		return err
 	}
 	return nil
 }

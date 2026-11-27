@@ -589,7 +589,9 @@ func (p *Parser) parsePage(ctx context.Context, cat string, page int) ([]parseIt
 		return nil, err
 	}
 	if htmlBody == "" {
-		return nil, nil
+		// Not (nil, nil): an empty body is a failed fetch, and the caller
+		// would otherwise settle the page as swept.
+		return nil, fmt.Errorf("toloka: cat=%s page=%d returned an empty body", cat, page)
 	}
 	// Expired-cookie detection: when the session cookie no longer authenticates,
 	// toloka serves /login.php in place of the forum view. The login page is

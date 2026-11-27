@@ -607,12 +607,19 @@ func (p *Parser) UpdateTasksParse(ctx context.Context) (map[string][]Task, error
 		if err != nil {
 			continue
 		}
-		// Same expiry guard as parsePage: pagination regex on a login page
-		// silently matches nothing and we'd save a degenerate task list.
+		// Same expiry guard as parsePage: the pagination regex on a login page
+		// silently matches nothing and we would save a degenerate task list.
+		//
+		// `break` with a nil error used to leave the remaining categories
+		// untouched while the endpoint answered ok — a silent partial. A dead
+		// session makes every category's pager unreadable, so say so: the next
+		// run authenticates at its own entry point, and PruneTaskPages refuses
+		// to trim on the zero this would otherwise have produced.
 		if looksLikeRutrackerLoginForm(htmlBody) {
-			log.Printf("rutracker: cat=%s root returned login form (cookie expired, invalidating)", cat)
+			log.Printf("rutracker: cat=%s root served the login form — the session is dead", cat)
 			p.invalidateCookie()
-			break
+			return nil, fmt.Errorf("rutracker: updatetasksparse: cat=%s root served the login form: %w",
+				cat, core.ErrNotAuthorized)
 		}
 		maxPages := 0
 		if m := forumPagesRe.FindStringSubmatch(htmlBody); len(m) > 1 {
@@ -747,6 +754,14 @@ func (p *Parser) ParseAllTask(ctx context.Context, force bool) (string, error) {
 				// same side of it. Measured over one night on production:
 				// 3 169 of rutracker's 3 295 lost pages were refused in ~0 ms
 				// with no network, against 124 real failures.
+				// An unauthenticated page is the same category of cause: not
+				// the page's fault, and every page left in the map will fail
+				// the same way, so stop rather than walk it.
+				if errors.Is(err, core.ErrNotAuthorized) {
+					log.Printf("rutracker: parsealltask stopped at cat=%s page=%d after %d/%d pages: %v",
+						cat, task.Page, processed, totalPages, err)
+					return "", err
+				}
 				if !errors.Is(err, core.ErrFlareCooldown) {
 					p.settle(cycle, cat, task.Page, false)
 				}
@@ -826,6 +841,10 @@ func (p *Parser) ParseLatest(ctx context.Context, pages int) (string, error) {
 				return "cf-challenge", err
 			}
 			if err != nil {
+				if errors.Is(err, core.ErrNotAuthorized) {
+					log.Printf("rutracker: parselatest stopped at cat=%s page=%d: %v", cat, task.Page, err)
+					return "", err
+				}
 				log.Printf("rutracker: parselatest cat=%s page=%d error: %v", cat, task.Page, err)
 				errs++
 				continue
@@ -888,15 +907,45 @@ func (p *Parser) parsePage(ctx context.Context, cat string, page int) ([]filedb.
 		return nil, err
 	}
 	if strings.TrimSpace(htmlBody) == "" {
-		return nil, nil
+		// Not (nil, nil): an empty body is a failed fetch, and the caller
+		// would otherwise settle the page as swept.
+		return nil, fmt.Errorf("rutracker: cat=%s page=%d returned an empty body", cat, page)
 	}
 	// Detect session expiry: rutracker server-side TTL is often shorter than
-	// our 2-hour local cookieT — without this check the parser would keep
-	// hitting the login wall until the local TTL eventually rolled over.
+	// our 2-hour local cookieT, so a sweep that runs for hours meets the login
+	// wall mid-run as a matter of course.
+	//
+	// This used to return (nil, nil) — a silent zero. Every caller reads an
+	// empty page as "this page holds nothing", so parsealltask settled the
+	// page as swept and the cycle rotated having never read it. Measured on
+	// production 2026-11-27, consecutive journal lines:
+	//
+	//	rutracker: cat=208 page=79 returned login form (cookie expired, invalidating)
+	//	rutracker: parsealltask cat=208 page=79 empty (marking today)
+	//
+	// three times in one morning. Unlike torrentby's, the discarded body is
+	// worth nothing — it is the login page, with no torTopic rows on it — so
+	// there is nothing to salvage and the only useful move is to get the
+	// session back.
 	if looksLikeRutrackerLoginForm(htmlBody) {
-		log.Printf("rutracker: cat=%s page=%d returned login form (cookie expired, invalidating)", cat, page)
+		log.Printf("rutracker: cat=%s page=%d served the login form — re-authenticating", cat, page)
 		p.invalidateCookie()
-		return nil, nil
+		if err := p.ensureLogin(ctx); err != nil {
+			return nil, err
+		}
+		htmlBody, err = p.fetchPage(ctx, cat, page)
+		if err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(htmlBody) == "" || looksLikeRutrackerLoginForm(htmlBody) {
+			// Every remaining page will be refused the same way, so the
+			// caller stops the sweep instead of walking the map. The error
+			// wraps the sentinel, which is what makes cronErrorStatus report
+			// work_login and HTTP 500.
+			return nil, fmt.Errorf("rutracker: cat=%s page=%d still served the login form after a fresh login: %w",
+				cat, page, core.ErrNotAuthorized)
+		}
+		log.Printf("rutracker: re-login recovered cat=%s page=%d", cat, page)
 	}
 	rows := strings.Split(replaceBadNames(htmlBody), `class="torTopic"`)
 	out := make([]filedb.TorrentDetails, 0, len(rows))

@@ -3,6 +3,7 @@ package selezen
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html"
 	"log"
@@ -413,8 +414,10 @@ func (p *Parser) fetchListing(ctx context.Context, listURL, host string, page in
 			return "", "", err
 		}
 		if body == "" || !strings.Contains(body, "dle_root") {
-			log.Printf("selezen: page %d empty or not a catalog page, url=%s bodyLen=%d", page, listURL, len(body))
-			return cookie, "", nil
+			// Not a silent zero: an empty body reads as "this page holds
+			// nothing" to the caller, which settles it as swept.
+			return cookie, "", fmt.Errorf("selezen: page %d returned %d bytes that are not a catalog page (%s)",
+				page, len(body), listURL)
 		}
 		if !p.loggedOut(body) {
 			return cookie, body, nil
@@ -424,10 +427,15 @@ func (p *Parser) fetchListing(ctx context.Context, listURL, host string, page in
 			p.invalidateCookie()
 			continue
 		}
-		log.Printf("selezen: page %d is still missing the user marker — giving up", page)
 		break
 	}
-	return lastCookie, "", nil
+	// The loop above already spent a fresh login, so a page still served
+	// without the account marker is an authorization failure and has to say
+	// so. Returning (cookie, "", nil) here was the silent zero: parsealltask
+	// read `parsed == 0` as "empty (settling)" and marked the page swept
+	// having never read it.
+	return lastCookie, "", fmt.Errorf("selezen: page %d is still missing the account marker after a fresh login: %w",
+		page, core.ErrNotAuthorized)
 }
 
 func (p *Parser) ensureCookie(ctx context.Context) (string, error) {
@@ -669,6 +677,10 @@ func (p *Parser) ParseAllTask(ctx context.Context, force bool) (string, error) {
 		}
 		parsed, added, updated, skipped, failed, err := p.parsePage(ctx, task.Page)
 		if err != nil {
+			if errors.Is(err, core.ErrNotAuthorized) {
+				log.Printf("selezen: parsealltask stopped at page=%d: %v", task.Page, err)
+				return "", err
+			}
 			log.Printf("selezen: parsealltask page=%d error: %v", task.Page, err)
 			p.settle(cycle, task.Page, false)
 			errs++
@@ -732,6 +744,10 @@ func (p *Parser) ParseLatest(ctx context.Context, pages int) (string, error) {
 		}
 		parsed, added, updated, skipped, failed, err := p.parsePage(ctx, task.Page)
 		if err != nil {
+			if errors.Is(err, core.ErrNotAuthorized) {
+				log.Printf("selezen: parselatest stopped at page=%d: %v", task.Page, err)
+				return "", err
+			}
 			log.Printf("selezen: parselatest page=%d error: %v", task.Page, err)
 			errs++
 			continue

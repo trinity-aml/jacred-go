@@ -86,13 +86,13 @@ type Parser struct {
 	// both swept at once — parsealltask is scheduled every few minutes while a
 	// full sweep runs for hours — so two runs drove the same session, the same
 	// login path and the same rate limit at the tracker.
-	busy             bool
-	latest           sync.Mutex
-	tasks            map[string][]Task
-	cookieMu         sync.Mutex
-	dynCookie        string
-	lastLoginAttempt time.Time
-	domain           string
+	busy      bool
+	latest    sync.Mutex
+	tasks     map[string][]Task
+	cookieMu  sync.Mutex
+	dynCookie string
+	gate      *core.LoginGate
+	domain    string
 
 	throttleMu     sync.Mutex
 	throttleRemain int // requests still owed the extra delay
@@ -115,6 +115,7 @@ func New(cfg app.Config, db *filedb.DB, dataDir string) *Parser {
 		loc = time.Local
 	}
 	p := &Parser{Config: cfg, DB: db, DataDir: dataDir, Client: &http.Client{Timeout: 35 * time.Second}, Fetcher: core.NewFetcher(cfg), loc: loc, tasks: map[string][]Task{}, domain: core.DomainFromHost(cfg.NNMClub.Host)}
+	p.gate = core.NewLoginGate(trackerName)
 	_ = p.loadTasks()
 	if saved, _ := core.DefaultSessionStore().LoadAuth(p.domain); saved != "" {
 		p.dynCookie = saved
@@ -134,14 +135,6 @@ func (p *Parser) cookie() string {
 }
 
 func (p *Parser) takeLogin(ctx context.Context) error {
-	p.cookieMu.Lock()
-	if time.Since(p.lastLoginAttempt) < 2*time.Minute {
-		p.cookieMu.Unlock()
-		return nil
-	}
-	p.lastLoginAttempt = time.Now()
-	p.cookieMu.Unlock()
-
 	host := strings.TrimRight(p.Config.NNMClub.Host, "/")
 	if host == "" || strings.TrimSpace(p.Config.NNMClub.Login.U) == "" {
 		return fmt.Errorf("nnmclub: no host or login configured")
@@ -279,24 +272,63 @@ func (p *Parser) takeLogin(ctx context.Context) error {
 	return fmt.Errorf("nnmclub: login failed: %w", core.ErrNotAuthorized)
 }
 
-func (p *Parser) ensureLogin(ctx context.Context) {
+// ensureLogin authenticates if there is no usable session, and is safe to call
+// from the middle of a run. It used to be `_ = p.takeLogin(ctx)` returning
+// nothing, so a refused password, a renamed cookie and a transport failure
+// were all equally silent — and takeLogin's own cooldown branch answered nil,
+// which made "we tried two minutes ago" indistinguishable from "we are logged
+// in".
+//
+// A missing login is not an error: nnmclub serves its portal in full to
+// guests, measured below in loggedOut, so a run without a session still
+// returns every record.
+func (p *Parser) ensureLogin(ctx context.Context) error {
 	if p.cookie() != "" {
-		return
+		return nil
 	}
 	if strings.TrimSpace(p.Config.NNMClub.Login.U) == "" {
-		return
+		return nil
 	}
-	_ = p.takeLogin(ctx)
+	if err := p.gate.HoldOff(); err != nil {
+		return err
+	}
+	return p.gate.Note(p.takeLogin(ctx))
 }
 
-// invalidateCookie clears the in-memory + on-disk auth cookie and resets the
-// login-attempt cooldown so the next ensureLogin re-authenticates.
+// invalidateCookie clears the in-memory + on-disk auth cookie so the next
+// ensureLogin re-authenticates. It deliberately does not clear the gate's
+// failure window: a cooldown the page path can reset is not a cooldown.
 func (p *Parser) invalidateCookie() {
 	p.cookieMu.Lock()
 	p.dynCookie = ""
-	p.lastLoginAttempt = time.Time{}
 	p.cookieMu.Unlock()
 	_ = core.DefaultSessionStore().DeleteAuth(p.domain)
+}
+
+// loggedOut reports whether nnmclub rendered the portal for a guest.
+//
+// Two-sided, and both sides are measured rather than assumed — on the live
+// cat=10 portal page within one minute on 2026-11-27, the guest copy fetched
+// with no cookie and the authorized one with the deployed session:
+//
+//	marker                        guest   authorized
+//	login.php?logout=                 0            1
+//	action="login.php"                1            0
+//	NNM-Club</title> (validMarker)    1            1
+//	magnet:?xt                       25           25
+//
+// The last two rows are why this check was dead: the guest page carries the
+// validMarker, so it never reached the `action="login.php"` test that sat
+// inside the !validMarker branch — the same "could not fire even once" shape
+// this tree has already paid for on animelayer, mazepa, anifilm and torrentby.
+// And they are why a guest page is still worth parsing: it holds the same 25
+// records, magnets included.
+func (p *Parser) loggedOut(body string) bool {
+	if strings.TrimSpace(p.Config.NNMClub.Login.U) == "" {
+		return false
+	}
+	return !strings.Contains(body, "login.php?logout=") &&
+		strings.Contains(body, `action="login.php"`)
 }
 
 // markRateLimited arms the throttle so the next rateLimitBackoffCount requests
@@ -332,7 +364,11 @@ func (p *Parser) Parse(ctx context.Context, page int) (ParseResult, error) {
 	if isDisabled(p.Config.DisableTrackers, trackerName) {
 		return ParseResult{Status: "disabled"}, nil
 	}
-	p.ensureLogin(ctx)
+	// Not fatal: the portal is public, so a run without a session still
+	// returns records and aborting would turn a working tracker into zero.
+	if err := p.ensureLogin(ctx); err != nil {
+		log.Printf("nnmclub: %v — continuing as a guest, the portal is public", err)
+	}
 	res := ParseResult{Status: "ok", PerCategory: map[string]int{}}
 	for _, cat := range categories {
 		items, err := p.parsePage(ctx, cat, page)
@@ -360,7 +396,11 @@ func (p *Parser) Parse(ctx context.Context, page int) (ParseResult, error) {
 }
 
 func (p *Parser) UpdateTasksParse(ctx context.Context) (map[string][]Task, error) {
-	p.ensureLogin(ctx)
+	// Not fatal: the portal is public, so a run without a session still
+	// returns records and aborting would turn a working tracker into zero.
+	if err := p.ensureLogin(ctx); err != nil {
+		log.Printf("nnmclub: %v — continuing as a guest, the portal is public", err)
+	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.tasks == nil {
@@ -460,7 +500,11 @@ func (p *Parser) ParseAllTask(ctx context.Context, force bool) (string, error) {
 	p.mu.Unlock()
 	defer func() { p.mu.Lock(); p.busy = false; p.mu.Unlock() }()
 
-	p.ensureLogin(ctx)
+	// Not fatal: the portal is public, so a run without a session still
+	// returns records and aborting would turn a working tracker into zero.
+	if err := p.ensureLogin(ctx); err != nil {
+		log.Printf("nnmclub: %v — continuing as a guest, the portal is public", err)
+	}
 
 	if len(snapshot) == 0 {
 		log.Printf("nnmclub: parsealltask — tasks empty, running updatetasksparse first")
@@ -541,7 +585,11 @@ func (p *Parser) ParseLatest(ctx context.Context, pages int) (string, error) {
 		return "work", nil
 	}
 	defer p.latest.Unlock()
-	p.ensureLogin(ctx)
+	// Not fatal: the portal is public, so a run without a session still
+	// returns records and aborting would turn a working tracker into zero.
+	if err := p.ensureLogin(ctx); err != nil {
+		log.Printf("nnmclub: %v — continuing as a guest, the portal is public", err)
+	}
 	if pages <= 0 {
 		pages = 5
 	}
@@ -643,28 +691,18 @@ func (p *Parser) parsePage(ctx context.Context, cat string, page int) ([]filedb.
 	}
 	htmlBody := core.DecodeCP1251(data)
 
-	// Login form posts to /forum/login.php (see takeLogin) — that action
-	// attribute only appears on the login page, so its presence in a
-	// listing response means the saved cookie has expired.
-	loginForm := p.Config.NNMClub.Login.U != "" &&
-		(strings.Contains(htmlBody, `action="login.php"`) || strings.Contains(htmlBody, `action='login.php'`))
-
+	// Neither of these may return (nil, nil). An empty page reads as "this
+	// page holds nothing" to every caller, so parsealltask settled it as
+	// swept and the cycle rotated having never read it — and nnmclub is
+	// CF-gated, which makes an interstitial a realistic body for both.
 	if status < 200 || status >= 300 {
-		log.Printf("nnmclub: cat=%s page=%d non-OK status=%d body=%d", cat, page, status, len(htmlBody))
-		if loginForm {
-			log.Printf("nnmclub: cat=%s page=%d returned login form (cookie expired, invalidating)", cat, page)
-			p.invalidateCookie()
-		}
-		return nil, nil
+		return nil, fmt.Errorf("nnmclub: cat=%s page=%d answered HTTP %d (%d bytes)", cat, page, status, len(htmlBody))
 	}
 	if !strings.Contains(htmlBody, validMarker) {
-		if loginForm {
-			log.Printf("nnmclub: cat=%s page=%d returned login form (cookie expired, invalidating)", cat, page)
-			p.invalidateCookie()
-		} else {
-			log.Printf("nnmclub: cat=%s page=%d marker missing (status=%d body=%d)", cat, page, status, len(htmlBody))
-		}
-		return nil, nil
+		return nil, fmt.Errorf("nnmclub: cat=%s page=%d returned %d bytes that are not an nnmclub page", cat, page, len(htmlBody))
+	}
+	if p.loggedOut(htmlBody) {
+		htmlBody = p.recoverFromGuestPage(ctx, rawURL, cat, page, htmlBody)
 	}
 	// nnmclub soft rate-limit: after some number of portal.php hits in a
 	// sliding window, the server serves the "Почему на Портале мне доступно
@@ -678,6 +716,46 @@ func (p *Parser) parsePage(ctx context.Context, cat string, page int) ([]filedb.
 		return nil, fmt.Errorf("nnmclub: rate-limited (server returned 500-page FAQ for cat=%s page=%d)", cat, page)
 	}
 	return parsePageHTML(strings.TrimRight(p.Config.NNMClub.Host, "/"), cat, htmlBody, time.Now().UTC()), nil
+}
+
+// recoverFromGuestPage re-authenticates and fetches the page again, returning
+// the authorized body if it gets one and the guest body unchanged if it does
+// not.
+//
+// Keeping the guest body is the measured choice, not a concession: the marker
+// table in loggedOut shows a guest portal page carrying the same 25 records
+// with the same magnets, so discarding it would lose a full page for nothing.
+//
+// The attempt is rate-limited by the gate's recovery window rather than by its
+// failure cooldown, because the storm case is a login that *succeeds* while
+// the page still comes back as a guest page — nothing fails, so a failure
+// cooldown never arms, and a sweep here is hundreds of pages.
+func (p *Parser) recoverFromGuestPage(ctx context.Context, rawURL, cat string, page int, guestBody string) string {
+	if !p.gate.BeginRecovery() {
+		return guestBody
+	}
+	log.Printf("nnmclub: cat=%s page=%d served to a guest — re-authenticating", cat, page)
+	p.invalidateCookie()
+	if err := p.ensureLogin(ctx); err != nil {
+		log.Printf("nnmclub: re-login failed (%v) — parsing the guest page, the portal is public", err)
+		return guestBody
+	}
+	ts := p.Config.NNMClub
+	if c := p.cookie(); c != "" {
+		ts.Cookie = c
+	}
+	data, status, err := p.Fetcher.Download(rawURL, ts)
+	if err != nil || status < 200 || status >= 300 || len(data) == 0 {
+		log.Printf("nnmclub: re-fetch of cat=%s page=%d failed (status=%d err=%v) — parsing the guest page", cat, page, status, err)
+		return guestBody
+	}
+	body := core.DecodeCP1251(data)
+	if !strings.Contains(body, validMarker) || p.loggedOut(body) {
+		log.Printf("nnmclub: cat=%s page=%d still served to a guest after a fresh login — parsing it anyway", cat, page)
+		return guestBody
+	}
+	log.Printf("nnmclub: re-login recovered cat=%s page=%d", cat, page)
+	return body
 }
 
 func (p *Parser) fetchCategoryRoot(ctx context.Context, cat string) (string, error) {
