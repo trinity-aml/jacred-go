@@ -3,6 +3,7 @@ package mazepa
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html"
 	"log"
@@ -137,7 +138,12 @@ type Parser struct {
 	tasks    map[string][]Task
 	cookie   string
 	cookieT  time.Time
-	domain   string
+	// lastLoginFail holds off a login that was just refused. It records
+	// failures only: a *successful* login is immediately followed by the page
+	// that needed it, and a cooldown counted from a success would block the
+	// mid-run recovery it exists to protect.
+	lastLoginFail time.Time
+	domain        string
 }
 
 type ParseResult struct {
@@ -171,10 +177,25 @@ func (p *Parser) getCookie() string {
 	return ""
 }
 
-func (p *Parser) takeLogin(ctx context.Context) bool {
+// loginCooldown is the minimum gap after a *refused* login before another is
+// attempted. Credentials that the server rejects are what earns an
+// anti-bruteforce block, and a sweep has over a thousand pages to retry on.
+const loginCooldown = 2 * time.Minute
+
+// takeLogin authenticates and stores the session cookie.
+//
+// It returns an error rather than a bool because the causes need different
+// responses: a missing configuration is permanent, a refused password must not
+// be retried in a tight loop, and a transport failure is worth another try.
+// Returning false for all three used to leave the caller with nothing to say
+// beyond "login failed".
+func (p *Parser) takeLogin(ctx context.Context) error {
 	host := strings.TrimRight(p.Config.Mazepa.Host, "/")
-	if host == "" || p.Config.Mazepa.Login.U == "" {
-		return false
+	if host == "" {
+		return fmt.Errorf("mazepa: host is not configured: %w", core.ErrNotAuthorized)
+	}
+	if strings.TrimSpace(p.Config.Mazepa.Login.U) == "" {
+		return fmt.Errorf("mazepa: login is not configured: %w", core.ErrNotAuthorized)
 	}
 	form := url.Values{
 		"login_username": {p.Config.Mazepa.Login.U},
@@ -185,13 +206,13 @@ func (p *Parser) takeLogin(ctx context.Context) bool {
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, host+"/login.php", strings.NewReader(form.Encode()))
 	if err != nil {
-		return false
+		return fmt.Errorf("mazepa: building the login request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("User-Agent", "Mozilla/5.0")
 	resp, err := p.Client.Do(req)
 	if err != nil {
-		return false
+		return fmt.Errorf("mazepa: login POST failed: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -200,21 +221,60 @@ func (p *Parser) takeLogin(ctx context.Context) bool {
 		parts = append(parts, strings.SplitN(line, ";", 2)[0])
 	}
 	cookieStr := strings.Join(parts, "; ")
-	if strings.Contains(cookieStr, "bb_") {
-		p.mu.Lock()
-		p.cookie = cookieStr
-		p.cookieT = time.Now()
-		p.mu.Unlock()
-		_ = core.DefaultSessionStore().SaveAuth(p.domain, cookieStr)
-		log.Printf("mazepa: login OK, got bb_session")
-		return true
+	if !strings.Contains(cookieStr, "bb_") {
+		// Cookie names only, never values — this response usually carries a
+		// fresh session and Data/log is retained.
+		log.Printf("mazepa: login FAILED status=%d cookies set: [%s]", resp.StatusCode, core.CookieNames(cookieStr))
+		return fmt.Errorf("mazepa: login refused (status %d, no bb_ cookie): %w", resp.StatusCode, core.ErrNotAuthorized)
 	}
-	return false
+	p.mu.Lock()
+	p.cookie = cookieStr
+	p.cookieT = time.Now()
+	p.mu.Unlock()
+	_ = core.DefaultSessionStore().SaveAuth(p.domain, cookieStr)
+	log.Printf("mazepa: login OK, got bb_session")
+	return nil
 }
 
-// invalidateCookie clears the in-memory and on-disk cookie, forcing the
-// next Parse to re-authenticate. Used when a fetched page returns the login
-// form instead of forum content.
+// ensureLogin authenticates if there is no usable session, and is safe to call
+// from the middle of a run. It is the single login entry point: the four
+// entrypoints used to carry a copy of this check, and none of them could be
+// reached again once a sweep was already walking its page map.
+func (p *Parser) ensureLogin(ctx context.Context) error {
+	if p.getCookie() != "" {
+		return nil
+	}
+	p.mu.Lock()
+	if !p.lastLoginFail.IsZero() {
+		if wait := loginCooldown - time.Since(p.lastLoginFail); wait > 0 {
+			p.mu.Unlock()
+			// An error, not nil. "We tried a moment ago and were refused" and
+			// "we are logged in" must not look the same to the caller, or the
+			// run continues unauthenticated and reports whatever a guest is
+			// served.
+			return fmt.Errorf("mazepa: login retry held off for %s after a refused attempt: %w",
+				wait.Round(time.Second), core.ErrNotAuthorized)
+		}
+	}
+	p.mu.Unlock()
+
+	err := p.takeLogin(ctx)
+	p.mu.Lock()
+	if err != nil {
+		p.lastLoginFail = time.Now()
+	} else {
+		p.lastLoginFail = time.Time{}
+	}
+	p.mu.Unlock()
+	return err
+}
+
+// invalidateCookie clears the in-memory and on-disk cookie so the next
+// ensureLogin re-authenticates.
+//
+// It deliberately does *not* clear lastLoginFail: this is called from the page
+// path, and a cooldown the page path can reset is not a cooldown. Only a
+// login that actually succeeds clears it.
 func (p *Parser) invalidateCookie() {
 	p.mu.Lock()
 	p.cookie = ""
@@ -237,10 +297,8 @@ func (p *Parser) Parse(ctx context.Context) (ParseResult, error) {
 	if host == "" {
 		return ParseResult{Status: "config missing"}, nil
 	}
-	if p.getCookie() == "" {
-		if !p.takeLogin(ctx) {
-			return ParseResult{Status: core.StatusWorkLogin}, fmt.Errorf("mazepa: login failed: %w", core.ErrNotAuthorized)
-		}
+	if err := p.ensureLogin(ctx); err != nil {
+		return ParseResult{Status: core.StatusWorkLogin}, err
 	}
 
 	res := ParseResult{Status: "ok", PerCategory: map[string]int{}}
@@ -295,10 +353,33 @@ func (p *Parser) parseForumPage(ctx context.Context, pageURL string, types []str
 	// zero occurrences of the attribute against one plain login.php link. The
 	// account menu is the honest signal, which is what the attachment-level
 	// check below already keys on ("Вийти" = logout).
+	// A guest page used to return (nil, "", nil) here — a silent zero. Every
+	// caller reads an empty page as "this page holds nothing", so a dead
+	// session was indistinguishable from a quiet forum: ParseAllTask settled
+	// each unread page as swept and rotated the cycle, and the run reported
+	// ok/failed=0. Measured in production 2026-11-27: the session expired
+	// mid-sweep at 09:55 and the next 445 pages were logged one by one as
+	// "served to a guest", marked done, and reported as 36% progress on
+	// /trackers — with no re-login attempted, because the login check only
+	// ever ran at the top of a run and that run had already started.
+	//
+	// So recover here instead: re-authenticate and retry the page once. If the
+	// page is still served to a guest the session is not the problem, and the
+	// run must stop rather than walk the rest of the map unauthenticated.
 	if p.Config.Mazepa.Login.U != "" && loggedOut(body) {
-		log.Printf("mazepa: %s served to a guest (cookie expired, invalidating)", pageURL)
+		log.Printf("mazepa: %s served to a guest — re-authenticating", pageURL)
 		p.invalidateCookie()
-		return nil, "", nil
+		if lerr := p.ensureLogin(ctx); lerr != nil {
+			return nil, "", lerr
+		}
+		body, err = p.httpGet(ctx, pageURL)
+		if err != nil {
+			return nil, "", err
+		}
+		if body == "" || loggedOut(body) {
+			return nil, "", fmt.Errorf("mazepa: %s still served to a guest after a fresh login: %w", pageURL, core.ErrNotAuthorized)
+		}
+		log.Printf("mazepa: re-login recovered %s", pageURL)
 	}
 
 	rows := rowRe.FindAllString(body, -1)
@@ -407,10 +488,8 @@ func (p *Parser) parseForumPage(ctx context.Context, pageURL string, types []str
 }
 
 func (p *Parser) UpdateTasksParse(ctx context.Context) (map[string][]Task, error) {
-	if p.getCookie() == "" {
-		if !p.takeLogin(ctx) {
-			return nil, fmt.Errorf("mazepa: login failed: %w", core.ErrNotAuthorized)
-		}
+	if err := p.ensureLogin(ctx); err != nil {
+		return nil, err
 	}
 	host := strings.TrimRight(p.Config.Mazepa.Host, "/")
 
@@ -518,10 +597,8 @@ func (p *Parser) ParseAllTask(ctx context.Context, force bool) (string, error) {
 	p.mu.Unlock()
 	defer func() { p.mu.Lock(); p.busy = false; p.mu.Unlock() }()
 
-	if p.getCookie() == "" {
-		if !p.takeLogin(ctx) {
-			return "", fmt.Errorf("mazepa: login failed: %w", core.ErrNotAuthorized)
-		}
+	if err := p.ensureLogin(ctx); err != nil {
+		return "", err
 	}
 
 	if len(snapshot) == 0 {
@@ -565,6 +642,16 @@ func (p *Parser) ParseAllTask(ctx context.Context, force bool) (string, error) {
 			pageURL := fmt.Sprintf("%s/viewforum.php?f=%s&start=%d", host, catID, task.Page*50)
 			items, _, err := p.parseForumPage(ctx, pageURL, types, host)
 			if err != nil {
+				// An unauthenticated page is not this page's fault, so it must
+				// not spend the cycle's failure budget — after
+				// ParseAllFailBudget attempts a page settles as swept without
+				// ever having been read, which is how a dead session used to
+				// consume a whole sweep plan. And every remaining page will
+				// fail the same way, so stop instead of walking the map.
+				if errors.Is(err, core.ErrNotAuthorized) {
+					log.Printf("mazepa: parsealltask stopped at cat=%s page=%d after %d/%d pages: %v", catID, task.Page, processed, totalPages, err)
+					return "", err
+				}
 				log.Printf("mazepa: parsealltask cat=%s page=%d error: %v", catID, task.Page, err)
 				p.settle(cycle, catID, task.Page, false)
 				errs++
@@ -619,10 +706,8 @@ func (p *Parser) ParseLatest(ctx context.Context, pages int) (string, error) {
 		snapshot = cloneTasks(p.tasks)
 		p.mu.Unlock()
 	}
-	if p.getCookie() == "" {
-		if !p.takeLogin(ctx) {
-			return "", fmt.Errorf("mazepa: login failed: %w", core.ErrNotAuthorized)
-		}
+	if err := p.ensureLogin(ctx); err != nil {
+		return "", err
 	}
 	host := strings.TrimRight(p.Config.Mazepa.Host, "/")
 	var lines []string
@@ -645,6 +730,10 @@ func (p *Parser) ParseLatest(ctx context.Context, pages int) (string, error) {
 			pageURL := fmt.Sprintf("%s/viewforum.php?f=%s&start=%d", host, catID, task.Page*50)
 			items, _, err := p.parseForumPage(ctx, pageURL, types, host)
 			if err != nil {
+				if errors.Is(err, core.ErrNotAuthorized) {
+					log.Printf("mazepa: parselatest stopped at cat=%s page=%d after %d pages: %v", catID, task.Page, processed, err)
+					return "", err
+				}
 				log.Printf("mazepa: parselatest cat=%s page=%d error: %v", catID, task.Page, err)
 				errs++
 				continue
